@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_747.t_production_year), MAX(non_leaf_747.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_747
+WHERE (mi1.info IN ('Adventure','Black AND White','Crime','Documentary','Family','Horror','Music','Sci-Fi','Talk-Show','Thriller','War')) AND (kt.kind IN ('tv series','video game','video movie')) AND kt.id = non_leaf_747.t_kind_id AND (it1.id IN ('2','3','8')) AND (rt.role IN ('director','producer','production designer')) AND (n.name ILIKE '%pav%');

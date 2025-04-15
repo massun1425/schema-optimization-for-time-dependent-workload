@@ -1,0 +1,3 @@
+SELECT t.title, n.name, cn.name, COUNT(*)
+FROM title as t, movie_keyword as mk, keyword as k, movie_companies as mc, company_name as cn, company_type as ct, kind_type as kt, cast_info as ci, name as n, role_type as rt, non_leaf_533
+WHERE mc.movie_id = mk.movie_id AND (kt.kind IN ('episode','movie','tv movie','tv series')) AND (t.title ILIKE '%spac%') AND mc.movie_id = non_leaf_533.ci_movie_id AND cn.id = mc.company_id AND mc.movie_id = non_leaf_533.t_id AND k.id = mk.keyword_id AND (rt.role IN ('actor','actress','miscellaneous crew','producer')) AND (cn.name ILIKE '%th%') AND mk.movie_id = non_leaf_533.t_id AND (n.surname_pcode ILIKE '%k61%') AND mk.movie_id = non_leaf_533.ci_movie_id AND ct.id = mc.company_type_id;

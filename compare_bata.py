@@ -30,7 +30,7 @@ ILP_frequency_based = False
 # generates jsons # ?
 
 #query_path = "dataset/JOB_json"
-query_path = "dataset/redbench/RED_JSON"
+query_path = "dataset/RED_JSON"
 qp = QueryParser()
 qp.query_parse(q_num, query_path, insert_query)
 

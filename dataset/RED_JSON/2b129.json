@@ -1,0 +1,418 @@
+[
+    {
+        "Plan": {
+            "Node Type": "Aggregate",
+            "Strategy": "Plain",
+            "Partial Mode": "Finalize",
+            "Parallel Aware": false,
+            "Async Capable": false,
+            "Startup Cost": 1058645.33,
+            "Total Cost": 1058645.34,
+            "Plan Rows": 1,
+            "Plan Width": 8,
+            "Plans": [
+                {
+                    "Node Type": "Gather",
+                    "Parent Relationship": "Outer",
+                    "Parallel Aware": false,
+                    "Async Capable": false,
+                    "Startup Cost": 1058645.11,
+                    "Total Cost": 1058645.32,
+                    "Plan Rows": 2,
+                    "Plan Width": 8,
+                    "Workers Planned": 2,
+                    "Single Copy": false,
+                    "Plans": [
+                        {
+                            "Node Type": "Aggregate",
+                            "Strategy": "Plain",
+                            "Partial Mode": "Partial",
+                            "Parent Relationship": "Outer",
+                            "Parallel Aware": false,
+                            "Async Capable": false,
+                            "Startup Cost": 1057645.11,
+                            "Total Cost": 1057645.12,
+                            "Plan Rows": 1,
+                            "Plan Width": 8,
+                            "Plans": [
+                                {
+                                    "Node Type": "Nested Loop",
+                                    "Parent Relationship": "Outer",
+                                    "Parallel Aware": false,
+                                    "Async Capable": false,
+                                    "Join Type": "Inner",
+                                    "Startup Cost": 1007236.98,
+                                    "Total Cost": 1057645.11,
+                                    "Plan Rows": 1,
+                                    "Plan Width": 0,
+                                    "Inner Unique": true,
+                                    "Plans": [
+                                        {
+                                            "Node Type": "Nested Loop",
+                                            "Parent Relationship": "Outer",
+                                            "Parallel Aware": false,
+                                            "Async Capable": false,
+                                            "Join Type": "Inner",
+                                            "Startup Cost": 1007236.55,
+                                            "Total Cost": 1057642.69,
+                                            "Plan Rows": 1,
+                                            "Plan Width": 4,
+                                            "Inner Unique": true,
+                                            "Plans": [
+                                                {
+                                                    "Node Type": "Nested Loop",
+                                                    "Parent Relationship": "Outer",
+                                                    "Parallel Aware": false,
+                                                    "Async Capable": false,
+                                                    "Join Type": "Inner",
+                                                    "Startup Cost": 1007236.12,
+                                                    "Total Cost": 1057640.16,
+                                                    "Plan Rows": 1,
+                                                    "Plan Width": 8,
+                                                    "Inner Unique": false,
+                                                    "Plans": [
+                                                        {
+                                                            "Node Type": "Nested Loop",
+                                                            "Parent Relationship": "Outer",
+                                                            "Parallel Aware": false,
+                                                            "Async Capable": false,
+                                                            "Join Type": "Inner",
+                                                            "Startup Cost": 1007236.12,
+                                                            "Total Cost": 1057637.73,
+                                                            "Plan Rows": 1,
+                                                            "Plan Width": 12,
+                                                            "Inner Unique": false,
+                                                            "Plans": [
+                                                                {
+                                                                    "Node Type": "Nested Loop",
+                                                                    "Parent Relationship": "Outer",
+                                                                    "Parallel Aware": false,
+                                                                    "Async Capable": false,
+                                                                    "Join Type": "Inner",
+                                                                    "Startup Cost": 1007236.12,
+                                                                    "Total Cost": 1057635.31,
+                                                                    "Plan Rows": 1,
+                                                                    "Plan Width": 16,
+                                                                    "Inner Unique": true,
+                                                                    "Plans": [
+                                                                        {
+                                                                            "Node Type": "Hash Join",
+                                                                            "Parent Relationship": "Outer",
+                                                                            "Parallel Aware": true,
+                                                                            "Async Capable": false,
+                                                                            "Join Type": "Inner",
+                                                                            "Startup Cost": 1007235.96,
+                                                                            "Total Cost": 1057634.32,
+                                                                            "Plan Rows": 1,
+                                                                            "Plan Width": 20,
+                                                                            "Inner Unique": false,
+                                                                            "Hash Cond": "(mk.movie_id = t.id)",
+                                                                            "Plans": [
+                                                                                {
+                                                                                    "Node Type": "Seq Scan",
+                                                                                    "Parent Relationship": "Outer",
+                                                                                    "Parallel Aware": true,
+                                                                                    "Async Capable": false,
+                                                                                    "Relation Name": "movie_keyword",
+                                                                                    "Alias": "mk",
+                                                                                    "Startup Cost": 0.0,
+                                                                                    "Total Cost": 43329.71,
+                                                                                    "Plan Rows": 1884971,
+                                                                                    "Plan Width": 8
+                                                                                },
+                                                                                {
+                                                                                    "Node Type": "Hash",
+                                                                                    "Parent Relationship": "Inner",
+                                                                                    "Parallel Aware": true,
+                                                                                    "Async Capable": false,
+                                                                                    "Startup Cost": 1007235.95,
+                                                                                    "Total Cost": 1007235.95,
+                                                                                    "Plan Rows": 1,
+                                                                                    "Plan Width": 32,
+                                                                                    "Plans": [
+                                                                                        {
+                                                                                            "Node Type": "Hash Join",
+                                                                                            "Parent Relationship": "Outer",
+                                                                                            "Parallel Aware": true,
+                                                                                            "Async Capable": false,
+                                                                                            "Join Type": "Inner",
+                                                                                            "Startup Cost": 563223.51,
+                                                                                            "Total Cost": 1007235.95,
+                                                                                            "Plan Rows": 1,
+                                                                                            "Plan Width": 32,
+                                                                                            "Inner Unique": false,
+                                                                                            "Hash Cond": "(ci.movie_id = t.id)",
+                                                                                            "Plans": [
+                                                                                                {
+                                                                                                    "Node Type": "Hash Join",
+                                                                                                    "Parent Relationship": "Outer",
+                                                                                                    "Parallel Aware": false,
+                                                                                                    "Async Capable": false,
+                                                                                                    "Join Type": "Inner",
+                                                                                                    "Startup Cost": 25.52,
+                                                                                                    "Total Cost": 443485.61,
+                                                                                                    "Plan Rows": 147291,
+                                                                                                    "Plan Width": 8,
+                                                                                                    "Inner Unique": true,
+                                                                                                    "Hash Cond": "(ci.role_id = rt.id)",
+                                                                                                    "Plans": [
+                                                                                                        {
+                                                                                                            "Node Type": "Seq Scan",
+                                                                                                            "Parent Relationship": "Outer",
+                                                                                                            "Parallel Aware": true,
+                                                                                                            "Async Capable": false,
+                                                                                                            "Relation Name": "cast_info",
+                                                                                                            "Alias": "ci",
+                                                                                                            "Startup Cost": 0.0,
+                                                                                                            "Total Cost": 403693.1,
+                                                                                                            "Plan Rows": 15097310,
+                                                                                                            "Plan Width": 12
+                                                                                                        },
+                                                                                                        {
+                                                                                                            "Node Type": "Hash",
+                                                                                                            "Parent Relationship": "Inner",
+                                                                                                            "Parallel Aware": false,
+                                                                                                            "Async Capable": false,
+                                                                                                            "Startup Cost": 25.38,
+                                                                                                            "Total Cost": 25.38,
+                                                                                                            "Plan Rows": 12,
+                                                                                                            "Plan Width": 4,
+                                                                                                            "Plans": [
+                                                                                                                {
+                                                                                                                    "Node Type": "Seq Scan",
+                                                                                                                    "Parent Relationship": "Outer",
+                                                                                                                    "Parallel Aware": false,
+                                                                                                                    "Async Capable": false,
+                                                                                                                    "Relation Name": "role_type",
+                                                                                                                    "Alias": "rt",
+                                                                                                                    "Startup Cost": 0.0,
+                                                                                                                    "Total Cost": 25.38,
+                                                                                                                    "Plan Rows": 12,
+                                                                                                                    "Plan Width": 4,
+                                                                                                                    "Filter": "((role)::text = ANY ('{\"costume designer\",writer}'::text[]))"
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                },
+                                                                                                {
+                                                                                                    "Node Type": "Hash",
+                                                                                                    "Parent Relationship": "Inner",
+                                                                                                    "Parallel Aware": true,
+                                                                                                    "Async Capable": false,
+                                                                                                    "Startup Cost": 563197.97,
+                                                                                                    "Total Cost": 563197.97,
+                                                                                                    "Plan Rows": 1,
+                                                                                                    "Plan Width": 24,
+                                                                                                    "Plans": [
+                                                                                                        {
+                                                                                                            "Node Type": "Nested Loop",
+                                                                                                            "Parent Relationship": "Outer",
+                                                                                                            "Parallel Aware": false,
+                                                                                                            "Async Capable": false,
+                                                                                                            "Join Type": "Inner",
+                                                                                                            "Startup Cost": 300548.86,
+                                                                                                            "Total Cost": 563197.97,
+                                                                                                            "Plan Rows": 1,
+                                                                                                            "Plan Width": 24,
+                                                                                                            "Inner Unique": true,
+                                                                                                            "Plans": [
+                                                                                                                {
+                                                                                                                    "Node Type": "Hash Join",
+                                                                                                                    "Parent Relationship": "Outer",
+                                                                                                                    "Parallel Aware": true,
+                                                                                                                    "Async Capable": false,
+                                                                                                                    "Join Type": "Inner",
+                                                                                                                    "Startup Cost": 300548.43,
+                                                                                                                    "Total Cost": 563166.32,
+                                                                                                                    "Plan Rows": 4,
+                                                                                                                    "Plan Width": 16,
+                                                                                                                    "Inner Unique": false,
+                                                                                                                    "Hash Cond": "(mi1.movie_id = mi2.movie_id)",
+                                                                                                                    "Plans": [
+                                                                                                                        {
+                                                                                                                            "Node Type": "Seq Scan",
+                                                                                                                            "Parent Relationship": "Outer",
+                                                                                                                            "Parallel Aware": true,
+                                                                                                                            "Async Capable": false,
+                                                                                                                            "Relation Name": "movie_info",
+                                                                                                                            "Alias": "mi1",
+                                                                                                                            "Startup Cost": 0.0,
+                                                                                                                            "Total Cost": 261959.7,
+                                                                                                                            "Plan Rows": 897,
+                                                                                                                            "Plan Width": 8,
+                                                                                                                            "Filter": "((info_type_id = 18) AND (info = ANY ('{\"Buenos Aires, Federal District, Argentina\",\"Los Angeles, California, USA\",\"New York City, New York, USA\"}'::text[])))"
+                                                                                                                        },
+                                                                                                                        {
+                                                                                                                            "Node Type": "Hash",
+                                                                                                                            "Parent Relationship": "Inner",
+                                                                                                                            "Parallel Aware": true,
+                                                                                                                            "Async Capable": false,
+                                                                                                                            "Startup Cost": 300541.12,
+                                                                                                                            "Total Cost": 300541.12,
+                                                                                                                            "Plan Rows": 585,
+                                                                                                                            "Plan Width": 8,
+                                                                                                                            "Plans": [
+                                                                                                                                {
+                                                                                                                                    "Node Type": "Seq Scan",
+                                                                                                                                    "Parent Relationship": "Outer",
+                                                                                                                                    "Parallel Aware": true,
+                                                                                                                                    "Async Capable": false,
+                                                                                                                                    "Relation Name": "movie_info",
+                                                                                                                                    "Alias": "mi2",
+                                                                                                                                    "Startup Cost": 0.0,
+                                                                                                                                    "Total Cost": 300541.12,
+                                                                                                                                    "Plan Rows": 585,
+                                                                                                                                    "Plan Width": 8,
+                                                                                                                                    "Filter": "((info_type_id = 5) AND (info = ANY ('{Argentina:13,Argentina:16,Argentina:Atp,Australia:MA,Singapore:PG,UK:15,UK:18,USA:R}'::text[])))"
+                                                                                                                                }
+                                                                                                                            ]
+                                                                                                                        }
+                                                                                                                    ]
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "Node Type": "Index Scan",
+                                                                                                                    "Parent Relationship": "Inner",
+                                                                                                                    "Parallel Aware": false,
+                                                                                                                    "Async Capable": false,
+                                                                                                                    "Scan Direction": "Forward",
+                                                                                                                    "Index Name": "title_pkey",
+                                                                                                                    "Relation Name": "title",
+                                                                                                                    "Alias": "t",
+                                                                                                                    "Startup Cost": 0.43,
+                                                                                                                    "Total Cost": 7.91,
+                                                                                                                    "Plan Rows": 1,
+                                                                                                                    "Plan Width": 8,
+                                                                                                                    "Index Cond": "(id = mi1.movie_id)",
+                                                                                                                    "Filter": "((production_year <= 2010) AND (production_year >= 1950))"
+                                                                                                                }
+                                                                                                            ]
+                                                                                                        }
+                                                                                                    ]
+                                                                                                }
+                                                                                            ]
+                                                                                        }
+                                                                                    ]
+                                                                                }
+                                                                            ]
+                                                                        },
+                                                                        {
+                                                                            "Node Type": "Memoize",
+                                                                            "Parent Relationship": "Inner",
+                                                                            "Parallel Aware": false,
+                                                                            "Async Capable": false,
+                                                                            "Startup Cost": 0.16,
+                                                                            "Total Cost": 0.98,
+                                                                            "Plan Rows": 1,
+                                                                            "Plan Width": 4,
+                                                                            "Cache Key": "t.kind_id",
+                                                                            "Cache Mode": "logical",
+                                                                            "Plans": [
+                                                                                {
+                                                                                    "Node Type": "Index Scan",
+                                                                                    "Parent Relationship": "Outer",
+                                                                                    "Parallel Aware": false,
+                                                                                    "Async Capable": false,
+                                                                                    "Scan Direction": "Forward",
+                                                                                    "Index Name": "kind_type_pkey",
+                                                                                    "Relation Name": "kind_type",
+                                                                                    "Alias": "kt",
+                                                                                    "Startup Cost": 0.15,
+                                                                                    "Total Cost": 0.97,
+                                                                                    "Plan Rows": 1,
+                                                                                    "Plan Width": 4,
+                                                                                    "Index Cond": "(id = t.kind_id)",
+                                                                                    "Filter": "((kind)::text = ANY ('{\"tv movie\",\"tv series\",\"video game\"}'::text[]))"
+                                                                                }
+                                                                            ]
+                                                                        }
+                                                                    ]
+                                                                },
+                                                                {
+                                                                    "Node Type": "Seq Scan",
+                                                                    "Parent Relationship": "Inner",
+                                                                    "Parallel Aware": false,
+                                                                    "Async Capable": false,
+                                                                    "Relation Name": "info_type",
+                                                                    "Alias": "it1",
+                                                                    "Startup Cost": 0.0,
+                                                                    "Total Cost": 2.41,
+                                                                    "Plan Rows": 1,
+                                                                    "Plan Width": 4,
+                                                                    "Filter": "(id = 18)"
+                                                                }
+                                                            ]
+                                                        },
+                                                        {
+                                                            "Node Type": "Seq Scan",
+                                                            "Parent Relationship": "Inner",
+                                                            "Parallel Aware": false,
+                                                            "Async Capable": false,
+                                                            "Relation Name": "info_type",
+                                                            "Alias": "it2",
+                                                            "Startup Cost": 0.0,
+                                                            "Total Cost": 2.41,
+                                                            "Plan Rows": 1,
+                                                            "Plan Width": 4,
+                                                            "Filter": "(id = 5)"
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "Node Type": "Index Scan",
+                                                    "Parent Relationship": "Inner",
+                                                    "Parallel Aware": false,
+                                                    "Async Capable": false,
+                                                    "Scan Direction": "Forward",
+                                                    "Index Name": "name_pkey",
+                                                    "Relation Name": "name",
+                                                    "Alias": "n",
+                                                    "Startup Cost": 0.43,
+                                                    "Total Cost": 2.53,
+                                                    "Plan Rows": 1,
+                                                    "Plan Width": 4,
+                                                    "Index Cond": "(id = ci.person_id)",
+                                                    "Filter": "((gender)::text = 'f'::text)"
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "Node Type": "Memoize",
+                                            "Parent Relationship": "Inner",
+                                            "Parallel Aware": false,
+                                            "Async Capable": false,
+                                            "Startup Cost": 0.43,
+                                            "Total Cost": 2.41,
+                                            "Plan Rows": 1,
+                                            "Plan Width": 4,
+                                            "Cache Key": "mk.keyword_id",
+                                            "Cache Mode": "logical",
+                                            "Plans": [
+                                                {
+                                                    "Node Type": "Index Scan",
+                                                    "Parent Relationship": "Outer",
+                                                    "Parallel Aware": false,
+                                                    "Async Capable": false,
+                                                    "Scan Direction": "Forward",
+                                                    "Index Name": "keyword_pkey",
+                                                    "Relation Name": "keyword",
+                                                    "Alias": "k",
+                                                    "Startup Cost": 0.42,
+                                                    "Total Cost": 2.4,
+                                                    "Plan Rows": 1,
+                                                    "Plan Width": 4,
+                                                    "Index Cond": "(id = mk.keyword_id)",
+                                                    "Filter": "(keyword = ANY ('{bowie-survival-knife,character-breaks-into-multiple-selves,city,driving-school,monterey-diving,new-york-harbor,oil-lease-fraud,olympic-diver,overreaction,pacific-rim,redemption,school-heirarchy,self-defence,sex-in-graveyard,song-dedication,welfare-chiseler}'::text[]))"
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+]

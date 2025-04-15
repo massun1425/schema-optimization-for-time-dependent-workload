@@ -1,0 +1,3 @@
+SELECT mi1.info, n.name, COUNT(*)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_566
+WHERE it1.id = non_leaf_566.mi1_info_type_id AND it2.id = non_leaf_566.pi_info_type_id AND (it2.id IN ('25')) AND (mi1.info IN ('Australia:G','Australia:MA','Australia:PG','Singapore:M18','UK:15','USA:M','USA:R')) AND (n.name ILIKE '%horn%') AND (kt.kind IN ('tv series','video game','video movie')) AND (t.production_year >= 1925) AND (t.production_year <= 2015) AND (rt.role IN ('actor','cinematographer','composer','costume designer')) AND (it1.id IN ('2','5'));

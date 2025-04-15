@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_336.t_production_year), MAX(non_leaf_336.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_336
+WHERE (rt.role IN ('actor','actress','cinematographer','composer','costume designer')) AND (mi1.info IN ('Dolby Digital','Dolby')) AND (kt.kind IN ('tv series','video game','video movie')) AND (it1.id IN ('6')) AND (n.name ILIKE '%jea%');

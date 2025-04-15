@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(t.production_year), MAX(t.production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1460
+WHERE (n.name ILIKE '%sant%') AND n.id = non_leaf_1460.ci_person_id AND (it1.id IN ('4')) AND (rt.role IN ('actor','actress','cinematographer','composer','costume designer')) AND kt.id = t.kind_id AND non_leaf_1460.ci_movie_id = t.id AND (mi1.info IN ('Arabic','Dutch','Finnish','Galician','Tagalog')) AND (kt.kind IN ('episode','tv movie')) AND non_leaf_1460.mi1_movie_id = t.id;

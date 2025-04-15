@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1388.t_production_year), MAX(non_leaf_1388.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1388
+WHERE it1.id = non_leaf_1388.mi1_info_type_id AND (n.name ILIKE '%ung%') AND (it1.id IN ('5','6')) AND (kt.kind IN ('episode','movie','tv movie')) AND (mi1.info IN ('Argentina:18','Argentina:Atp','Australia:R','Brazil:14','Germany:16','Ireland:18','Netherlands:12','Netherlands:AL','Philippines:PG-13','South Korea:18','Sweden:7','UK:18','UK:U','USA:Passed')) AND (rt.role IN ('actor','cinematographer','composer','costume designer'));

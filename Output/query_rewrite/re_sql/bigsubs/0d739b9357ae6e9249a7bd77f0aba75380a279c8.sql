@@ -1,0 +1,3 @@
+SELECT mi1.info, n.name, COUNT(*)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_1077
+WHERE (it2.id IN ('22')) AND (mi1.info IN ('Dolby Digital','Mono','Stereo')) AND (kt.kind IN ('tv movie','video game','video movie')) AND it2.id = non_leaf_1077.pi_info_type_id AND (rt.role IN ('actress','costume designer','miscellaneous crew','producer')) AND (it1.id IN ('6')) AND (n.name ILIKE '%mc%');

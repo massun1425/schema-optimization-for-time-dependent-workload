@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1275.t_production_year), MAX(non_leaf_1275.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1275
+WHERE (rt.role IN ('actor','actress','cinematographer','composer','costume designer')) AND it1.id = non_leaf_1275.mi1_info_type_id AND (kt.kind IN ('episode','movie','tv movie')) AND (n.name ILIKE '%bun%') AND (mi1.info IN ('Black AND White','Canada','Denmark','France','India','Japan','USA')) AND (it1.id IN ('2','8'));

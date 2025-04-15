@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(t.production_year), MAX(t.production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, leaf_456
+WHERE ci.movie_id = t.id AND ci.movie_id = mi1.movie_id AND (n.name ILIKE '%marti%') AND (it1.id IN ('4','6')) AND ci.role_id = rt.id AND (kt.kind IN ('tv movie','video game','video movie')) AND kt.id = t.kind_id AND it1.id = mi1.info_type_id AND (mi1.info IN ('Czech','Danish','Dolby Digital','Dolby','English','French','German','Mono','Spanish','Stereo')) AND mi1.movie_id = t.id AND ci.person_id = n.id AND (rt.role IN ('cinematographer','composer','production designer','writer'));

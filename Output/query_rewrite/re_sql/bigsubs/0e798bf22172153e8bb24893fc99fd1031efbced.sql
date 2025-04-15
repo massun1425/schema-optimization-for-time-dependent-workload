@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1499.t_production_year), MAX(non_leaf_1499.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1499
+WHERE kt.id = non_leaf_1499.t_kind_id AND (mi1.info IN ('Black AND White','Documentary','Family','Reality-TV','Talk-Show')) AND (rt.role IN ('director','editor','miscellaneous crew','producer','production designer')) AND (kt.kind IN ('tv series')) AND (it1.id IN ('2','3','4')) AND (n.name ILIKE '%but%') AND it1.id = non_leaf_1499.mi1_info_type_id;

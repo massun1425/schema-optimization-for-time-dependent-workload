@@ -1,0 +1,3 @@
+SELECT mi1.info, n.name, COUNT(*)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_1406
+WHERE it2.id = pi.info_type_id AND (n.name ILIKE '%san%') AND (it1.id IN ('4')) AND (mi1.info IN ('Cantonese','Czech','Georgian','Greek','Korean','Mandarin','Norwegian','Persian','Romanian','Serbian','Tamil','Urdu')) AND kt.id = non_leaf_1406.t_kind_id AND (kt.kind IN ('episode','movie','video movie')) AND (it2.id IN ('33')) AND (rt.role IN ('actress','director','miscellaneous crew','producer')) AND it1.id = non_leaf_1406.mi1_info_type_id AND n.id = pi.person_id AND n.id = non_leaf_1406.ci_person_id AND (t.production_year <= 1975) AND (t.production_year >= 1875);

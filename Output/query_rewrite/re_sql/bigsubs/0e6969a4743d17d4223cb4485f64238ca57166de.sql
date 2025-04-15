@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1532.t_production_year), MAX(non_leaf_1532.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1532
+WHERE (it1.id IN ('5')) AND (n.name ILIKE '%eri%') AND (kt.kind IN ('episode','movie','video movie')) AND (mi1.info IN ('Argentina:13','Australia:R','Iceland:14','Ireland:12A','Norway:15','Norway:18','Peru:PT','Philippines:R-18','Switzerland:16','West Germany:16')) AND (rt.role IN ('actress','director','producer'));

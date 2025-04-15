@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1165.t_production_year), MAX(non_leaf_1165.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1165
+WHERE kt.id = non_leaf_1165.t_kind_id AND (n.name ILIKE '%ken%') AND (kt.kind IN ('episode','movie','tv series')) AND (it1.id IN ('8')) AND it1.id = non_leaf_1165.mi1_info_type_id AND (mi1.info IN ('Australia','Belgium','France','Germany','Hong Kong','Ireland','Italy','Japan','Netherlands','New Zealand','Philippines','Sweden','Turkey','UK','USA')) AND (rt.role IN ('cinematographer','composer','production designer','writer'));

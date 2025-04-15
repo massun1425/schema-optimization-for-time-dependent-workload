@@ -1,0 +1,3 @@
+SELECT mi1.info, n.name, COUNT(*)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_847
+WHERE (it2.id IN ('22')) AND it1.id = non_leaf_847.mi1_info_type_id AND it2.id = pi.info_type_id AND n.id = non_leaf_847.ci_person_id AND (kt.kind IN ('episode','movie','video movie')) AND kt.id = non_leaf_847.t_kind_id AND (rt.role IN ('composer','editor','production designer','writer')) AND (n.name ILIKE '%pe%') AND n.id = pi.person_id AND (t.production_year <= 1975) AND (it1.id IN ('3','5','6')) AND (mi1.info IN ('Australia:R','Crime','Family','Finland:S','Iceland:16','Netherlands:14','Netherlands:AL','Stereo','USA:NOT Rated','USA:R','USA:X'));

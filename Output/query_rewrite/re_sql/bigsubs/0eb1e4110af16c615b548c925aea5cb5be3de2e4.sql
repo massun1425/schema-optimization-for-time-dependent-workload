@@ -1,0 +1,3 @@
+SELECT n.name, mi1.info, MIN(non_leaf_1565.t_production_year), MAX(non_leaf_1565.t_production_year)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1565
+WHERE (mi1.info IN ('Adult')) AND (n.name ILIKE '%adamo%') AND (it1.id IN ('3','4','5')) AND (rt.role IN ('director','editor','producer','production designer')) AND (kt.kind IN ('tv series','video game','video movie'));

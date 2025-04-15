@@ -1,0 +1,3 @@
+SELECT mi1.info, pi.info, COUNT(*)
+FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_1329
+WHERE (kt.kind IN ('episode','movie','tv mini series','tv movie','tv series','video game')) AND it2.id = pi.info_type_id AND (it1.id IN ('16')) AND (rt.role IN ('actor','costume designer','guest','miscellaneous crew','production designer','writer')) AND (pi.info ILIKE '%17%') AND (mi1.info ILIKE '%de%') AND (it2.id IN ('21')) AND non_leaf_1329.n_id = pi.person_id;
