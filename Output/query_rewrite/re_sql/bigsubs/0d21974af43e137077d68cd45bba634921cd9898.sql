@@ -1,3 +1,0 @@
-SELECT mi1.info, n.name, COUNT(*)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_1110
-WHERE (rt.role IN ('actress','costume designer','director','miscellaneous crew','producer')) AND (it1.id IN ('4','6')) AND kt.id = t.kind_id AND it1.id = non_leaf_1110.mi1_info_type_id AND it2.id = non_leaf_1110.pi_info_type_id AND (it2.id IN ('35')) AND (mi1.info IN ('Danish','Dutch','Italian','Serbo-Croatian','Swedish')) AND (t.production_year >= 1950) AND non_leaf_1110.mi1_movie_id = t.id AND (t.production_year <= 1990) AND (kt.kind IN ('tv movie','video movie')) AND non_leaf_1110.ci_movie_id = t.id AND (n.name ILIKE '%ret%');

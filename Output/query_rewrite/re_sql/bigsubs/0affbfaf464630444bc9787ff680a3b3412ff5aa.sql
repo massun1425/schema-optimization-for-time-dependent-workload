@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(t.production_year), MAX(t.production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_314
-WHERE (mi1.info IN ('Bulgarian','Czech','Dutch','Finnish','Serbo-Croatian','Spanish')) AND kt.id = t.kind_id AND (n.name ILIKE '%nik%') AND n.id = non_leaf_314.ci_person_id AND it1.id = non_leaf_314.mi1_info_type_id AND (kt.kind IN ('tv series','video game','video movie')) AND (rt.role IN ('actor','actress','costume designer')) AND non_leaf_314.ci_movie_id = t.id AND non_leaf_314.mi1_movie_id = t.id AND (it1.id IN ('2','4'));

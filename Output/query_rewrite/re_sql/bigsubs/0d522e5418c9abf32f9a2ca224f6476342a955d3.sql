@@ -1,3 +1,0 @@
-SELECT mi1.info, n.name, COUNT(*)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_1062
-WHERE (rt.role IN ('cinematographer','editor','production designer','writer')) AND (it2.id IN ('26')) AND (kt.kind IN ('episode','movie','tv series')) AND (t.production_year >= 1975) AND (mi1.info IN ('Australia','Canada','Catalan','Chile','Colombia','Cuba','German','Italian','Japanese','Peru','Venezuela')) AND (t.production_year <= 2015) AND (it1.id IN ('2','4','8')) AND it2.id = non_leaf_1062.pi_info_type_id AND (n.name ILIKE '%cab%');

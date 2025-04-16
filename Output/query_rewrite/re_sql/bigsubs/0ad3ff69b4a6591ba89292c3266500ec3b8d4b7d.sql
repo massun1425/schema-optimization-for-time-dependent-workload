@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_241.t_production_year), MAX(non_leaf_241.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_241
-WHERE mi1.movie_id = non_leaf_241.t_id AND (n.name ILIKE '%cas%') AND (mi1.info IN ('Action','Adult','Adventure','Documentary','Family','Horror','Music','Romance','Sci-Fi','Short','Thriller')) AND it1.id = mi1.info_type_id AND (it1.id IN ('3')) AND (rt.role IN ('director','editor','miscellaneous crew','producer')) AND (kt.kind IN ('tv series','video game','video movie')) AND mi1.movie_id = non_leaf_241.ci_movie_id;

@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_408.t_production_year), MAX(non_leaf_408.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_408
-WHERE (n.name ILIKE '%pil%') AND (mi1.info IN ('Black AND White','Crime','Dolby Digital','Fantasy','Horror','Mystery','Sci-Fi','Sport','Thriller')) AND it1.id = mi1.info_type_id AND (rt.role IN ('actress','cinematographer','costume designer')) AND (kt.kind IN ('tv series','video game','video movie')) AND mi1.movie_id = non_leaf_408.t_id AND mi1.movie_id = non_leaf_408.ci_movie_id AND (it1.id IN ('2','3','6'));

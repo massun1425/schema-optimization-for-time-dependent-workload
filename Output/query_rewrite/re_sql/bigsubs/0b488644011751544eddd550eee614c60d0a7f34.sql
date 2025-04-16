@@ -1,3 +1,0 @@
-SELECT mi1.info, pi.info, COUNT(*)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_615
-WHERE (rt.role IN ('actress','cinematographer','composer','costume designer','editor','guest','producer','production designer','writer')) AND (pi.info ILIKE '%185%') AND (mi1.info ILIKE '%me%') AND (kt.kind IN ('tv mini series','tv movie','tv series')) AND (it1.id IN ('7')) AND (it2.id IN ('21'));

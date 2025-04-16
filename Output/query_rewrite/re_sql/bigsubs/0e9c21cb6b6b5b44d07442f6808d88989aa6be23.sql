@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1381.t_production_year), MAX(non_leaf_1381.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1381
-WHERE (it1.id IN ('5')) AND (rt.role IN ('director','editor','miscellaneous crew','producer','production designer')) AND (mi1.info IN ('Australia:M','Australia:MA','Singapore:M18','USA:M','USA:NOT Rated','USA:Unrated')) AND (kt.kind IN ('video game','video movie')) AND (n.name ILIKE '%julia%');

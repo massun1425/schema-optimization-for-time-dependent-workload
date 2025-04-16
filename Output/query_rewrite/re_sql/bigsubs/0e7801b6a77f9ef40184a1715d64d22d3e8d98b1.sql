@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1542.t_production_year), MAX(non_leaf_1542.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1542
-WHERE (rt.role IN ('actress','cinematographer','composer')) AND (n.name ILIKE '%white%') AND (kt.kind IN ('tv series','video game','video movie')) AND (it1.id IN ('5','8')) AND (mi1.info IN ('Australia:MA','UK','UK:18','UK:R18','USA','USA:R','USA:X'));

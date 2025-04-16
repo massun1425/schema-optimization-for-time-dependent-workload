@@ -1,4 +1,0 @@
-CREATE MATERIALIZED VIEW non_leaf_634 AS
-SELECT mi1.id AS mi1_id, mi1.movie_id AS mi1_movie_id, mi1.info_type_id AS mi1_info_type_id, mi1.info AS mi1_info, mi1.note AS mi1_note, ci.id AS ci_id, ci.person_id AS ci_person_id, ci.movie_id AS ci_movie_id, ci.person_role_id AS ci_person_role_id, ci.note AS ci_note, ci.nr_order AS ci_nr_order, ci.role_id AS ci_role_id, rt.id AS rt_id, rt.role AS rt_role
-FROM movie_info AS mi1, cast_info AS ci, role_type AS rt
-WHERE mi1.movie_id = ci.movie_id AND mi1.info IN ('Danish', 'Spanish') AND mi1.info_type_id = 4 AND ci.role_id = rt.id AND rt.role IN ('director', 'editor', 'miscellaneous crew', 'producer', 'production designer');

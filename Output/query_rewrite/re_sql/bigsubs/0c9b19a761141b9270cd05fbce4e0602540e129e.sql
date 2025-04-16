@@ -1,3 +1,0 @@
-SELECT mi1.info, n.name, COUNT(*)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, info_type as it2, person_info as pi, non_leaf_771
-WHERE it2.id = pi.info_type_id AND (it2.id IN ('26')) AND (mi1.info IN ('70 mm 6-Track','Dolby Digital','Stereo')) AND (kt.kind IN ('episode','movie','video movie')) AND (n.name ILIKE '%ly%') AND (it1.id IN ('6')) AND (rt.role IN ('actress','costume designer','miscellaneous crew','producer')) AND non_leaf_771.n_id = pi.person_id AND (t.production_year >= 1925) AND (t.production_year <= 1975);

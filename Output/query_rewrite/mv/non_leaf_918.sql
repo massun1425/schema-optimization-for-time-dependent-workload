@@ -1,4 +1,0 @@
-CREATE MATERIALIZED VIEW non_leaf_918 AS
-SELECT mi1.id AS mi1_id, mi1.movie_id AS mi1_movie_id, mi1.info_type_id AS mi1_info_type_id, mi1.info AS mi1_info, mi1.note AS mi1_note, t.id AS t_id, t.title AS t_title, t.imdb_index AS t_imdb_index, t.kind_id AS t_kind_id, t.production_year AS t_production_year, t.imdb_id AS t_imdb_id, t.phonetic_code AS t_phonetic_code, t.episode_of_id AS t_episode_of_id, t.season_nr AS t_season_nr, t.episode_nr AS t_episode_nr, t.series_years AS t_series_years, t.md5sum AS t_md5sum
-FROM movie_info AS mi1, title AS t
-WHERE mi1.info ~~* '%mcmx%' AND mi1.info_type_id = 103 AND t.id = mi1.movie_id;

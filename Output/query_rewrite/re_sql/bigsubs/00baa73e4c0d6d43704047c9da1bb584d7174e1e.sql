@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(t.production_year), MAX(t.production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_622
-WHERE (it1.id IN ('4')) AND kt.id = t.kind_id AND (rt.role IN ('director','editor','miscellaneous crew','producer','production designer')) AND (mi1.info IN ('Danish','Spanish')) AND (kt.kind IN ('tv series','video game','video movie')) AND it1.id = non_leaf_622.mi1_info_type_id AND (n.name ILIKE '%lise%') AND non_leaf_622.mi1_movie_id = t.id AND non_leaf_622.ci_movie_id = t.id;

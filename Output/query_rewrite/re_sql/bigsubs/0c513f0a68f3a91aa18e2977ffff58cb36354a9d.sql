@@ -1,3 +1,0 @@
-SELECT n.gender, rt.role, cn.name, COUNT(*)
-FROM title as t, movie_companies as mc, company_name as cn, company_type as ct, kind_type as kt, cast_info as ci, name as n, role_type as rt, movie_info as mi1, info_type as it, non_leaf_831
-WHERE (cn.name ILIKE '%col%') AND non_leaf_831.ci_movie_id = t.id AND it.id = non_leaf_831.mi1_info_type_id AND kt.id = t.kind_id AND non_leaf_831.mc_movie_id = t.id AND (rt.role IN ('actor','actress','costume designer','director','editor','guest','miscellaneous crew','producer')) AND (kt.kind ILIKE '%se%') AND (it.id IN ('6')) AND (t.production_year <= 2015) AND (mi1.info ILIKE '%di%') AND non_leaf_831.mi1_movie_id = t.id AND (t.production_year >= 1875);

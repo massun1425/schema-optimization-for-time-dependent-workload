@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_736.t_production_year), MAX(non_leaf_736.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_736
-WHERE (it1.id IN ('2','3','5')) AND (rt.role IN ('actress','director','miscellaneous crew')) AND (mi1.info IN ('Animation','Biography','Color','Germany:16','Iceland:16','Italy:T','Mexico:B','Music','Musical','Netherlands:AL','Portugal:M/16','Sci-Fi','Singapore:NC-16','South Korea:12','South Korea:15','South Korea:18','Sweden:Btl','Thriller','USA:Approved','West Germany:12')) AND (kt.kind IN ('episode','movie','tv series')) AND (n.name ILIKE '%rosen%') AND it1.id = non_leaf_736.mi1_info_type_id;

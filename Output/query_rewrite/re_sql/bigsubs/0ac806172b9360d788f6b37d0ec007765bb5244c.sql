@@ -1,3 +1,0 @@
-SELECT t.title, n.name, cn.name, COUNT(*)
-FROM title as t, movie_keyword as mk, keyword as k, movie_companies as mc, company_name as cn, company_type as ct, kind_type as kt, cast_info as ci, name as n, role_type as rt, non_leaf_222
-WHERE (n.name_pcode_cf ILIKE '%g6%') AND mc.movie_id = mk.movie_id AND mk.movie_id = non_leaf_222.t_id AND mc.movie_id = non_leaf_222.t_id AND (cn.name ILIKE '%pi%') AND mk.movie_id = non_leaf_222.ci_movie_id AND n.id = non_leaf_222.ci_person_id AND cn.id = mc.company_id AND (rt.role IN ('actor','cinematographer','director','miscellaneous crew')) AND k.id = mk.keyword_id AND (t.title ILIKE '%201%') AND mc.movie_id = non_leaf_222.ci_movie_id AND ct.id = mc.company_type_id AND (kt.kind IN ('episode','tv movie','tv series','video movie'));

@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1143.t_production_year), MAX(non_leaf_1143.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1143
-WHERE (it1.id IN ('3','8')) AND (mi1.info IN ('Action','Adult','Adventure','Animation','Canada','Comedy','Crime','Denmark','Documentary','Drama','Fantasy','Germany','Music','Short','Thriller','USA','West Germany')) AND (rt.role IN ('costume designer','director','miscellaneous crew')) AND (kt.kind IN ('tv movie','video game','video movie')) AND (n.name ILIKE '%gen%');

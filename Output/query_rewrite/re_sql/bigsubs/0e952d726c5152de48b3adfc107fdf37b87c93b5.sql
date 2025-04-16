@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1515.t_production_year), MAX(non_leaf_1515.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1515
-WHERE (n.name ILIKE '%mage%') AND (mi1.info IN ('Adventure','DTS','Fantasy','Music','Musical','Mystery','SDDS','Sci-Fi')) AND n.id = non_leaf_1515.ci_person_id AND it1.id = non_leaf_1515.mi1_info_type_id AND (kt.kind IN ('episode','movie','tv movie')) AND (it1.id IN ('3','6')) AND (rt.role IN ('director','editor','miscellaneous crew','producer'));

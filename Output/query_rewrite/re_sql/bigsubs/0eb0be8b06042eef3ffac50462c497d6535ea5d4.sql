@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1549.t_production_year), MAX(non_leaf_1549.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1549
-WHERE it1.id = non_leaf_1549.mi1_info_type_id AND kt.id = non_leaf_1549.t_kind_id AND (n.name ILIKE '%sym%') AND n.id = non_leaf_1549.ci_person_id AND (kt.kind IN ('episode','movie','tv movie')) AND (it1.id IN ('4','5','6')) AND (mi1.info IN ('Argentina:Atp','Australia:M','Australia:PG','Dolby Digital','English','Finland:K-16','German','Greek','Mono','Netherlands:12','Polish','Russian','Stereo','Sweden:15','UK:15','UK:PG','USA:Approved')) AND (rt.role IN ('actor','actress','cinematographer','composer'));

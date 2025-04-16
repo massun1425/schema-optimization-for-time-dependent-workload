@@ -1,3 +1,0 @@
-SELECT t.title, n.name, cn.name, COUNT(*)
-FROM title as t, movie_keyword as mk, keyword as k, movie_companies as mc, company_name as cn, company_type as ct, kind_type as kt, cast_info as ci, name as n, role_type as rt, non_leaf_161
-WHERE (kt.kind IN ('episode','movie','tv movie','video movie')) AND (rt.role IN ('composer','producer','production designer','writer')) AND (n.name_pcode_nf ILIKE '%d%') AND (cn.name ILIKE '%wa%') AND (t.title ILIKE '%1997%');

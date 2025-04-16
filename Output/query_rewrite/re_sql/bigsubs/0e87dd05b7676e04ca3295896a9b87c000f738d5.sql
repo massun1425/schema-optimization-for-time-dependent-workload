@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1415.t_production_year), MAX(non_leaf_1415.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1415
-WHERE (n.name ILIKE '%kog%') AND n.id = non_leaf_1415.ci_person_id AND (mi1.info IN ('Color','English')) AND (it1.id IN ('2','4','5')) AND it1.id = non_leaf_1415.mi1_info_type_id AND (kt.kind IN ('tv series','video game','video movie')) AND kt.id = non_leaf_1415.t_kind_id AND (rt.role IN ('editor','miscellaneous crew','producer','production designer'));

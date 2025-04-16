@@ -1,4 +1,0 @@
-CREATE MATERIALIZED VIEW non_leaf_1460 AS
-SELECT pi.id AS pi_id, pi.person_id AS pi_person_id, pi.info_type_id AS pi_info_type_id, pi.info AS pi_info, pi.note AS pi_note, mi1.id AS mi1_id, mi1.movie_id AS mi1_movie_id, mi1.info_type_id AS mi1_info_type_id, mi1.info AS mi1_info, mi1.note AS mi1_note, it1.id AS it1_id, it1.info AS it1_info, ci.id AS ci_id, ci.person_id AS ci_person_id, ci.movie_id AS ci_movie_id, ci.person_role_id AS ci_person_role_id, ci.note AS ci_note, ci.nr_order AS ci_nr_order, ci.role_id AS ci_role_id, rt.id AS rt_id, rt.role AS rt_role
-FROM person_info AS pi, movie_info AS mi1, info_type AS it1, cast_info AS ci, role_type AS rt
-WHERE pi.person_id = ci.person_id AND pi.info_type_id = 19 AND mi1.movie_id = ci.movie_id AND mi1.info_type_id = it1.id AND mi1.info = 'English' AND it1.id IN ('2', '4}'::integ') AND ci.role_id = rt.id AND rt.role IN ('actress', 'composer', 'costume designer');

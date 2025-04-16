@@ -1,3 +1,0 @@
-SELECT n.name, mi1.info, MIN(non_leaf_1212.t_production_year), MAX(non_leaf_1212.t_production_year)
-FROM title as t, kind_type as kt, movie_info as mi1, info_type as it1, cast_info as ci, role_type as rt, name as n, non_leaf_1212
-WHERE (n.name ILIKE '%gra%') AND (it1.id IN ('4','6')) AND (mi1.info IN ('DTS','Danish','Datasat','Dolby Digital','Dolby SR','Dutch','Filipino','French','German','Greek','Hebrew','Hindi','Japanese','Polish','Portuguese','Stereo','Swedish')) AND (kt.kind IN ('movie','tv series')) AND it1.id = non_leaf_1212.mi1_info_type_id AND (rt.role IN ('actress','director','miscellaneous crew','producer'));
