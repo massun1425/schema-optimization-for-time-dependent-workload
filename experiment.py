@@ -12,7 +12,7 @@ ILP_frequency_based = False
 ilp_types =  ["bigsubs"]
 
 # initalize csv fore each ilp
-os.system(f"python compare_bata.py")
+os.system(f"python3 compare_bata.py")
 
 for ilp in ilp_types:
     # clear up mv files
@@ -21,17 +21,17 @@ for ilp in ilp_types:
     print(ilp)
 
     # Materialized view sql scripts creation and rewrites queries with new mv
-    os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
+    os.system(f"python3 re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
     # Run Materialized view sql scripts
     print("Creating MVs")
     os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
     # sets up workloads with new rewritten queries
     print("Setting up Workloads")
-    os.system(f"python setup_rewritten.py {ilp}")
+    os.system(f"python3 setup_rewritten.py {ilp}")
 
     #setup redbench
     os.chdir("dataset/redbench")
     #run redbench
-    os.system("python run.py") # might have to test this one out
+    os.system("python3 run.py") # might have to test this one out
     # go back to original work directory for the next ilp
     os.chdir("../..")
