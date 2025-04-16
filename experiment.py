@@ -21,10 +21,10 @@ for ilp in ilp_types:
     print(ilp)
 
     # Materialized view sql scripts creation and rewrites queries with new mv
-    os.system(f"python re_sql_exe.py {ilp} > Output/mv_create/{ilp}.out")
+    os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
     # Run Materialized view sql scripts
     print("Creating MVs")
-    os.system(f"bash run_mv.sh > Output/run_mv/{ilp}.out")
+    os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
     # sets up workloads with new rewritten queries
     print("Setting up Workloads")
     os.system(f"python setup_rewritten.py {ilp}")
