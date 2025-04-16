@@ -4,7 +4,7 @@
 
 Before doing anything make sure to install all the modules (Check [requirements.txt](requirements.txt))
 
-To install a module simply execute this command
+To install the required modules simply execute this command
 
 ```
 pip install -r requirements.txt
