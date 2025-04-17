@@ -14,8 +14,8 @@ import ILP_bigsubs_beta as ILP_bigsubs_beta
 import ILP_proposed_f_beta as ILP_proposed_f_beta
 
 
-q_num = 113 # JOB
-#q_num = 13759  # JOB + CEB # CAUSES MEMORY ERROR
+#q_num = 113 # JOB
+q_num = 13759  # JOB + CEB # CAUSES MEMORY ERROR
 insert_query = 2000
 B_max = 0.1 * 1000 * 1000 * 1000
 # Around 0.1G might be the best for all ILP

@@ -9,7 +9,7 @@ import time
 import argparse
 
 # Change depending on computer or OS
-DEFAULT_PSQL = os.path.expanduser("C:\\Programs\PostgreSQL\\17\\bin\psql.exe")
+DEFAULT_PSQL = os.path.expanduser("/usr/bin/psql")
 
 def parse_args():
     # Parse the arguments
