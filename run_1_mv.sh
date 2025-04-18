@@ -28,7 +28,7 @@ start=$(date +%s)
 #     echo "Error1: Execution of $file exceeded 20 seconds and was terminated." >> $errorfile
 # fi
 #PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
-PGPASSWORD='pass' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
+psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
 end=$(date +%s)
 elapsed=$(( $end - $start ))
 echo "elapsed time: $elapsed s" >> $errorfile

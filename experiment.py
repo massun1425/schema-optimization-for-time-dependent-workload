@@ -7,9 +7,9 @@ ILP_utility_capacity_based = False
 ILP_utility_based = False
 ILP_frequency_based = False
 
-#ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
+ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 
-ilp_types =  ["bigsubs"]
+#ilp_types =  ["bigsubs"]
 
 # initalize csv fore each ilp
 os.system(f"python compare_bata.py")

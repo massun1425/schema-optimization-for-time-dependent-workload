@@ -34,7 +34,7 @@ def parse_args():
 
 def run_sql_cmd(db_cli, db_file, sql_file):
     # set the pgpass.conf to avoid the password prompt
-    os.system(f"{db_cli} -h localhost -p 5432 -U  postgres -d {db_file} < {sql_file} > redbench.log")
+    os.system(f"{db_cli} -U  postgres -d {db_file} < {sql_file} > redbench.log")
 
 # Run Redbench
 def main(db_cli):

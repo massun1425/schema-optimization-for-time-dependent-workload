@@ -21,11 +21,11 @@ B_max = 0.1 * 1000 * 1000 * 1000
 # Around 0.1G might be the best for all ILP
 
 # Which ILP to use
-ILP_normal = False
+ILP_normal = True
 ILP_bigsubs = True
-ILP_utility_capacity_based = False
-ILP_utility_based = False
-ILP_frequency_based = False
+ILP_utility_capacity_based = True
+ILP_utility_based = True
+ILP_frequency_based = True
 
 # generates jsons # ?
 

@@ -19,7 +19,7 @@ for file in `ls dataset/JOB_sql/*.sql`; do
     echo "run $file > $outputfile"
     start=$(date +%s.%N)
     #PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
-    PGPASSWORD='pass' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
+    psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
     end=$(date +%s.%N)
     elapsed=$(echo "$end - $start" | bc)
     echo "elapsed time: $elapsed s" >> $errorfile

@@ -21,7 +21,7 @@ for folder in bigsubs normal proposed_u_b proposed_u proposed_f; do
 		echo "run $file > $outputfile"
 		start=$(date +%s)
 		#PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
-		PGPASSWORD='pass' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
+		psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
 		end=$(date +%s)
 		elapsed=$(( $end - $start ))
 		echo "elapsed time: $elapsed s" >> $errorfile
