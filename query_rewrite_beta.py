@@ -348,7 +348,7 @@ def query_rewrite(method, rows):
 	#path = "dataset/JOB_sql"
 	#json_path = "dataset/JOB_json"
 	path = "dataset/RED_SQL"
-	json_path = "dataset/redbench/RED_JSON"
+	json_path = "dataset/RED_JSON"
 
 	mv_path = "Output/query_rewrite/mv/"
 	output_path = 'Output/'
@@ -396,7 +396,7 @@ def query_rewrite(method, rows):
 			# shutil.copy(file_path, f"{output_path}query_rewrite/{files[file_id]}")
 		else:
 			with open(file_path, "r") as f:
-				print("file: ", files[file_id])
+				#print("file: ", files[file_id])
 				content = f.read()
 				# ここで解析処理を行う
 
@@ -424,6 +424,7 @@ def query_rewrite(method, rows):
 			sql_original = sql_original.replace("IS NULL","=== NULL") #is notに対応するため, 7c.sqlにあり
 
 			# print("sql_original: ", sql_original)
+			
 			if " IN " in sql_original or " in " in sql_original:
 				sql_original = sql_original.replace(" IN ", " == ")
 				sql_original = sql_original.replace(" in ", " == ")
@@ -443,6 +444,7 @@ def query_rewrite(method, rows):
 			content = content[1].split(" WHERE ")
 			from_str = content[0]
 			where_str = content[1]
+			group_str = "GROUP BY " + content[1].split("GROUP BY")[1]
 
 			from_sql = "\nFROM "
 			where_sql = ""
@@ -508,9 +510,12 @@ def query_rewrite(method, rows):
 							# print("changed_u_cond: ", unique1[u_cond_id])
 						unique1[u_cond_id] = unique1[u_cond_id][1:]
 					select_str = select_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
+					group_str = group_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
 					where_sql = where_sql.replace(mv_a + ".", node + ".")
 				new_conditions = unique1
 				# print("new_conditions: ", new_conditions)
+
+				
 
 				if " == " in sql_mv: # INの" == "を" IN "に変更
 					with open(mv_path + node + ".sql", "r") as file:
@@ -565,7 +570,10 @@ def query_rewrite(method, rows):
 			from_sql += from_str
 			# print("arranged_from: ",from_str)
 
-			new_sql = "SELECT " + select_str + from_sql + where_sql + ";"
+			# Reconstruct Group by sql
+			group_sql = "\n" + group_str
+
+			new_sql = "SELECT " + select_str + from_sql + where_sql + group_sql +";"
 			#print(new_sql)
 			
 			with open(result_path + method + "/" + files[file_id], "w+") as file:  #ファイル保存 #TODO check if w+ will be problematic
