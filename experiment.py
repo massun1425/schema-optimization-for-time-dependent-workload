@@ -18,6 +18,8 @@ for ilp in ilp_types:
     # clear up mv files
     os.system("rm -f Output/query_rewrite/mv/*") # to clean up extra mv
 
+    os.system(f"bash delete_mv.sh > /dev/null")
+
     print(ilp)
 
     # Materialized view sql scripts creation and rewrites queries with new mv

@@ -1,0 +1,4 @@
+\t
+SELECT 'DROP MATERIALIZED VIEW ' || string_agg(oid::regclass::text, ', ')
+FROM   pg_class
+WHERE  relkind = 'm';
