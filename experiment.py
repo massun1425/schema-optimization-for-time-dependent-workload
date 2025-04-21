@@ -11,8 +11,8 @@ ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 
 #ilp_types =  ["bigsubs"]
 
-# initalize csv fore each ilp
-os.system(f"python compare_bata.py")
+# initalize csv before each ilp
+os.system(f"python compare_bata.py > Output/compare_bata.out")
 
 for ilp in ilp_types:
     # clear up mv files
@@ -34,6 +34,6 @@ for ilp in ilp_types:
     #setup redbench
     os.chdir("dataset/redbench")
     #run redbench
-    os.system("python run.py") # might have to test this one out
+    os.system(f"python run.py > ../../Output/redbench/{ilp}.out")
     # go back to original work directory for the next ilp
     os.chdir("../..")

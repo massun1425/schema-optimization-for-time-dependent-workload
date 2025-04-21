@@ -25,7 +25,6 @@ def parse_args():
     args = parser.parse_args()
 
     # Check whether the binary is available.
-    print(os.path.isfile(args.psql))
     if not os.path.isfile(args.psql):
         print(f"Couldn't find {args.psql}. Please install psql and try again.")
         sys.exit(-1)
@@ -49,7 +48,6 @@ def main(db_cli):
     exec_times = dict()
     # Iterate over the query repetition buckets
     for subdir in sorted(get_sub_directories(WORKLOADS_DIR)):
-        # TODO only do the JOB queries // I think that means i need to change the workloads DIR
         bucket_name = os.path.basename(subdir)
         log(f"Running Redbench bucket {bucket_name}..")
         start_time = time.perf_counter_ns()
