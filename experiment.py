@@ -12,6 +12,7 @@ ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 #ilp_types =  ["bigsubs"]
 
 # initalize csv before each ilp
+print("Initalize csv for each ILP")
 os.system(f"python compare_bata.py > Output/compare_bata.out")
 
 for ilp in ilp_types:
@@ -20,9 +21,10 @@ for ilp in ilp_types:
 
     os.system(f"bash delete_mv.sh > /dev/null")
 
-    print(ilp)
+    print("ILP : "+ilp)
 
     # Materialized view sql scripts creation and rewrites queries with new mv
+    print("Mv creation and query rewrite")
     os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
     # Run Materialized view sql scripts
     print("Creating MVs")
@@ -34,6 +36,7 @@ for ilp in ilp_types:
     #setup redbench
     os.chdir("dataset/redbench")
     #run redbench
+    print("REDBENCH")
     os.system(f"python run.py > ../../Output/redbench/{ilp}.out")
     # go back to original work directory for the next ilp
     os.chdir("../..")
