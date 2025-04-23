@@ -349,8 +349,8 @@ def mv_node_analize(node):
 def query_rewrite(method, rows):
 	#path = "dataset/JOB_sql"
 	#json_path = "dataset/JOB_json"
-	path = "dataset/RED_SQL"
-	json_path = "dataset/RED_JSON"
+	path = "dataset/RED_SQL/job"
+	json_path = "dataset/RED_JSON/job"
 
 	mv_path = "Output/query_rewrite/mv/"
 	output_path = 'Output/'
@@ -368,6 +368,10 @@ def query_rewrite(method, rows):
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
 	# 	mv_data = csv.reader(file)
 	# 	rows = list(mv_data)
+
+	print(result_path + method)
+	# delete all previously rewritten queries
+	os.system(f"rm {result_path + method}/*")
 
 	print("len(files): ", len(files))
 	# print("len(json_files): ", len(json_files)) #消して良き
@@ -446,8 +450,12 @@ def query_rewrite(method, rows):
 			content = content[1].split(" WHERE ")
 			from_str = content[0]
 			where_str = content[1]
-			group_str = "GROUP BY " + content[1].split("GROUP BY")[1]
 
+			group_str = content[1].split("GROUP BY")
+			if len(group_str) > 2:
+				group_str = "GROUP BY " + group_str[1]
+			else:
+				group_str=""
 			from_sql = "\nFROM "
 			where_sql = ""
 
@@ -573,9 +581,10 @@ def query_rewrite(method, rows):
 			# print("arranged_from: ",from_str)
 
 			# Reconstruct Group by sql
-			group_sql = "\n" + group_str
+			if group_str != "":
+				group_str = "\n" + group_str
 
-			new_sql = "SELECT " + select_str + from_sql + where_sql + group_sql +";"
+			new_sql = "SELECT " + select_str + from_sql + where_sql + group_str +";"
 			#print(new_sql)
 			
 			with open(result_path + method + "/" + files[file_id], "w+") as file:  #ファイル保存 #TODO check if w+ will be problematic

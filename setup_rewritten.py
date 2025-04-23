@@ -45,15 +45,17 @@ def unpack_workloads():
                 num_queries[group_name] += 1
                 #query_path = REDBENCH_DIR+"/"+line.split(",")[0] # can be deleted
                 query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
+                if not os.path.exists(query_path):
+                    continue
                 with open(query_path, "r") as query_file:
                     query = query_file.read().strip()
                     query += ";" if not query.endswith(";") else ""
                     sql_workload += f"-- {query_path}\n{query}\n\n"
             # Write the unpacked workload to a new sql file
-            with open(
-                os.path.join(subdir, filename.replace(".csv", ".sql")), "w"
-            ) as sql_workload_file:
-                sql_workload_file.write(sql_workload)
+                with open(
+                    os.path.join(subdir, filename.replace(".csv", ".sql")), "w"
+                ) as sql_workload_file:
+                    sql_workload_file.write(sql_workload)
     log("Finished unpacking Redbench rewritten workloads.")
     
 

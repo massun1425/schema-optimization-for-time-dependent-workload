@@ -35,13 +35,13 @@ python experiment.py
 
 ## Method
 
-- step 0.1 (optional): python make_each_sqlfile.py : puts sql files from ceb and job into a folder to rewrite later, only needs to be done once
-- step 0.2 (optional): python sqljson.py : turn sql files into json files, only needs to be done once
-- step 1: python compare_bata.py
-- step 2: python re_sql_exe.py <ilp> : creates mv scripts and rewrites queries
-- step 3: bash run_mv.sh : creates mv
-- step 4: python setup_rewritten.py : will use the csv and rewritten queries to setup the proper workloads according to frequency
-- step 5: python run.py : runs redbench with new workload
+- step 0.1 (optional): `python make_each_sqlfile.py` : puts sql files from ceb and job into a folder to rewrite later, only needs to be done once
+- step 0.2 (optional): `python sqljson.py` : turn sql files into json files, only needs to be done once
+- step 1: `python compare_bata.py`
+- step 2: `python re_sql_exe.py <ilp>` : creates mv scripts and rewrites queries
+- step 3: `bash run_mv.sh` : creates mv
+- step 4: `python setup_rewritten.py <ilp>` : will use the csv and rewritten queries to setup the proper workloads according to frequency
+- step 5: `python run.py` : runs redbench with new workload
 
 ## Docker setup
 
