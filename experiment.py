@@ -15,6 +15,15 @@ ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 print("Initalize csv for each ILP")
 os.system(f"python compare_bata.py > Output/compare_bata.out")
 
+# Output dirs
+if not os.path.exists("Output/experiment/run_mv"):
+    os.makedirs("Output/experiment/run_mv")
+if not os.path.exists("Output/experiment/mv_create"):
+    os.makedirs("Output/experiment/mv_create")
+if not os.path.exists("Output/redbench"):
+    os.makedirs("Output/redbench")
+
+
 for ilp in ilp_types:
     # clear up mv files
     os.system("rm -f Output/query_rewrite/mv/*") # to clean up extra mv
