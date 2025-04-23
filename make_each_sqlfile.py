@@ -6,10 +6,22 @@ def save_sql_files(input_folder, output_folder):
 	num = 0
 	# Iterate through all files in the input folder
 	for path, subdirs, files in os.walk(input_folder):
+		out_dir = path.split('\\')[-2:]
+		print(out_dir)
+		if out_dir[-1] == "job":
+			out_dir = out_dir[-1]
+		else:
+			out_dir = '\\'.join(out_dir)
+		out_dir = output_folder+ "\\" + out_dir
 		for name in files:
 			input_file = os.path.join(path, name)
-			output_file = os.path.join(output_folder, name)
+			output_file = os.path.join(out_dir, name)
+			#print(output_file)
 			if input_file.endswith(".sql"):
+				# create dirs
+				if not os.path.exists(out_dir):
+					os.makedirs(out_dir)
+					print(out_dir)
 				# copies files into output folder
 				with open(input_file, 'r') as sql_file:
 					data = sql_file.read()

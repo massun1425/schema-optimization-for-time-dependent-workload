@@ -36,6 +36,8 @@ def condition_analaize(where_str, table, alias, condition_type):
 	where_sql = ''
 	if "::text" in where_str:
 		where_str = where_str.replace("::text", "")
+	if "::integer" in where_str:
+		where_str = where_str.replace("::integer", "")
 	if "[]" in where_str:
 		where_str = where_str.replace("[]", "")
 	# if ") = " in where_str or ") >" in where_str or ") <" in where_str:
