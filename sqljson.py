@@ -25,7 +25,7 @@ for dir in sql_dirs:
         # make dirs for jsons
         if not os.path.exists(output_path):
             os.makedirs(output_path)
-            print(output_path)
+            #print(output_path)
         
         sql_file_path = os.path.join(input_path, sql_file)
         #print(sql_file_path)
