@@ -58,4 +58,6 @@ Then enter the container:
 
 ```bash
 docker exec -ti mv_exp bash
+
+psql -U postgres < data/setup.sql
 ```

@@ -19,7 +19,4 @@ RUN apt install -y python3-pip
 RUN pip3 install --no-cache-dir -r ./mv-query-optimization/requirements.txt --break-system-packages
 RUN apt install -y python-is-python3
 
-# setup sql server data
-RUN psql -U postgres data/setup.sql
-
 ENV POSTGRES_PASSWORD=pass
