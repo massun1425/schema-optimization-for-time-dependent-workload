@@ -27,11 +27,10 @@ ILP_utility_capacity_based = True
 ILP_utility_based = True
 ILP_frequency_based = True
 
-# generates jsons # ?
 
-#query_path = "dataset/JOB_json"
-query_path = "dataset/RED_JSON"
+query_path = "dataset/RED_JSON/job"
 qp = QueryParser()
+# TODO make it so query path gets files in subfolders and count queries
 qp.query_parse(q_num, query_path, insert_query)
 
 output_path = "Output/"
