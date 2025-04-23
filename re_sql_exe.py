@@ -206,8 +206,8 @@ if query_mv:
 		t1 = time.time()
 		query_rewrite_beta.mv_make(mv_nodes_normal)
 		query_rewrite_beta.mv_remake(mv_nodes_normal)
-		t2 = time.time()
 		query_rewrite_beta.query_rewrite('normal', mv_nodes_normal)
+		t2 = time.time()
 		print("Time: ", t2-t1)
 		print("-------------------------------------\n")
 
@@ -217,8 +217,8 @@ if query_mv:
 		t1 = time.time()
 		query_rewrite_beta.mv_make(mv_nodes_bigsubs)
 		query_rewrite_beta.mv_remake(mv_nodes_bigsubs)
-		t2 = time.time()
 		query_rewrite_beta.query_rewrite('bigsubs', mv_nodes_bigsubs)
+		t2 = time.time()
 		print("Time: ", t2-t1)
 		print("-------------------------------------\n")
 
@@ -228,8 +228,8 @@ if query_mv:
 		t1 = time.time()
 		query_rewrite_beta.mv_make(mv_nodes_utility_capacity_based)
 		query_rewrite_beta.mv_remake(mv_nodes_utility_capacity_based)
-		t2 = time.time()
 		query_rewrite_beta.query_rewrite('proposed_u_b', mv_nodes_utility_capacity_based)
+		t2 = time.time()
 		print("Time: ", t2-t1)
 		print("-------------------------------------\n")
 
@@ -239,8 +239,8 @@ if query_mv:
 		t1 = time.time()
 		query_rewrite_beta.mv_make(mv_nodes_utility_based)
 		query_rewrite_beta.mv_remake(mv_nodes_utility_based)
-		t2 = time.time()
 		query_rewrite_beta.query_rewrite('proposed_u', mv_nodes_utility_based)
+		t2 = time.time()
 		print("Time: ", t2-t1)
 		print("-------------------------------------\n")
 
@@ -250,8 +250,8 @@ if query_mv:
 		t1 = time.time()
 		query_rewrite_beta.mv_make(mv_nodes_frequency_based)
 		query_rewrite_beta.mv_remake(mv_nodes_frequency_based)
-		t2 = time.time()
 		query_rewrite_beta.query_rewrite('proposed_f', mv_nodes_frequency_based)
+		t2 = time.time()
 		print("Time: ", t2-t1)
 		print("-------------------------------------\n")
 
