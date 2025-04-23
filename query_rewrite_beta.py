@@ -315,7 +315,7 @@ def mv_make(mv_nodes):
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
 
-		with open(f"{output_path}query_rewrite/mv/{mv_id}.sql", "w") as file:
+		with open(f"{output_path}query_rewrite/mv/{mv_id}.sql", "w+") as file:
 			file.write(mv_sql)
 
 def mv_node_analize(node):
