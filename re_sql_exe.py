@@ -81,15 +81,17 @@ if normal_ILP:
 
 if bigsubs_ILP:
 	mv_nodes_bigsubs = []
-	with open(query_result_path + "bigsubs/mv_y_list.csv", "r") as f:
+	with open(query_result_path + "bigsubs/mv_y_list.csv", "r", newline='') as f:
 		reader = csv.reader(f)
 		bigsubs_mv_rows = list(reader)
+		print("bg row len : ", len(bigsubs_mv_rows))
 		for row in bigsubs_mv_rows:
 			if len(row) > 1:
 				for r in row:
 					mv_nodes_bigsubs.append(r)
 			else:
 				if len(row) == 0:
+					mv_nodes_bigsubs.append("NONE")
 					continue
 				mv_nodes_bigsubs.append(row[0])
 		
@@ -186,7 +188,7 @@ if frequency_based_ILP:
 # print("mv_nodes: ", mv_nodes)
 # print("len(mv_nodes): ", len(mv_nodes))
 # print("len(mv_nodes_normal): ", len(mv_nodes_normal))
-# print("len(mv_nodes_bigsubs): ", len(mv_nodes_bigsubs))
+print("len(mv_nodes_bigsubs): ", len(mv_nodes_bigsubs))
 # print("len(mv_nodes_utility_capacity_based): ", len(mv_nodes_utility_capacity_based))
 # print("len(mv_nodes_utility_based): ", len(mv_nodes_utility_based))
 # print("len(mv_nodes_frequency_based): ", len(mv_nodes_frequency_based))

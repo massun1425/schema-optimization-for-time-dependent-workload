@@ -61,3 +61,5 @@ docker exec -ti mv_exp bash
 
 psql -U postgres < setup.sql
 ```
+
+Then set up the Output folders with `make_dirs.sh`

@@ -16,7 +16,9 @@ from sqlparse.tokens import Keyword, Comparison
 def find_child_leaf(node, qp, child_list=None):
 	if child_list is None:
 		child_list = []
-	if node.startswith('leaf'):
+	if node == "NONE":
+		child_list = []
+	elif node.startswith('leaf'):
 		child_list.append(node)
 	else:
 		child_list.append(node)
@@ -314,9 +316,9 @@ def mv_make(mv_nodes):
 
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
-
-		with open(f"{output_path}query_rewrite/mv/{mv_id}.sql", "w+") as file:
-			file.write(mv_sql)
+		if mv_id != "NONE":
+			with open(f"{output_path}query_rewrite/mv/{mv_id}.sql", "w+") as file:
+				file.write(mv_sql)
 
 def mv_node_analize(node):
 	path = "Output/query_rewrite/mv/"
@@ -342,7 +344,7 @@ def mv_node_analize(node):
 	if from_conds[-1][-1] == ";":
 		from_conds[-1] = from_conds[-1][:-1]
 	
-	# print("mna_from_conds: ", from_conds)
+	#print("mna_from_conds: ", from_conds)
 
 	return sql_mv, from_conds
 
@@ -445,6 +447,7 @@ def query_rewrite(method, rows):
 			# print("sql_original: ", sql_original)
 
 			content = content.replace("\n"," ") # changes "" to " " beause it was causing errors
+			content = content.replace("     "," ") # changes "" to " " beause it was causing errors
 			content = content.split(" FROM ")
 			select_str = content[0].replace("SELECT ", "")
 			content = content[1].split(" WHERE ")
@@ -466,6 +469,8 @@ def query_rewrite(method, rows):
 			
 			for node in mv_node:
 			#for node in rows:
+				if node =="NONE":
+					continue
 				sql_mv, from_conds_mv = mv_node_analize(node)
 				sql_mv = sql_mv.replace("IS NOT","!!=")
 				sql_mv = sql_mv.replace("IS NULL","=== NULL")
@@ -497,7 +502,7 @@ def query_rewrite(method, rows):
 				
 				from_str = from_str[:-1]
 				from_str_list = from_str.split(", ")
-				from_str_list = [item for item in from_str_list if item != "mv"]
+				from_str_list = [item for item in from_str_list if item != " mv" and item != "mv"]
 				from_str_list.append(str(node))
 				from_str = ", ".join(from_str_list)
 				# print("from_str: ", from_str)
@@ -859,6 +864,8 @@ def mv_remake(mv_nodes):
 
 
 	for node in mv_nodes:
+		if node == "NONE":
+			continue
 		select_str = ""
 		columns_list = {}
 		with open(path + node + ".sql", "r") as file:
