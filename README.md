@@ -12,7 +12,9 @@ pip install -r requirements.txt
 
 ## PostgreSQL server setup
 
-See [JOB](https://github.com/viktorleis/job)
+Run `setup.sh` in data folder then run `psql -U postgres < setup.sql`.
+
+[JOB](https://github.com/viktorleis/job)
 
 ## Setting up gurobi
 
