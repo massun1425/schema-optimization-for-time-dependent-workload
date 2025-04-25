@@ -521,7 +521,7 @@ def query_rewrite(method, rows):
 						# print("unique1_cond: ", unique1[u_cond_id])
 						unique1[u_cond_id] = " " + unique1[u_cond_id]
 						if " " + mv_a + "." in unique1[u_cond_id]:
-							unique1[u_cond_id] = unique1[u_cond_id].replace(mv_a + ".",node + "." + mv_a + "_") #ここ変えたよ1/23
+							unique1[u_cond_id] = unique1[u_cond_id].replace(" " + mv_a + ".",node + "." + mv_a + "_") #ここ変えたよ1/23
 							# print("changed_u_cond: ", unique1[u_cond_id])
 						unique1[u_cond_id] = unique1[u_cond_id][1:]
 					select_str = select_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
