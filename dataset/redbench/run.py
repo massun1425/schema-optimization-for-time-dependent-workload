@@ -68,6 +68,15 @@ def main(db_cli):
         results_table.add_row([bucket_name, str(timedelta(seconds=exec_time))])
     print(results_table)
 
+def test(db_cli):
+    job_dir = "./imdb/benchmarks/job"
+    t1 = time.time()
+    for file in os.listdir(job_dir):
+        run_sql_cmd(db_cli, 'imdbload', job_dir+ '/' + file)
+    t2 = time.time()
+    print("Time: ", t2-t1)
+
 # And run
 if __name__ == "__main__":
     main(parse_args().psql)
+    #test(parse_args().psql)
