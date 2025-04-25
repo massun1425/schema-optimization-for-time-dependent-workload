@@ -188,7 +188,7 @@ if frequency_based_ILP:
 # print("mv_nodes: ", mv_nodes)
 # print("len(mv_nodes): ", len(mv_nodes))
 # print("len(mv_nodes_normal): ", len(mv_nodes_normal))
-print("len(mv_nodes_bigsubs): ", len(mv_nodes_bigsubs))
+# print("len(mv_nodes_bigsubs): ", len(mv_nodes_bigsubs))
 # print("len(mv_nodes_utility_capacity_based): ", len(mv_nodes_utility_capacity_based))
 # print("len(mv_nodes_utility_based): ", len(mv_nodes_utility_based))
 # print("len(mv_nodes_frequency_based): ", len(mv_nodes_frequency_based))
