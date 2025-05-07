@@ -392,7 +392,7 @@ def query_rewrite(method, rows):
 		# if files[file_id] != "12b.sql":
 		# 	continue
 
-		mv_node = [rows[file_id]] # TODO check if this is ok
+		mv_node = rows[file_id]
 		if len(mv_node) == 0:
 			# print("file: ", files[file_id])
 			# print(file_path)
