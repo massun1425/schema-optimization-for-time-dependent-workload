@@ -5,7 +5,7 @@ import sys
 
 WORKLOADS_DIR = "Output/RED_WORKLOADS"
 
-ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
+ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency", "none"]
 
 ## Argument handler
 if len(sys.argv) < 2:
@@ -23,7 +23,11 @@ if sys.argv[1] not in ilp_types:
     exit(0)
 
 #INPUT_DIR = "dataset/RED_SQL"
-INPUT_DIR = "Output/query_rewrite/re_sql/" + sys.argv[1]
+
+if sys.argv[1] != "none":
+    INPUT_DIR = "Output/query_rewrite/re_sql/" + sys.argv[1]
+else:
+    INPUT_DIR = "dataset/RED_SQL/job"
 
 # Unpack/ inline the workload queries (convert the csv files to runnable sql files)
 def unpack_workloads():

@@ -7,7 +7,7 @@ ILP_utility_capacity_based = False
 ILP_utility_based = False
 ILP_frequency_based = False
 
-ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency"]
+ilp_types =  ["none", "normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 
 #ilp_types =  ["bigsubs"]
 
@@ -31,13 +31,13 @@ for ilp in ilp_types:
     os.system(f"bash delete_mv.sh > /dev/null")
 
     print("ILP : "+ilp)
-
-    # Materialized view sql scripts creation and rewrites queries with new mv
-    print("Mv creation and query rewrite")
-    os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
-    # Run Materialized view sql scripts
-    print("Creating MVs")
-    os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
+    if ilp != "none":    
+        # Materialized view sql scripts creation and rewrites queries with new mv
+        print("Mv creation and query rewrite")
+        os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
+        # Run Materialized view sql scripts
+        print("Creating MVs")
+        os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
     # sets up workloads with new rewritten queries
     print("Setting up Workloads")
     os.system(f"python setup_rewritten.py {ilp}")
