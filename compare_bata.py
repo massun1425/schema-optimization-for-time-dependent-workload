@@ -31,7 +31,7 @@ ILP_frequency_based = True
 query_path = "dataset/RED_JSON/job"
 qp = QueryParser()
 #query_path = "dataset/RED_JSON"
-#q_num = cpt = sum([len(files) for r, d, files in os.walk(query_path)])
+#q_num = sum([len(files) for r, d, files in os.walk(query_path)])
 
 qp.query_parse(q_num, query_path, insert_query)
 
