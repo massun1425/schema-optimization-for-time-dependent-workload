@@ -1,12 +1,6 @@
 import os
 import time
 
-ILP_bigsubs = False
-ILP_normal = False
-ILP_utility_capacity_based = False
-ILP_utility_based = False
-ILP_frequency_based = False
-
 ilp_types =  ["none", "normal", "bigsubs", "utility_capacity", "utility", "frequency"]
 
 #ilp_types =  ["bigsubs"]
