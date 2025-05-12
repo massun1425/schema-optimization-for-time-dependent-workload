@@ -9,10 +9,6 @@ query = "1a"
 delete_file = "dataset/alpha/title_delete.sql"
 insert_file = "dataset/alpha/title_insert.sql"
 
-print("Alpha calculation")
-
-print("")
-
 t1 = time.time()
 os.system(f"psql -U postgres -d imdbload -f {sql_path}/{query}.sql")
 t2 = time.time()
@@ -38,6 +34,8 @@ alpha = insert_execution_time * query_estimated_time
 
 alpha = alpha/query_execution_time
 
+print()
+print("ALPHA MEASURE : ")
 print()
 print("Query execution time : ", query_execution_time)
 print("Query estimated time : ", query_estimated_time)
