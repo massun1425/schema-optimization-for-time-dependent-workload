@@ -2,6 +2,7 @@ import json
 import os
 import re
 import random
+import time
 import pickle
 import csv
 
@@ -260,10 +261,24 @@ class QueryParser:
 		return reverse_dict
 
 	def search_leaf_node(self, node_id):
-		if node_id.startswith("non_leaf_"):
-			return self.search_leaf_node(self.qm.non_leaf_nodes_map_r[node_id][0])
-		else:
-			return node_id
+		"""
+		指定されたnode_idをルートとするサブツリー内のすべての葉ノードに関連するテーブル名をリストとして返します。
+		"""
+		leaf_tables = set()
+
+		def _find_leaf_tables_recursive(current_node_id):
+			if current_node_id.startswith("leaf_"):
+				table_name = self.qm.relation_tables.get(current_node_id)
+				if table_name:
+					leaf_tables.add(table_name)
+			elif current_node_id.startswith("non_leaf_"):
+				# self.qm.non_leaf_nodes_map_r は {non_leaf_node_id: tuple(sorted(child_node_ids))}
+				child_node_ids = self.qm.non_leaf_nodes_map_r.get(current_node_id, [])
+				for child_id in child_node_ids:
+					_find_leaf_tables_recursive(child_id)
+		
+		_find_leaf_tables_recursive(node_id)
+		return list(leaf_tables)
 
 	def check_m_cost(self, m_cost, table_list, update_table, record_list, search_cost, insert_cost, table_width, insert_times):
 		len_leaf = len(self.qm.leaf_nodes_map)
@@ -274,22 +289,16 @@ class QueryParser:
 				if item[0] == item2:
 					m_cost[i] += self.qm.subquery_costs[node_id] / record_list[table_list.index(item2)]
 					m_cost[i] += search_cost[table_list.index(item2)]
-					m_cost[i] += insert_cost * self.qm.subquery_widths[node_id] * table_width[table_list.index(item2)]
+					m_cost[i] += insert_cost * self.qm.subquery_widths[node_id] / table_width[table_list.index(item2)]
 
-		for i in range(len(self.qm.non_leaf_nodes_map)):
+		for i in range(len(self.qm.non_leaf_nodes_map)): #ここが違うと思う
 			node_id = "non_leaf_" + str(i + 1)
+			node_id_table_list = self.search_leaf_node(node_id)
 			for item in update_table:
-				node_id2s = self.qm.non_leaf_nodes_map_r[node_id]
-				for node_id2 in node_id2s:
-					if node_id2.startswith("non_leaf_"):
-						node_id2 = self.search_leaf_node(node_id2)
-					if item[0] == self.qm.relation_tables[node_id2]:
-						m_cost[i + len_leaf] += self.qm.subquery_costs[node_id] / record_list[table_list.index(self.qm.relation_tables[node_id2])]
-						m_cost[i + len_leaf] += search_cost[table_list.index(self.qm.relation_tables[node_id2])]
-						m_cost[i + len_leaf] += insert_cost * self.qm.subquery_widths[node_id] * table_width[table_list.index(self.qm.relation_tables[node_id2])]
-						break
-		for i in range(len(m_cost)):
-			m_cost[i] *= insert_times
+				if item[0] in node_id_table_list:
+					m_cost[i + len_leaf] += self.qm.subquery_costs[node_id] / record_list[table_list.index(item[0])]
+					# m_cost[i + len_leaf] += search_cost[table_list.index(item[0])]
+					m_cost[i + len_leaf] += insert_cost * self.qm.subquery_sizes[node_id] * self.qm.subquery_widths[node_id] / table_width[table_list.index(item[0])]
 		return m_cost
 
 	def query_parse(self, q_num, path, insert_query):
@@ -478,7 +487,7 @@ class QueryParser:
 			self.query = query
 
 		except json.JSONDecodeError as e:
-			print(f"Error reading {files[i]}: {e}")
+			print(f"Error reading {file}: {e}")
 			return 1
 	
 	def set_inclusive_dependency(self, X, j, parent= None):
@@ -508,7 +517,7 @@ class QueryParser:
 if __name__ == '__main__':
 	q_num = 113
 	ilp = "u_b"
-	path = "dataset/JOB_json"
+	path = "/Users/andersonkaina/Desktop/rs_system/compare_air/dataset/redbench/RED_JSON"
 	insert_query = 100000
 	B_max = 0.1 * 1000 * 1000 * 1000
 	# parsed = query_parse(q_num, path, insert_query)
@@ -518,32 +527,36 @@ if __name__ == '__main__':
 
 
 	qp = QueryParser()
+	t1 = time.time()
 	qp.query_parse(q_num, path, insert_query)
+	t2 = time.time()
+	print("Time: ", t2-t1)
 
+	# print("qp.m_cost= ",qp.m_cost)
 	# for node in qp.node_list:
 	# 	if qp.qm.subquery_sizes[node] == 0:
 	# 		print(node)
 	# 		print(qp.qm.subquery_positions[node])
 	# 		print("qp.qm.leaf_nodes_map_r= ",qp.qm.leaf_nodes_map_r[node])
 
-	costs = qp.b_j
-	total_cost = sum(costs)
-	print("Total cost:", total_cost)
+	# costs = qp.b_j
+	# total_cost = sum(costs)
+	# print("Total cost:", total_cost)
 
 
 
 	# print("qp.qm.leaf_nodes_map_r= ",qp.qm.leaf_nodes_map_r["leaf_67"])
-	u_ij_order = []
+	# u_ij_order = []
 
-	for i,x in enumerate(qp.q_s_list[0]):
-		if x == 1:
-			u_ij_order.append(qp.u_ij[0][i])
+	# for i,x in enumerate(qp.q_s_list[0]):
+	# 	if x == 1:
+	# 		u_ij_order.append(qp.u_ij[0][i])
 	
-	new_order = [0] * len(u_ij_order)
-	j = 0
-	for i in qp.q_s_order_list[0]:
-		new_order[i] = u_ij_order[j]
-		j += 1
+	# new_order = [0] * len(u_ij_order)
+	# j = 0
+	# for i in qp.q_s_order_list[0]:
+	# 	new_order[i] = u_ij_order[j]
+	# 	j += 1
 	# for n in new_order:
 		# print("u_ij= ",n)
 
@@ -551,10 +564,6 @@ if __name__ == '__main__':
 	# with open(output_path + "qp_class.pkl", "wb") as f:
 	# 	pickle.dump(qp, f)
 	
-	# print("parsed[0]= ",parsed[0])
-	# print("parsed[1]= ",parsed[1])
-	# print("parsed[2]= ",parsed[2])
-	# print("parsed[3]= ",parsed[3])
 	# print("qp.query= ",qp.query[0][0])
 	# print("qp.qm.leaf_nodes_map= ",qp.qm.leaf_nodes_map)
 
