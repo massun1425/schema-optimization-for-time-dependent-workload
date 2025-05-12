@@ -398,7 +398,7 @@ def query_rewrite(method, rows):
 			# print(file_path)
 			with open(file_path, "r") as f:
 				content = f.read()
-			with open(result_path + method + "/" + files[file_id], "w") as file:  #ファイル保存 #TODO check method
+			with open(result_path + method + "/" + files[file_id], "w") as file:  #ファイル保存
 				file.write(content)
 
 			# shutil.copy(file_path, f"{output_path}query_rewrite/{files[file_id]}")
@@ -592,7 +592,7 @@ def query_rewrite(method, rows):
 			new_sql = "SELECT " + select_str + from_sql + where_sql + group_str +";"
 			#print(new_sql)
 			
-			with open(result_path + method + "/" + files[file_id], "w+") as file:  #ファイル保存 #TODO check if w+ will be problematic
+			with open(result_path + method + "/" + files[file_id], "w+") as file:  #ファイル保存
 				print("file: ", files[file_id])
 				file.write(new_sql)
 			

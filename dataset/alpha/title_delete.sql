@@ -1,0 +1,2 @@
+DELETE FROM title
+WHERE id = 2528313;

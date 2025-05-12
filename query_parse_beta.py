@@ -151,7 +151,14 @@ class QueryParser:
 
 	def natural_sort_key(self, s):
 		return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-
+	
+	def getAllFiles(self, path):
+		res = []
+		for folder, _ , files in os.walk(path):
+			temp = [folder +'/'+ f for f in files]
+			res = res + temp
+		return res
+	
 	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = []):
 		deep_list.append(depth)
 
@@ -310,7 +317,9 @@ class QueryParser:
 		ope_wherelist = []
 		child_to_parent = {}
 
-		files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		#files = sorted([f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f))) # can be removed
+		files = sorted(self.getAllFiles(path), key=lambda f: self.natural_sort_key(os.path.basename(f)))
+
 		s_num = 0
 		try:
 			for i in range(q_num):
@@ -322,6 +331,8 @@ class QueryParser:
 				table_sub = []
 				filter = []
 				ope = []
+
+				#with open(os.path.join(path, files[i]), 'r') as f: # can be removed
 				with open(files[i], 'r') as f:
 					data = json.load(f)
 					converted_data, deep_list, order_list = self.convert_json(data)

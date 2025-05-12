@@ -30,7 +30,9 @@ ILP_frequency_based = True
 
 query_path = "dataset/RED_JSON/job"
 qp = QueryParser()
-# TODO make it so query path gets files in subfolders and count queries
+#query_path = "dataset/RED_JSON"
+#q_num = sum([len(files) for r, d, files in os.walk(query_path)])
+
 qp.query_parse(q_num, query_path, insert_query)
 
 output_path = "Output/"
