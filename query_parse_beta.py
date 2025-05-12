@@ -288,7 +288,7 @@ class QueryParser:
 				item2 = self.qm.relation_tables[node_id]
 				if item[0] == item2:
 					m_cost[i] += self.qm.subquery_costs[node_id] / record_list[table_list.index(item2)]
-					m_cost[i] += search_cost[table_list.index(item2)]
+					# m_cost[i] += search_cost[table_list.index(item2)]
 					m_cost[i] += insert_cost * self.qm.subquery_widths[node_id] / table_width[table_list.index(item2)]
 
 		for i in range(len(self.qm.non_leaf_nodes_map)): #ここが違うと思う
