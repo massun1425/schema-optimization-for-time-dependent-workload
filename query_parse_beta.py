@@ -455,7 +455,7 @@ class QueryParser:
 
 			table_list = ['aka_name', 'aka_title', 'cast_info', 'char_name', 'comp_cast_type', 'company_name', 'company_type', 'complete_cast', 'info_type', 'keyword', 'kind_type', 'link_type', 'movie_companies', 'movie_info', 'movie_info_idx', 'movie_keyword', 'movie_link', 'name', 'person_info', 'role_type', 'title']
 			record_list = [901343, 361472, 36244344, 3140339, 4, 234997, 4, 135086, 113, 134170, 7, 18, 2609129, 14835720, 1380035, 4523930, 29997, 4167491, 2963664, 12, 2528312]
-			insert_cost = 0.01
+			insert_cost = 37.77183800563274 # alpha
 			search_cost = [8.44, 8.44, 8.46, 8.45, 8.17, 8.44, 8.17, 8.31, 8.17, 8.44, 8.17, 8.17, 8.45, 8.45, 8.44, 8.45, 8.30, 8.45, 8.45, 8.17, 8.16]
 			table_width = [324, 348, 56, 182, 86, 198, 86, 16, 86, 60, 52, 86, 48, 76, 52, 12, 16, 238, 76, 86, 306]
 			m_cost = [0] * (len_leaf + len_non_leaf)
