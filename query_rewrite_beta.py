@@ -351,21 +351,26 @@ def mv_node_analize(node):
 def query_rewrite(method, rows):
 	#path = "dataset/JOB_sql"
 	#json_path = "dataset/JOB_json"
-	path = "dataset/RED_SQL/job"
-	json_path = "dataset/RED_JSON/job"
+	path = "dataset/RED_SQL"
+	json_path = "dataset/RED_JSON"
+
+	os.system(f"rm -f Output/query_rewrite/re_sql/{method}/*")
 
 	mv_path = "Output/query_rewrite/mv/"
 	output_path = 'Output/'
 	result_path = output_path+'query_rewrite/re_sql/'
 	class_path = 'Output/qp_class.pkl'
-	files = sorted(
-		[f for f in os.listdir(path) if f.endswith(".sql")],
-		key=natural_sort_key
-	)
-	json_files = sorted(
-		[f for f in os.listdir(json_path) if f.endswith(".json")],
-		key=natural_sort_key
-	)
+
+	files = []
+	for folder, _ , file in os.walk(path):
+		temp = [folder +'/'+ f for f in file if f.endswith(".sql")]
+		files = files + temp
+
+	json_files = []
+	for folder, _ , file in os.walk(json_path):
+		temp = [folder +'/'+ f for f in file if f.endswith(".json")]
+		json_files = json_files + temp
+
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
 	# 	mv_data = csv.reader(file)
@@ -387,8 +392,10 @@ def query_rewrite(method, rows):
 		
 		if file_id >= len(rows):
 			break
-		file_path = os.path.join(path, files[file_id])
-		json_file_path = os.path.join(json_path, json_files[file_id])
+		#file_path = os.path.join(path, files[file_id])
+		file_path = files[file_id]
+		#json_file_path = os.path.join(json_path, json_files[file_id])
+		json_file_path = json_files[file_id]
 		# if files[file_id] != "12b.sql":
 		# 	continue
 
@@ -398,7 +405,8 @@ def query_rewrite(method, rows):
 			# print(file_path)
 			with open(file_path, "r") as f:
 				content = f.read()
-			with open(result_path + method + "/" + files[file_id], "w") as file:  #ファイル保存
+			tmpFile = files[file_id].split('/')[-1]
+			with open(result_path + method + '/' + tmpFile, "w") as file:  #ファイル保存
 				file.write(content)
 
 			# shutil.copy(file_path, f"{output_path}query_rewrite/{files[file_id]}")
@@ -591,11 +599,11 @@ def query_rewrite(method, rows):
 
 			new_sql = "SELECT " + select_str + from_sql + where_sql + group_str +";"
 			#print(new_sql)
-			
-			with open(result_path + method + "/" + files[file_id], "w+") as file:  #ファイル保存
+
+			tmpFile = files[file_id].split('/')[-1]
+			with open(result_path + method + '/' + tmpFile, "w+") as file:  #ファイル保存
 				print("file: ", files[file_id])
 				file.write(new_sql)
-			
 			# print("---------------------------------")
 
 
