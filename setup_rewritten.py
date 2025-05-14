@@ -27,10 +27,11 @@ if sys.argv[1] not in ilp_types:
 if sys.argv[1] != "none":
     INPUT_DIR = "Output/query_rewrite/re_sql/" + sys.argv[1]
 else:
-    INPUT_DIR = "dataset/RED_SQL/job"
+    INPUT_DIR = "dataset/RED_SQL"
 
 # Unpack/ inline the workload queries (convert the csv files to runnable sql files)
 def unpack_workloads():
+    os.system(f"rm -f {WORKLOADS_DIR}/*/*.sql") # clean up
     log("Unpacking Redbench rewritten workloads.")
     num_queries = defaultdict(int)
     # Iterate over the query repetition groups
@@ -47,8 +48,11 @@ def unpack_workloads():
             # Unpack the queries
             for line in workload:
                 num_queries[group_name] += 1
-                #query_path = REDBENCH_DIR+"/"+line.split(",")[0] # can be deleted
+                #query_path = INPUT_DIR+"/"+line.split(",")[0] # can be deleted
                 query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
+                if sys.argv[1] == "none":
+                    query_path = INPUT_DIR+'/'+ "/".join(line.split(",")[0].split('/')[2:])
+    
                 if not os.path.exists(query_path):
                     continue
                 with open(query_path, "r") as query_file:
