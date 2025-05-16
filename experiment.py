@@ -43,3 +43,6 @@ for ilp in ilp_types:
     os.system(f"python run.py > ../../Output/redbench/{ilp}.out")
     # go back to original work directory for the next ilp
     os.chdir("../..")
+
+    print("Running all rewritten queries")
+    os.system(f"python execute_rewritten.py {ilp} > Output/query_rewrite/{ilp}.out")

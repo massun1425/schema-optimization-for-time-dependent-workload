@@ -69,3 +69,16 @@ Then [run the program](#runnning)
 - step 4: `python setup_rewritten.py <ilp>` : will use the csv and rewritten queries to setup the proper workloads according to frequency
 - step 5: `python run.py` : runs redbench with new workload
 
+## IMMV
+
+See [pg_ivm](https://github.com/sraoss/pg_ivm).
+
+```bash
+wget https://github.com/sraoss/pg_ivm/archive/refs/heads/main.zip
+unzip main.zip
+apt-get -y install postgresql-server-dev-17
+make install
+
+psql -U postgres -c "CREATE EXTENSION pg_ivm;"
+echo "shared_preload_libraries = 'pg_ivm'" >> /var/lib/postgresql/data/postgresql.conf
+```

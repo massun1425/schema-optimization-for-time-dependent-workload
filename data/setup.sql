@@ -2,6 +2,10 @@ CREATE DATABASE imdbload;
 
 \connect imdbload
 
+CREATE EXTENSION pg_ivm;
+
+--set schema 'pgivm';
+
 \i schema.sql
 
 \copy aka_name from 'aka_name.csv' csv escape '\'

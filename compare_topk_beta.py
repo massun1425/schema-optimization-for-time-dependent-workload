@@ -15,8 +15,8 @@ import ILP_proposed_f_beta as ILP_proposed_f_beta
 
 
 q_num = 113
-insert_query = 1000
-B_max =  500 * 1000 * 1000
+insert_query = 2000
+B_max =  0.1 * 1000 * 1000 * 1000
 
 # Which ILP to use
 # ILP_bigsubs = True

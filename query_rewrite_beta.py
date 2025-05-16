@@ -215,7 +215,9 @@ def mv_make(mv_nodes):
 		mv_id = mv_list[i]
 		# if mv_id != "non_leaf_666":
 		# 	continue
-		mv_sql = "CREATE MATERIALIZED VIEW " + mv_id + " AS\nSELECT *\n"
+		
+		#mv_sql = "CREATE MATERIALIZED VIEW " + mv_id + " AS\nSELECT *\n"
+		mv_sql = "SELECT pgivm.create_immv('" + mv_id + "','SELECT *\n"
 
 		mv_node_list = find_child_leaf(mv_id, qp)
 		# print("mv_node_list: ", mv_node_list)
@@ -307,12 +309,15 @@ def mv_make(mv_nodes):
 
 		from_sql = from_sql[:-2]
 		if where_sql == "WHERE ": #条件がない場合
-			mv_sql += from_sql + ";"
+			#mv_sql += from_sql + ";"
+			mv_sql += from_sql + " ');"
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
 			# 	where_sql = where_sql.replace("= '", "='")
-			mv_sql += from_sql + "\n" + where_sql + ";"
+			
+			#mv_sql += from_sql + "\n" + where_sql + ";"
+			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + " ');"
 
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
@@ -351,8 +356,8 @@ def mv_node_analize(node):
 def query_rewrite(method, rows):
 	#path = "dataset/JOB_sql"
 	#json_path = "dataset/JOB_json"
-	path = "dataset/RED_SQL"
-	json_path = "dataset/RED_JSON"
+	path = "dataset/RED_SQL/job"
+	json_path = "dataset/RED_JSON/job"
 
 	os.system(f"rm -f Output/query_rewrite/re_sql/{method}/*")
 
