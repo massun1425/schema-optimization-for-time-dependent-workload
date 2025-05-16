@@ -540,11 +540,11 @@ tab_company_type = generate_company_type(0, 4)
 tab_complete_cast = generate_complete_cast(133, 135086, 2528312)
 tab_info_type = generate_info_type(0, 113)
 tab_keyword = generate_keyword(133, 134170)
-tab_kind_types = generate_kind_type(0, 7)
-tab_link_types = generate_link_type(0, 18)
+tab_kind_type = generate_kind_type(0, 7)
+tab_link_type = generate_link_type(0, 18)
 tab_movie_companies = generate_movie_companies(133, 2609129, 2528312, 234997)
 tab_movie_info = generate_movie_info(133, 14835720, 2528312)
-tab_info_idx = generate_movie_info_idx(133, 1380035, 2528312)
+tab_movie_info_idx = generate_movie_info_idx(133, 1380035, 2528312)
 tab_movie_keyword = generate_movie_keyword(134, 4523930, 2528312, 134170)
 tab_movie_link = generate_movie_link(134, 29997, 2528312,  2524994)
 tab_name = generate_name(134, 4167491)
@@ -554,11 +554,46 @@ tab_title = generate_title(134, 2528312)
 
 numberOfQueries = len(tab_aka_name) + len(tab_aka_title) + len(tab_cast_info) + len(tab_char_name) + len(tab_comp_cast_type)
 numberOfQueries += len(tab_company_name) + len(tab_company_type) + len(tab_complete_cast) + len(tab_info_type) + len(tab_keyword)
-numberOfQueries += len(tab_kind_types) + len(tab_link_types) + len(tab_movie_companies) + len(tab_movie_info) + len(tab_info_idx)
+numberOfQueries += len(tab_kind_type) + len(tab_link_type) + len(tab_movie_companies) + len(tab_movie_info) + len(tab_movie_info_idx)
 numberOfQueries += len(tab_movie_keyword) + len(tab_movie_link) + len(tab_name) + len(tab_person_info) + len(tab_role_type) + len(tab_title)
 
 print(numberOfQueries)
 
+
+def insert_queries(table, tab):
+    res = []
+    query = "INSERT INTO " + table + " VALUES "
+    for row in tab:
+            res.append(query + row + ';')
+    return res
+
+tab_aka_name = insert_queries("aka_name (id, person_id, name, imdb_index, name_pcode_cf, name_pcode_nf, surname_pcode, md5sum)", tab_aka_name)
+tab_aka_title = insert_queries("aka_title (id, movie_id, title, imdb_index, kind_id, production_year, phonetic_code, episode_of_id, season_nr, episode_nr, note, md5sum)", tab_aka_title)
+tab_cast_info = insert_queries("cast_info (id, person_id, movie_id, person_role_id, note, nr_order, role_id)", tab_cast_info)
+tab_char_name = insert_queries("char_name (id, name, imdb_index, imdb_id, name_pcode_nf, surname_pcode, md5sum)", tab_char_name)
+tab_comp_cast_type = insert_queries("comp_cast_type (id, kind)", tab_comp_cast_type)
+tab_company_name = insert_queries("company_name (id, name, country_code, imdb_id, name_pcode_nf, name_pcode_sf, md5sum)", tab_company_name)
+tab_company_type = insert_queries("company_type (id, kind)", tab_company_type)
+tab_complete_cast = insert_queries("complete_cast (id, movie_id, subject_id, status_id)", tab_complete_cast)
+tab_info_type =insert_queries("info_type (id, info)", tab_info_type)
+tab_keyword = insert_queries("keyword (id, keyword, phonetic_code)", tab_keyword)
+tab_kind_type = insert_queries("kind_type (id, kind)", tab_kind_type)
+tab_link_type = insert_queries("link_type (id, link)", tab_link_type)
+tab_movie_companies = insert_queries("movie_companies (id, movie_id, company_id, company_type_id, note)", tab_movie_companies)
+tab_movie_info = insert_queries("movie_info (id, movie_id, info_type_id, info, note)", tab_movie_info)
+tab_movie_info_idx = insert_queries("movie_info_idx (id, movie_id, info_type_id, info, note)", tab_movie_info_idx)
+tab_movie_keyword = insert_queries("movie_keyword (id, movie_id, keyword_id)", tab_movie_keyword)
+tab_movie_link = insert_queries("movie_link (id, movie_id, linked_movie_id, link_type_id)", tab_movie_link)
+tab_name = insert_queries("name (id, name, imdb_index, imdb_id, gender, name_pcode_cf, name_pcode_nf, surname_pcode, md5sum)", tab_name)
+tab_person_info = insert_queries("person_info (id, person_id, info_type_id, info, note)", tab_person_info)
+tab_role_type = insert_queries("role_type (id, role)", tab_role_type)
+tab_title = insert_queries("title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years, md5sum)", tab_title)
+
+
+
+print(tab_title[0])
+
+"""
 def insert_query(table, tab):
     query = "INSERT INTO " + table + " VALUES "
     if len(tab) > 0:
@@ -569,5 +604,4 @@ def insert_query(table, tab):
     return query + ";"
 
 var = insert_query("title (id, title, imdb_index, kind_id, production_year, imdb_id, phonetic_code, episode_of_id, season_nr, episode_nr, series_years, md5sum)", tab_title)
-
-print(var)
+"""

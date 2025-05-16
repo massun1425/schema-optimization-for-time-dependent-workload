@@ -27,7 +27,7 @@ if sys.argv[1] not in ilp_types:
 if sys.argv[1] != "none":
     INPUT_DIR = "Output/query_rewrite/re_sql/" + sys.argv[1]
 else:
-    INPUT_DIR = "dataset/RED_SQL"
+    INPUT_DIR = "dataset/RED_SQL/job"
 
 # Unpack/ inline the workload queries (convert the csv files to runnable sql files)
 def unpack_workloads():
@@ -50,8 +50,8 @@ def unpack_workloads():
                 num_queries[group_name] += 1
                 #query_path = INPUT_DIR+"/"+line.split(",")[0] # can be deleted
                 query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
-                if sys.argv[1] == "none":
-                    query_path = INPUT_DIR+'/'+ "/".join(line.split(",")[0].split('/')[2:])
+                #if sys.argv[1] == "none": # for: ceb
+                    #query_path = INPUT_DIR+'/'+ "/".join(line.split(",")[0].split('/')[2:])
     
                 if not os.path.exists(query_path):
                     continue

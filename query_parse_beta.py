@@ -487,7 +487,7 @@ class QueryParser:
 			self.query = query
 
 		except json.JSONDecodeError as e:
-			print(f"Error reading {file}: {e}")
+			print(f"Error reading {files[i]}: {e}")
 			return 1
 	
 	def set_inclusive_dependency(self, X, j, parent= None):

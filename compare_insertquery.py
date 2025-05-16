@@ -27,9 +27,9 @@ ILP_utility_based = True
 ILP_frequency_based = True
 
 save_csv = True
-make_graph = False
-check_m_cost = False
-save_m_cost = False
+make_graph = True
+check_m_cost = True
+save_m_cost = True
 save_normal_csv = True
 
 result_normal_U = []
@@ -63,7 +63,7 @@ t3 = time.time()
 # qp = QueryParser()
 # qp.query_parse(q_num, query_path, 0)
 
-output_path = "/Users/andersonkaina/Desktop/rs_system/compare_air/Output/"
+output_path = "Output/"
 with open(output_path + "qp_class.pkl", 'rb') as file:
 		qp = pickle.load(file)
 

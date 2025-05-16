@@ -370,11 +370,15 @@ def query_rewrite(method, rows):
 	for folder, _ , file in os.walk(path):
 		temp = [folder +'/'+ f for f in file if f.endswith(".sql")]
 		files = files + temp
+	
+	files = sorted( files, key=natural_sort_key)
 
 	json_files = []
 	for folder, _ , file in os.walk(json_path):
 		temp = [folder +'/'+ f for f in file if f.endswith(".json")]
 		json_files = json_files + temp
+
+	json_files = sorted(json_files, key=natural_sort_key)
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
