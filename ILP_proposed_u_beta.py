@@ -285,7 +285,7 @@ def proposed(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_max, b_j, 
 
         # print("y_ij= ",node_name_list_y)
         # print("---------------------------------------------------------------\n")
-        U_cur += m_cost_sum #added update cost
+        U_cur -= m_cost_sum #added update cost
 
 
         if(U_pre>=U_cur):

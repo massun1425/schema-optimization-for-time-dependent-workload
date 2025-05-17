@@ -130,11 +130,15 @@ def normal(qm,s_num,m_cost,node_list, B_max, b_j, u_ij, X):
 	#print('---------------------')
 	mat_list=[]
 	B_cur=0
+	m_cost_sum=0
 	for j in range(len(z_j)):
 		B_cur+=b_j[j]*z_j[j]
 		if(z_j[j] ==1):
 			mat_list.append(j)
+			m_cost_sum += m_cost[j]
 	#print(mat_list)
+
+	U_cur -= m_cost_sum
 
 	#print(U_cur,B_cur)
 
