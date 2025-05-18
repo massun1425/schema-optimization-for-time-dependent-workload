@@ -169,13 +169,9 @@ def bigsubs(s_num,m_cost,b_j,U_j_max,q_s_list,u_ij,y_ij,X,U_max,B_max):
         iter+=1
         #print('---------------------')
         mat_list=[]
-        m_cost_sum=0
         for i in range(len(z_j)):
             if(z_j[i] ==1):
                 mat_list.append(i)
-                m_cost_sum+=m_cost[i]
-        
-        U_cur -= m_cost_sum
 
         #print(U_cur,B_cur)
         # print("U_cur=",U_cur)

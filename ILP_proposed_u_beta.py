@@ -18,7 +18,12 @@ def ILP(u_ij,x,M,B_max,cand_j,cand_i,b_j,m_cost):
 
     model.update()
 
-    model.setObjective(gp.quicksum(u_ij[i][j]*y[i,j] -z[j]*m_cost[j]/len(cand_i) for i in range(len(cand_i)) for j in range(len(cand_j))), gp.GRB.MAXIMIZE)
+    # model.setObjective(gp.quicksum(u_ij[i][j]*y[i,j] -z[j]*m_cost[j]/len(cand_i) for i in range(len(cand_i)) for j in range(len(cand_j))), gp.GRB.MAXIMIZE)
+    model.setObjective(
+        gp.quicksum(u_ij[i][j] * y[i, j] for i in range(len(cand_i)) for j in range(len(cand_j)))
+        - gp.quicksum(z[j] * m_cost[j] for j in range(len(cand_j))),
+        gp.GRB.MAXIMIZE
+    )
 
     con1={}#overlapping subexpression
     con2={}#storage
@@ -231,6 +236,7 @@ def proposed(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_max, b_j, 
         """
 
         cand_u=[[0 for j in range(len(cand_j))] for i in range(len(cand_i))]
+        cand_m_cost=[0 for j in range(len(cand_j))]
         cand_x=[[0 for j in range(len(cand_j))] for i in range(len(cand_j))]
         cand_b=[0 for j in range(len(cand_j))]
 
@@ -249,12 +255,13 @@ def proposed(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_max, b_j, 
 
         for j in range(len(cand_j)):
             cand_b[j]=b_j[cand_j[j]]
+            cand_m_cost[j]=m_cost[cand_j[j]]
             for j2 in range(len(cand_j)):
                 cand_x[j][j2]=X[cand_j[j]][cand_j[j2]]
 
 
         #print('ILP_start')
-        y_z_obj=ILP(cand_u,cand_x,M,B_max,cand_j,cand_i,cand_b,m_cost)
+        y_z_obj=ILP(cand_u,cand_x,M,B_max,cand_j,cand_i,cand_b,cand_m_cost)
         y_ij=y_z_obj[0]
         z_j=[0]*len(b_j)
         for i in range(len(y_z_obj[1])):
@@ -264,12 +271,10 @@ def proposed(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_max, b_j, 
         #print('---------------------')
         mat_list=[]
         B_cur=0
-        m_cost_sum = 0
         for j in range(len(z_j)):
             B_cur+=b_j[j]*z_j[j]
             if(z_j[j] ==1):
                 mat_list.append(j)
-                m_cost_sum += m_cost[j] #added update cost 
         node_name_list = make_nodename_from_id(mat_list, node_list)
         # print("After = ",node_name_list)
 
@@ -285,7 +290,6 @@ def proposed(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_max, b_j, 
 
         # print("y_ij= ",node_name_list_y)
         # print("---------------------------------------------------------------\n")
-        U_cur -= m_cost_sum #added update cost
 
 
         if(U_pre>=U_cur):
@@ -369,6 +373,7 @@ def no_neighbor_search(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_
             cand_j.append(j)
     
     cand_u=[[0 for j in range(len(cand_j))] for i in range(len(cand_i))]
+    cand_m_cost=[0 for j in range(len(cand_j))]
     cand_x=[[0 for j in range(len(cand_j))] for i in range(len(cand_j))]
     cand_b=[0 for j in range(len(cand_j))]
     
@@ -392,7 +397,7 @@ def no_neighbor_search(qm,s_num,m_cost,node_list, position_node_id, deeplist, B_
 
 
     #print('ILP_start')
-    y_z_obj=ILP(cand_u,cand_x,M,B_max,cand_j,cand_i,cand_b,m_cost)
+    y_z_obj=ILP(cand_u,cand_x,M,B_max,cand_j,cand_i,cand_b,cand_m_cost)
     y_ij=y_z_obj[0]
     z_j=[0]*len(b_j)
     for i in range(len(y_z_obj[1])):
