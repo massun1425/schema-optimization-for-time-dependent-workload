@@ -17,7 +17,12 @@ def ILP(u_ij,x,M,B_max,cand_j,cand_i,b_j,m_cost):
 
 	model.update()
 
-	model.setObjective(gp.quicksum(u_ij[i][j]*y[i,j] -z[j]*m_cost[j]/len(cand_j) for i in range(len(u_ij)) for j in cand_j), gp.GRB.MAXIMIZE)
+	# model.setObjective(gp.quicksum(u_ij[i][j]*y[i,j] -z[j]*m_cost[j]/len(cand_j) for i in range(len(u_ij)) for j in cand_j), gp.GRB.MAXIMIZE)
+	model.setObjective(
+        gp.quicksum(u_ij[i][j] * y[i, j] for i in range(len(cand_i)) for j in range(len(cand_j)))
+        - gp.quicksum(z[j] * m_cost[j] for j in range(len(cand_j))),
+        gp.GRB.MAXIMIZE
+    )
 
 	con1={}#overlapping subexpression
 	con2={}#storage
@@ -48,7 +53,7 @@ def make_nodename_from_id(x_list, node_list):
 	return node_name_list
 
 
-def normal(qm,s_num,m_cost,node_list, B_max, b_j, u_ij, X):
+def normal(qm,s_num,m_cost,node_list, B_max, b_j, u_ij, X, q_s_list):
 	#initialize
 	#s_num　はサブクエリの数
 	U_pre=0
@@ -64,17 +69,17 @@ def normal(qm,s_num,m_cost,node_list, B_max, b_j, u_ij, X):
 
 
 	M=[]#クエリiに対して、利得のあるサブクエリのset
-	# for i in range(len(q_s_list)):
-	# 	M_i=[]
-	# 	M_i_=[]
-	# 	for j in range(len(z_j)):
-	# 		if(u_ij[i][j]>0):
-	# 			M_i.append(j)
-	# 		if(z_j[j]>0):
-	# 			M_i_.append(j)
+	for i in range(len(q_s_list)):
+		M_i=[]
+		M_i_=[]
+		for j in range(len(z_j)):
+			if(u_ij[i][j]>0):
+				M_i.append(j)
+			if(z_j[j]>0):
+				M_i_.append(j)
 
-	# 	k=list(set(M_i)&set(M_i_))
-	# 	M.append(k)
+		k=list(set(M_i)&set(M_i_))
+		M.append(k)
 	
 	node_name_list_M = []
 	for m_data in M:
@@ -93,6 +98,7 @@ def normal(qm,s_num,m_cost,node_list, B_max, b_j, u_ij, X):
 			cand_j.append(j)
 	# print(len(cand_i),len(cand_j))
 	# print(cand_i)
+	# print(cand_j)
 
 	node_name_list_b = make_nodename_from_id(cand_j, node_list)
 	# print("Before = ",node_name_list_b)
