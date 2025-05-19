@@ -151,14 +151,7 @@ class QueryParser:
 
 	def natural_sort_key(self, s):
 		return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-	
-	def getAllFiles(self, path):
-		res = []
-		for folder, _ , files in os.walk(path):
-			temp = [folder +'/'+ f for f in files]
-			res = res + temp
-		return res
-	
+
 	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = []):
 		deep_list.append(depth)
 
@@ -290,6 +283,7 @@ class QueryParser:
 					m_cost[i] += self.qm.subquery_costs[node_id] / record_list[table_list.index(item2)]
 					# m_cost[i] += search_cost[table_list.index(item2)]
 					m_cost[i] += insert_cost * self.qm.subquery_widths[node_id] / table_width[table_list.index(item2)]
+			m_cost[i] *= insert_times
 
 		for i in range(len(self.qm.non_leaf_nodes_map)): #ここが違うと思う
 			node_id = "non_leaf_" + str(i + 1)
@@ -298,7 +292,9 @@ class QueryParser:
 				if item[0] in node_id_table_list:
 					m_cost[i + len_leaf] += self.qm.subquery_costs[node_id] / record_list[table_list.index(item[0])]
 					# m_cost[i + len_leaf] += search_cost[table_list.index(item[0])]
-					m_cost[i + len_leaf] += insert_cost * self.qm.subquery_sizes[node_id] * self.qm.subquery_widths[node_id] / table_width[table_list.index(item[0])]
+					# m_cost[i + len_leaf] += insert_cost * self.qm.subquery_sizes[node_id] * self.qm.subquery_widths[node_id] / table_width[table_list.index(item[0])]
+					m_cost[i + len_leaf] += insert_cost * self.qm.subquery_widths[node_id] / table_width[table_list.index(item[0])]
+			m_cost[i + len_leaf] *= insert_times
 		return m_cost
 
 	def query_parse(self, q_num, path, insert_query):
@@ -317,12 +313,12 @@ class QueryParser:
 		ope_wherelist = []
 		child_to_parent = {}
 
-		#files = sorted([f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f))) # can be removed
-		files = sorted(self.getAllFiles(path), key=lambda f: self.natural_sort_key(os.path.basename(f)))
-
+		files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
 		s_num = 0
+		q_num_len = len(files)
+		print("q_num_len= ", q_num_len)
 		try:
-			for i in range(q_num):
+			for i in range(q_num_len):
 				depth_list = [0]
 				Node_list = []
 				cost = []
@@ -331,8 +327,6 @@ class QueryParser:
 				table_sub = []
 				filter = []
 				ope = []
-
-				#with open(os.path.join(path, files[i]), 'r') as f: # can be removed
 				with open(files[i], 'r') as f:
 					data = json.load(f)
 					converted_data, deep_list, order_list = self.convert_json(data)
@@ -517,8 +511,9 @@ class QueryParser:
 if __name__ == '__main__':
 	q_num = 113
 	ilp = "u_b"
-	path = "/Users/andersonkaina/Desktop/rs_system/compare_air/dataset/redbench/RED_JSON"
-	insert_query = 100000
+	# path = "/Users/andersonkaina/Desktop/rs_system/compare_air/dataset/redbench/RED_JSON"
+	path = "/Users/andersonkaina/Desktop/rs_system/compare_air/dataset/JOB_json"
+	insert_query = 2000
 	B_max = 0.1 * 1000 * 1000 * 1000
 	# parsed = query_parse(q_num, path, insert_query)
 	# for key in parsed[1]:
@@ -532,16 +527,34 @@ if __name__ == '__main__':
 	t2 = time.time()
 	print("Time: ", t2-t1)
 
-	# print("qp.m_cost= ",qp.m_cost)
-	# for node in qp.node_list:
-	# 	if qp.qm.subquery_sizes[node] == 0:
-	# 		print(node)
-	# 		print(qp.qm.subquery_positions[node])
-	# 		print("qp.qm.leaf_nodes_map_r= ",qp.qm.leaf_nodes_map_r[node])
+	leaf_num = len(qp.qm.leaf_nodes_map)
+	non_leaf_num = qp.s_num - leaf_num
 
-	# costs = qp.b_j
-	# total_cost = sum(costs)
-	# print("Total cost:", total_cost)
+	count_ave = 0
+	for leaf_id in range(leaf_num):
+		count_ave += qp.m_cost[leaf_id]
+	count_ave /= leaf_num
+	print("count_ave_for_leaf= ",count_ave)
+
+	count_ave = 0
+	for non_leaf_id in range(leaf_num, qp.s_num):
+		count_ave += qp.m_cost[non_leaf_id]
+	count_ave /= non_leaf_num
+	print("count_ave_for_non_leaf= ",count_ave)
+
+	negative_count = 0
+	total_count = 0
+	for i in range(len(qp.node_list)):
+			current_node = qp.node_list[i]
+			current_node_cost = qp.qm.subquery_costs[current_node]
+			if current_node_cost != 0:
+				if current_node_cost - qp.m_cost[i] < 0:
+					negative_count += 1
+			total_count += 1
+	negative_ratio = negative_count / total_count if total_count > 0 else 0
+	print(f"Leaf nodes length: {leaf_num}")
+	print(f"Non-leaf nodes length: {non_leaf_num}")
+	print(f"Negative ratio in qp.u_ij - qp.m_cost: {negative_ratio:.4f} ({negative_count}/{total_count})")
 
 
 
