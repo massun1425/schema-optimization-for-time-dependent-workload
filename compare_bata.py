@@ -36,7 +36,7 @@ q_num = sum([len(files) for r, d, files in os.walk(query_path)])
 qp.query_parse(q_num, query_path, insert_query)
 
 output_path = "Output/"
-with open(output_path + "qp_class.pkl", "wb") as f:
+with open(output_path + "qp_class.pkl", "wb+") as f:
 	pickle.dump(qp, f)
 
 
