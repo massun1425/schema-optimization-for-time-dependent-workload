@@ -310,14 +310,15 @@ def mv_make(mv_nodes):
 		from_sql = from_sql[:-2]
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"
-			mv_sql += from_sql + " ');"
+			mv_sql += from_sql + "');"
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
 			# 	where_sql = where_sql.replace("= '", "='")
 			
 			#mv_sql += from_sql + "\n" + where_sql + ";"
-			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + " ');"
+			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + "');"
+		
 
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
@@ -891,7 +892,8 @@ def mv_remake(mv_nodes):
 		from_conds = from_conds[1].split("WHERE")
 		from_str = from_conds[0]
 		if from_str[-1] == ";":
-			from_str = from_str[:-1]
+			#from_str = from_str[:-1]
+			from_str = from_str[:-3] # This will iclude the ');
 		from_str = from_str.replace("\n", "")
 		from_str = from_str.split(", ")
 		
