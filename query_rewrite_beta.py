@@ -310,7 +310,7 @@ def mv_make(mv_nodes):
 		from_sql = from_sql[:-2]
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"
-			mv_sql += from_sql + " ');"
+			mv_sql += from_sql + "');"
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
