@@ -45,7 +45,7 @@ print("\n")
 
 if ILP_normal:
 	t1 = time.time()
-	result_u, result_b, result_y_ij = ILP_normal_beta.normal(qp.qm, qp.s_num, qp.m_cost, qp.node_list, B_max, qp.b_j, qp.u_ij, qp.X)
+	result_u, result_b, result_y_ij = ILP_normal_beta.normal(qp.qm, qp.s_num, qp.m_cost, qp.node_list, B_max, qp.b_j, qp.u_ij, qp.X, qp.q_s_list)
 	t2 = time.time()
 
 	print("ILP_normal")
