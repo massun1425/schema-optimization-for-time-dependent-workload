@@ -34,7 +34,15 @@ def find_node(node, qp, query_id):
 			s_pos = pos[1]
 			break
 
-def condition_analaize(where_str, table, alias, condition_type):
+def condition_analaize(where_str, table, alias, used_alias, condition_type):
+	aliases_in_condition = set(re.findall(r'(\b[a-zA-Z_][a-zA-Z0-9_]*)\.(?=[a-zA-Z_])', where_str))
+
+	if aliases_in_condition: # 明示的なエイリアスが条件に含まれる場合
+		for cond_alias in aliases_in_condition:
+			if cond_alias not in used_alias:
+				# print(f"DEBUG: Invalid alias '{cond_alias}' in condition '{where_str}'. Valid aliases: {used_aliases}")
+				return "" # 無効なエイリアスが含まれていれば、この条件は無視
+
 	where_sql = ''
 	if "::text" in where_str:
 		where_str = where_str.replace("::text", "")
@@ -108,7 +116,7 @@ def extract_parentheses(where_str):
 
 	return where_str
 
-def where_analaize(where_str, table, alias):
+def where_analaize(where_str, table, alias, used_alias):
 	where_sql = ''
 
 	check_cond = 0
@@ -128,7 +136,7 @@ def where_analaize(where_str, table, alias):
 				for w in where:
 					# print("where_b: ", w)
 					# w = extract_parentheses(w)
-					w = condition_analaize(w, table, alias, " OR ")
+					w = condition_analaize(w, table, alias, used_alias, " OR ")
 					# print("where_a: ", w)
 
 					if check_cond == 2:
@@ -148,7 +156,7 @@ def where_analaize(where_str, table, alias):
 			else:
 				# print("where_b: ", where)
 				# where = extract_parentheses(where)
-				where = condition_analaize(where, table, alias, " AND ")
+				where = condition_analaize(where, table, alias, used_alias, " AND ")
 				# print("where_a: ", where)
 				where_sql += where
 		where_sql = where_sql[:-5]
@@ -161,7 +169,7 @@ def where_analaize(where_str, table, alias):
 			for w in where_str:
 				# print("where_b: ", w)
 				# w = extract_parentheses(w)
-				w = condition_analaize(w, table, alias, " OR ")
+				w = condition_analaize(w, table, alias, used_alias, " OR ")
 				# print("where_a: ", w)
 				if check_cond == 1:
 					w = "(" + w
@@ -172,7 +180,7 @@ def where_analaize(where_str, table, alias):
 				where_sql = where_sql + ")"
 		else:
 			# print("where_b: ", where_str)
-			where_sql += condition_analaize(where_str, table, alias, "")
+			where_sql += condition_analaize(where_str, table, alias, used_alias, "")
 			# print("where_a: ", where_sql)
 
 	return where_sql
@@ -225,7 +233,7 @@ def mv_make(mv_nodes):
 		node_leaf_check = False
 		if len(mv_node_list) <= 2: # "bitmap index scan" or "bitmap heap scan"
 			node_leaf_check = True
-		table_list = []
+		used_alias = []
 		where_list = []
 		where_str = ''
 
@@ -285,13 +293,14 @@ def mv_make(mv_nodes):
 					if where_str == '':
 						continue
 					elif check_cond_and_filter == 0:
-						where_str = where_analaize(where_str, table, alias)
+						where_str = where_analaize(where_str, table, alias, used_alias)
 					else:
-						where_str_1 = where_analaize(where_str_1, table, alias)
-						where_str_2 = where_analaize(where_str_2, table, alias)
+						where_str_1 = where_analaize(where_str_1, table, alias, used_alias)
+						where_str_2 = where_analaize(where_str_2, table, alias, used_alias)
 						where_str = where_str_1 + " AND " + where_str_2
 					# print("w_str: ", where_str)
-					where_sql += where_str + " AND "
+					if where_str != '':
+						where_sql += where_str + " AND "
 			else:
 				if qp.qm.non_leaf_nodes_filter[node] != '':
 					where_str = qp.qm.non_leaf_nodes_filter[node]
@@ -303,9 +312,9 @@ def mv_make(mv_nodes):
 					else:
 						table = "t"
 						alias = ""
-					where_str = where_analaize(where_str, table, alias)
-
-					where_sql += where_str + " AND "
+					where_str = where_analaize(where_str, table, alias, used_alias)
+					if where_str != '':
+						where_sql += where_str + " AND "
 
 		from_sql = from_sql[:-2]
 		if where_sql == "WHERE ": #条件がない場合
