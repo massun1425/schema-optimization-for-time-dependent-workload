@@ -436,6 +436,7 @@ def query_rewrite(method, rows):
 			sql_original = content
 			
 			sql_original = sql_original.replace("  "," ")
+			sql_original = sql_original.replace(" ("," ( ")
 			sql_original = re.sub(r'\bbetween\b', 'BETWEEN', sql_original, flags=re.IGNORECASE)
 			sql_original = re.sub(r'\band\b', 'AND', sql_original, flags=re.IGNORECASE)
 			sql_original = re.sub(r'\bor\b', 'OR', sql_original, flags=re.IGNORECASE)
@@ -465,7 +466,7 @@ def query_rewrite(method, rows):
 			# print("sql_original: ", sql_original)
 
 			content = content.replace("\n"," ") # changes "" to " " beause it was causing errors
-			content = content.replace("     "," ") # changes "" to " " beause it was causing errors
+			content = content.replace("     "," ")
 			content = content.split(" FROM ")
 			select_str = content[0].replace("SELECT ", "")
 			content = content[1].split(" WHERE ")
@@ -544,7 +545,8 @@ def query_rewrite(method, rows):
 						unique1[u_cond_id] = unique1[u_cond_id][1:]
 					select_str = select_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
 					group_str = group_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
-					where_sql = where_sql.replace(mv_a + ".", node + ".")
+					where_sql = where_sql.replace(mv_a + ".", node + ".") #old
+					
 				new_conditions = unique1
 				# print("new_conditions: ", new_conditions)
 
