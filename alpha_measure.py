@@ -28,7 +28,8 @@ insert_execution_time = t2-t1
 with open(f'{json_path}/{query}.json', 'r') as file:
     data = json.load(file)
 
-query_estimated_time = data[0]["Plan"]["Actual Total Time"]
+#query_estimated_time = data[0]["Plan"]["Actual Total Time"]
+query_estimated_time = data[0]["Plan"]["Total Cost"]
 
 alpha = insert_execution_time * query_estimated_time
 
