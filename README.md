@@ -69,6 +69,12 @@ Then [run the program](#runnning)
 - step 4: `python setup_rewritten.py <ilp>` : will use the csv and rewritten queries to setup the proper workloads according to frequency
 - step 5: `python run.py` : runs redbench with new workload
 
+## Other experiments
+
+- `compare_insertquery.py`
+- `compare_capacity.py`
+- `compare_topk_beta.py`
+
 ## IMMV
 
 See [pg_ivm](https://github.com/sraoss/pg_ivm).
