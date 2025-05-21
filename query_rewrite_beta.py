@@ -26,6 +26,16 @@ def find_child_leaf(node, qp, child_list=None):
 			find_child_leaf(child, qp, child_list)
 	return child_list
 
+def find_child_leaf_alias(node, qp, child_alias_list=None):
+	if child_alias_list is None:
+		child_alias_list = []
+	if node.startswith('leaf'):
+		child_alias_list.append(qp.qm.leaf_nodes_map_r[node][2])
+	else:
+		for child in qp.qm.non_leaf_nodes_map_r[node]:
+			find_child_leaf_alias(child, qp, child_alias_list)
+	return child_alias_list
+
 def find_node(node, qp, query_id):
 	query = qp.query[query_id]
 	position = qp.qm.subquery_positions[node]
@@ -228,12 +238,12 @@ def mv_make(mv_nodes):
 		mv_sql = "SELECT pgivm.create_immv('" + mv_id + "','SELECT *\n"
 
 		mv_node_list = find_child_leaf(mv_id, qp)
+		used_alias = find_child_leaf_alias(mv_id, qp)
 		# print("mv_node_list: ", mv_node_list)
 
 		node_leaf_check = False
 		if len(mv_node_list) <= 2: # "bitmap index scan" or "bitmap heap scan"
 			node_leaf_check = True
-		used_alias = []
 		where_list = []
 		where_str = ''
 
