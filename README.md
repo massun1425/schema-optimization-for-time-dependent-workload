@@ -46,7 +46,7 @@ Setup docker image
 ```bash
 docker build -t rs_db_exp:1.0 .
 
-docker run -ti --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
+docker run -ti --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
 ```
 
 Then enter the container:
@@ -68,6 +68,12 @@ Then [run the program](#runnning)
 - step 3: `bash run_mv.sh` : creates mv
 - step 4: `python setup_rewritten.py <ilp>` : will use the csv and rewritten queries to setup the proper workloads according to frequency
 - step 5: `python run.py` : runs redbench with new workload
+
+## Other experiments
+
+- `compare_insertquery.py`
+- `compare_capacity.py`
+- `compare_topk_beta.py`
 
 ## IMMV
 

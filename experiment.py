@@ -32,10 +32,13 @@ for ilp in ilp_types:
         # Run Materialized view sql scripts
         print("Creating MVs")
         os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
+
+    print("Running all rewritten queries")
+    os.system(f"python execute_rewritten.py {ilp} > Output/query_rewrite/{ilp}.out")
+    
     # sets up workloads with new rewritten queries
     print("Setting up Workloads")
     os.system(f"python setup_rewritten.py {ilp}")
-
     #setup redbench
     os.chdir("dataset/redbench")
     #run redbench
@@ -43,6 +46,3 @@ for ilp in ilp_types:
     os.system(f"python run.py > ../../Output/redbench/{ilp}.out")
     # go back to original work directory for the next ilp
     os.chdir("../..")
-
-    print("Running all rewritten queries")
-    os.system(f"python execute_rewritten.py {ilp} > Output/query_rewrite/{ilp}.out")

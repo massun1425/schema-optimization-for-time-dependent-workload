@@ -37,7 +37,7 @@ def count_row(result_y_ij):
 
 
 
-query_path = "dataset/JOB_json"
+query_path = "dataset/RED_JSON/job"
 qp = QueryParser()
 qp.query_parse(q_num, query_path, insert_query)
 

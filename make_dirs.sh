@@ -18,3 +18,11 @@ mkdir -p Output/experiment_1/normal
 mkdir -p Output/experiment_1/proposed_f
 mkdir -p Output/experiment_1/proposed_u
 mkdir -p Output/experiment_1/proposed_u_b
+
+mkdir -p Output/experiment_2/bigsubs
+mkdir -p Output/experiment_2/normal
+mkdir -p Output/experiment_2/proposed_f
+mkdir -p Output/experiment_2/proposed_u
+mkdir -p Output/experiment_2/proposed_u_b
+
+mkdir -p Output/experiment_2/results

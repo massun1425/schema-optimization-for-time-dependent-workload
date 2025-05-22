@@ -199,6 +199,22 @@ def where_analaize(where_str, table, alias, used_alias):
 def natural_sort_key(s):
 	return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
+
+# leaf nodes have a problem where the filters include a table
+# get_table_name_filter should hopefullt fix this problem
+def get_table_name_filter(node, from_sql, leaf_nodes_map_r):
+	res = []
+
+	temp = from_sql.split(" ")
+	#table with extracted aliases
+	aliases = [i.split(".")[0] for i in temp if (len(i.split(".")) >1 and "'" not in i)]
+	for alias in aliases:
+		for key, value in leaf_nodes_map_r.items():
+			if value[2] == alias:
+				res.append((alias, value[1]))
+				break
+	return res
+
 # Creates Materialized views
 def mv_make(mv_nodes):
 	
@@ -255,7 +271,6 @@ def mv_make(mv_nodes):
 				table = qp.qm.leaf_nodes_map_r[node][1] #1 is table name
 				alias = qp.qm.leaf_nodes_map_r[node][2] #2 is alias name
 
-				# print("table: ", table)
 				# print("alias: ", alias)
 				from_sql += table + " AS " + alias + ", "
 
@@ -311,6 +326,9 @@ def mv_make(mv_nodes):
 					# print("w_str: ", where_str)
 					if where_str != '':
 						where_sql += where_str + " AND "
+=======
+					where_sql += where_str + " AND "
+
 			else:
 				if qp.qm.non_leaf_nodes_filter[node] != '':
 					where_str = qp.qm.non_leaf_nodes_filter[node]
@@ -326,17 +344,24 @@ def mv_make(mv_nodes):
 					if where_str != '':
 						where_sql += where_str + " AND "
 
-		from_sql = from_sql[:-2]
+		
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"
-			mv_sql += from_sql + "');"
+			from_sql = from_sql[:-2]
+			mv_sql += from_sql + "\n');"
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
 			# 	where_sql = where_sql.replace("= '", "='")
-			
-			#mv_sql += from_sql + "\n" + where_sql + ";"
-			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + "');"
+
+			# creates extra tables in from_sql if they are called in filter
+			filter_tables = get_table_name_filter(node, where_sql, qp.qm.leaf_nodes_map_r)
+			for f_table in filter_tables:
+				if f_table[1] + " AS " + f_table[0] not in from_sql:
+					from_sql += f_table[1] + " AS " + f_table[0] + ", "
+			from_sql = from_sql[:-2]
+
+			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + "\n');"
 		
 
 		# print(mv_sql, "\n")
@@ -351,7 +376,7 @@ def mv_node_analize(node):
 	with open(path + node + ".sql", "r") as file:
 		content = file.read()
 		# ここで解析処理を行う
-	content = content.split("\n", 1)[1]
+	content = content.split("\n", 2)[1] # TODO cjack
 	sql_mv = content
 	if " IN " in sql_mv:
 		sql_mv = sql_mv.replace(" IN ", " == ")
@@ -456,6 +481,8 @@ def query_rewrite(method, rows):
 			
 			sql_original = sql_original.replace("  "," ")
 			sql_original = sql_original.replace(" ("," ( ")
+			sql_original = sql_original.replace(") "," )")
+			sql_original = sql_original.replace("          ","")
 			sql_original = re.sub(r'\bbetween\b', 'BETWEEN', sql_original, flags=re.IGNORECASE)
 			sql_original = re.sub(r'\band\b', 'AND', sql_original, flags=re.IGNORECASE)
 			sql_original = re.sub(r'\bor\b', 'OR', sql_original, flags=re.IGNORECASE)
@@ -564,7 +591,7 @@ def query_rewrite(method, rows):
 						unique1[u_cond_id] = unique1[u_cond_id][1:]
 					select_str = select_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
 					group_str = group_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
-					where_sql = where_sql.replace(mv_a + ".", node + ".") #old
+					where_sql = where_sql.replace(mv_a + ".", node + ".")
 					
 				new_conditions = unique1
 				# print("new_conditions: ", new_conditions)
@@ -633,7 +660,7 @@ def query_rewrite(method, rows):
 
 			tmpFile = files[file_id].split('/')[-1]
 			with open(result_path + method + '/' + tmpFile, "w+") as file:  #ファイル保存
-				print("file: ", files[file_id])
+				#print("file: ", files[file_id]) TODO
 				file.write(new_sql)
 			# print("---------------------------------")
 
@@ -914,7 +941,7 @@ def mv_remake(mv_nodes):
 		from_str = from_conds[0]
 		if from_str[-1] == ";":
 			#from_str = from_str[:-1]
-			from_str = from_str[:-3] # This will iclude the ');
+			from_str = from_str[:-4] # This will iclude the " ');"
 		from_str = from_str.replace("\n", "")
 		from_str = from_str.split(", ")
 		
