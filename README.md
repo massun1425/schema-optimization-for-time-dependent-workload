@@ -46,7 +46,7 @@ Setup docker image
 ```bash
 docker build -t rs_db_exp:1.0 .
 
-docker run -ti --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
+docker run -ti --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
 ```
 
 Then enter the container:
