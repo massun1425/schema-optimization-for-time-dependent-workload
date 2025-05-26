@@ -29,11 +29,13 @@ def find_child_leaf(node, qp, child_list=None):
 def find_child_leaf_alias(node, qp, child_alias_list=None):
 	if child_alias_list is None:
 		child_alias_list = []
-	if node.startswith('leaf'):
-		child_alias_list.append(qp.qm.leaf_nodes_map_r[node][2])
+	if node == "NONE":
+		child_alias_list = []
+		#child_alias_list.append(qp.qm.leaf_nodes_map_r[node][2])  # TODO test modification
 	else:
-		for child in qp.qm.non_leaf_nodes_map_r[node]:
-			find_child_leaf_alias(child, qp, child_alias_list)
+		if node in qp.qm.non_leaf_nodes_map_r.keys():
+			for child in qp.qm.non_leaf_nodes_map_r[node]:
+				find_child_leaf_alias(child, qp, child_alias_list)
 	return child_alias_list
 
 def find_node(node, qp, query_id):
@@ -201,7 +203,7 @@ def natural_sort_key(s):
 
 
 # leaf nodes have a problem where the filters include a table
-# get_table_name_filter should hopefullt fix this problem
+# get_table_name_filter should hopefully fix this problem
 def get_table_name_filter(node, from_sql, leaf_nodes_map_r):
 	res = []
 
@@ -274,8 +276,10 @@ def mv_make(mv_nodes):
 				# print("alias: ", alias)
 				from_sql += table + " AS " + alias + ", "
 
+
 				if table == "":
 					print("node: ", node)
+
 
 				if qp.qm.leaf_nodes_map_r[node][3] != '':
 					where_str = qp.qm.leaf_nodes_map_r[node][3]
@@ -322,12 +326,16 @@ def mv_make(mv_nodes):
 					else:
 						where_str_1 = where_analaize(where_str_1, table, alias, used_alias)
 						where_str_2 = where_analaize(where_str_2, table, alias, used_alias)
-						where_str = where_str_1 + " AND " + where_str_2
+
+						if where_str_1 == "" or where_str_2 =="":
+							# fixes error where filter starts with an AND
+							where_str = where_str_1 + where_str_2
+						else:
+							where_str = where_str_1 + " AND " + where_str_2
 					# print("w_str: ", where_str)
 					if where_str != '':
 						where_sql += where_str + " AND "
-=======
-					where_sql += where_str + " AND "
+					#where_sql += where_str + " AND "
 
 			else:
 				if qp.qm.non_leaf_nodes_filter[node] != '':
@@ -344,11 +352,14 @@ def mv_make(mv_nodes):
 					if where_str != '':
 						where_sql += where_str + " AND "
 
-		
+		#if mv_id == "leaf_5":
+		#	print(where_sql, qp.qm.leaf_nodes_map_r[node][3])
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"
 			from_sql = from_sql[:-2]
 			mv_sql += from_sql + "\n');"
+
+			#print(mv_id, qp.qm.leaf_nodes_map_r[node])
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
@@ -360,9 +371,15 @@ def mv_make(mv_nodes):
 				if f_table[1] + " AS " + f_table[0] not in from_sql:
 					from_sql += f_table[1] + " AS " + f_table[0] + ", "
 			from_sql = from_sql[:-2]
-
+			
+			#if "Scan" in qp.qm.leaf_nodes_map_r[node][0]:
+			#	print(mv_id, qp.qm.leaf_nodes_map_r[node])
+			
 			mv_sql += from_sql + "\n" + where_sql.replace("'","''") + "\n');"
 		
+
+		#if "Seq Scan" in qp.qm.leaf_nodes_map_r[node][0]:
+		#	print(mv_id, qp.qm.leaf_nodes_map_r[node][0], where_sql, qp.qm.leaf_nodes_map_r[node][3])
 
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
@@ -376,7 +393,7 @@ def mv_node_analize(node):
 	with open(path + node + ".sql", "r") as file:
 		content = file.read()
 		# ここで解析処理を行う
-	content = content.split("\n", 2)[1] # TODO cjack
+	content = content.split("\n", 2)[1] # TODO check
 	sql_mv = content
 	if " IN " in sql_mv:
 		sql_mv = sql_mv.replace(" IN ", " == ")

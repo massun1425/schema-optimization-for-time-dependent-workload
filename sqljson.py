@@ -35,8 +35,10 @@ for dir in sql_dirs:
         with open(sql_file_path, 'r', encoding='utf-8') as file:
             sql_query = file.read()
         
+        cur.execute(f"SET enable_bitmapscan = off")
+
         # EXPLAIN結果を取得
-        cur.execute(f"EXPLAIN (ANALYZE, FORMAT JSON) {sql_query}")
+        cur.execute(f"EXPLAIN (FORMAT JSON) {sql_query}")
         explain_result = cur.fetchone()
         
         # 結果をJSON形式でファイルに保存

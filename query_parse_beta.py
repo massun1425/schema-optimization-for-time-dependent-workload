@@ -175,11 +175,17 @@ class QueryParser:
 				filter_name = "Join Filter"
 			else:
 				filter_name = "Filter"
+
+			if "Seq Scan" in node["Node Type"] and "Filter" not in node:
+				cost = 0
+			else:
+				cost = node.get("Total Cost", 0)
+
 			subquery_list.append({
 				"type": "non_leaf",
 				"operator": node["Node Type"],
 				"filter": node.get(filter_name, ""),
-				"cost": node.get("Total Cost", 0),
+				"cost": cost,
 				"size": node.get("Plan Rows", 0) * node.get("Plan Width", 0),
 				"width": node.get("Plan Width", 0),
 				"children": children
@@ -198,10 +204,18 @@ class QueryParser:
 				filter = node["Filter"]
 				cost = node["Total Cost"]
 			else:
+				# TODO if filter only has join conditions the cost = 0
 				filter = ""
 				# cost = node["Total Cost"]
 				cost = 0
+				#if "Filter" not in node and "Seq Scan" in node["Node Type"]:
+				#	print(node)
 
+			# TODO test for edge cases
+			#if "Scan" in node["Node Type"]:
+			#	print(node["Node Type"], node)
+			if "Scan" in node["Node Type"] and ("Index Cond" not in node or "Filter" not in node):
+				cost = 0
 			if node["Plan Width"] == 0:
 				Width = 1
 			else:

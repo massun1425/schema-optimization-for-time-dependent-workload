@@ -16,8 +16,8 @@ import ILP_proposed_f_beta as ILP_proposed_f_beta
 
 q_num = 113 # JOB
 #q_num = 13759  # JOB + CEB
-insert_query = 2000
-B_max = 0.1 * 1000 * 1000 * 1000
+insert_query = 1000
+B_max = 0.05 * 1000 * 1000 * 1000   # 50 MB
 # Around 0.1G might be the best for all ILP
 
 # Which ILP to use
