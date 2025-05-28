@@ -217,6 +217,17 @@ def get_table_name_filter(node, from_sql, leaf_nodes_map_r):
 				break
 	return res
 
+def remake_from_sql(from_sql, where_sql):
+	tables = from_sql.replace("FROM ", "")
+	tables = tables.split(",")
+	tables = [i.strip() for i in tables if i != " "]
+	aliases = [i.split("AS ")[1] for i in tables]
+	res = "FROM "
+	for i in range(len(tables)):
+		if (" "+aliases[i]+".") in where_sql:
+			res += tables[i] + ", "
+	return res
+
 # Creates Materialized views
 def mv_make(mv_nodes):
 	
@@ -279,7 +290,6 @@ def mv_make(mv_nodes):
 
 				if table == "":
 					print("node: ", node)
-
 
 				if qp.qm.leaf_nodes_map_r[node][3] != '':
 					where_str = qp.qm.leaf_nodes_map_r[node][3]
@@ -349,17 +359,18 @@ def mv_make(mv_nodes):
 						table = "t"
 						alias = ""
 					where_str = where_analaize(where_str, table, alias, used_alias)
+					#TODO change FROM SQL according to where_str
 					if where_str != '':
 						where_sql += where_str + " AND "
 
-		#if mv_id == "leaf_5":
-		#	print(where_sql, qp.qm.leaf_nodes_map_r[node][3])
+		# removes uneccessary tables if not present in filter
+		from_sql = remake_from_sql(from_sql, where_sql)
 		if where_sql == "WHERE ": #条件がない場合
-			#mv_sql += from_sql + ";"
+			#mv_sql += from_sql + ";"	
 			from_sql = from_sql[:-2]
 			mv_sql += from_sql + "\n');"
 
-			#print(mv_id, qp.qm.leaf_nodes_map_r[node])
+			print(mv_id, from_sql, print(mv_id, qp.qm.leaf_nodes_map_r[node]))
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す

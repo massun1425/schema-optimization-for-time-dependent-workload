@@ -166,7 +166,6 @@ class QueryParser:
 				children.append(converted_child)
 				new_order = order_1
 
-
 			if node["Node Type"] == "Hash Join":
 				filter_name = "Hash Cond"
 			elif node["Node Type"] == "Merge Join":
@@ -176,15 +175,53 @@ class QueryParser:
 			else:
 				filter_name = "Filter"
 
-			if "Seq Scan" in node["Node Type"] and "Filter" not in node:
+			## Prevent mvs with no where str
+			if "Seq Scan" in node["Node Type"] and filter == "":
+				cost = 0
+			#edge case
+			elif "Hash" == node["Node Type"] and "Plans" in node and "Filter" not in node["Plans"][0]:
 				cost = 0
 			else:
 				cost = node.get("Total Cost", 0)
+			filter = node.get(filter_name, "")
+			if filter == "":
+				cost = 0
+			
+
+			#if node["Node Type"] == "Aggregate":
+			# TODO test
+			count_joins = 0
+			do_count = (children[0]["operator"] == "Nested Loop" or children[0]["operator"] == "Merge Join" or children[0]["operator"] == "Hash Join" or children[0]["operator"] == "Gather")
+			if len(children)>0 and do_count:
+				# TODO maybe just do a check for the join filter
+				count_joins += 1
+				temp_child = children[0]
+				for i in range(3):
+					if len(temp_child["children"])>0 and temp_child["children"][0]["operator"] == "Nested Loop":
+						count_joins+=1
+					elif "Merge Join" == temp_child["children"][0]["operator"]:
+						count_joins+=1
+					elif "Hash Join" == temp_child["children"][0]["operator"]:
+						count_joins+=1
+					elif "Gather" == temp_child["children"][0]["operator"]:
+						count_joins+=1
+					elif "Scan" in temp_child["children"][0]["operator"]:
+						break
+					else:
+						#print(temp_child["children"][0]["operator"])
+						count_joins= 0
+						break
+			if count_joins >= 1:
+				#print("Count ", count_joins)#, children)
+				#print()
+				cost = 0
+			
+			
 
 			subquery_list.append({
 				"type": "non_leaf",
 				"operator": node["Node Type"],
-				"filter": node.get(filter_name, ""),
+				"filter": filter,
 				"cost": cost,
 				"size": node.get("Plan Rows", 0) * node.get("Plan Width", 0),
 				"width": node.get("Plan Width", 0),
@@ -204,16 +241,10 @@ class QueryParser:
 				filter = node["Filter"]
 				cost = node["Total Cost"]
 			else:
-				# TODO if filter only has join conditions the cost = 0
 				filter = ""
-				# cost = node["Total Cost"]
 				cost = 0
-				#if "Filter" not in node and "Seq Scan" in node["Node Type"]:
-				#	print(node)
 
 			# TODO test for edge cases
-			#if "Scan" in node["Node Type"]:
-			#	print(node["Node Type"], node)
 			if "Scan" in node["Node Type"] and ("Index Cond" not in node or "Filter" not in node):
 				cost = 0
 			if node["Plan Width"] == 0:
