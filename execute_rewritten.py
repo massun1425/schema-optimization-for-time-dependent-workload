@@ -19,11 +19,11 @@ else:
 		case "bigsubs":
 			input_folder += "bigsubs"
 		case "utility_capacity":
-			input_folder += "proposed_ub"
+			input_folder += "proposed_u_b"
 		case "utility":
 			input_folder += "proposed_u"
 		case "frequency":
-			input_folder += "proposed_u_b"
+			input_folder += "proposed_f"
 		case "none":
 			input_folder = "dataset/RED_SQL/job"
 		case _:

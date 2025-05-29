@@ -151,7 +151,14 @@ class QueryParser:
 
 	def natural_sort_key(self, s):
 		return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-
+		
+	def count_all_children(self, data):
+		total = len(data)
+		for item in data:
+			if "children" in item:
+				total += self.count_all_children(item["children"]) # Recursive call for nested lists
+		return total
+	
 	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = []):
 		deep_list.append(depth)
 
@@ -160,7 +167,6 @@ class QueryParser:
 			new_order = order
 			if node["Node Type"] == "Bitmap Heap Scan":
 				table_info = [node["Relation Name"], node["Alias"]]
-
 			for child in node["Plans"]:
 				converted_child, order_1 = self.convert_node(child, subquery_list, deep_list, order_list, new_order + 1, depth + 1, table_info)
 				children.append(converted_child)
@@ -178,6 +184,9 @@ class QueryParser:
 			## Prevent mvs with no where str
 			if "Seq Scan" in node["Node Type"] and filter == "":
 				cost = 0
+
+			#if "Seq Scan" in node["Node Type"]:
+			#	cost = 0
 			#edge case
 			elif "Hash" == node["Node Type"] and "Plans" in node and "Filter" not in node["Plans"][0]:
 				cost = 0
@@ -186,37 +195,32 @@ class QueryParser:
 			filter = node.get(filter_name, "")
 			if filter == "":
 				cost = 0
-			
 
-			#if node["Node Type"] == "Aggregate":
-			# TODO test
 			count_joins = 0
-			do_count = (children[0]["operator"] == "Nested Loop" or children[0]["operator"] == "Merge Join" or children[0]["operator"] == "Hash Join" or children[0]["operator"] == "Gather")
-			if len(children)>0 and do_count:
-				# TODO maybe just do a check for the join filter
-				count_joins += 1
-				temp_child = children[0]
-				for i in range(3):
-					if len(temp_child["children"])>0 and temp_child["children"][0]["operator"] == "Nested Loop":
-						count_joins+=1
-					elif "Merge Join" == temp_child["children"][0]["operator"]:
-						count_joins+=1
-					elif "Hash Join" == temp_child["children"][0]["operator"]:
-						count_joins+=1
-					elif "Gather" == temp_child["children"][0]["operator"]:
-						count_joins+=1
-					elif "Scan" in temp_child["children"][0]["operator"]:
-						break
+
+			# seq scan and hash removes non_leaf_137
+			# but cant just have seq scan remove mvs or esle too many will be removed
+			# Gather and Index Scan removes non_leaf_150 and non_leaf_366/non_leaf_369
+			join_node_names = ["Nested Loop", "Gather", "Hash Join", "Hash", "Seq Scan"]
+			special_node_names = ["Index Scan"]
+			for i in range(len(children)):
+				do_count = (children[i]["operator"] in join_node_names)
+				if do_count:
+					count_joins += 1
+				elif children[i]["operator"] in special_node_names :
+					if (children[i]["filter"].count("AND") + children[i]["filter"].count("OR")) >= 1:
+						count_joins += 1
 					else:
-						#print(temp_child["children"][0]["operator"])
-						count_joins= 0
-						break
+						# if there are too many children for the index scan
+						if self.count_all_children(children) < 10:
+							count_joins = 0
+							break
+						count_joins += 1
+				else:
+					count_joins = 0
+					break
 			if count_joins >= 1:
-				#print("Count ", count_joins)#, children)
-				#print()
 				cost = 0
-			
-			
 
 			subquery_list.append({
 				"type": "non_leaf",
