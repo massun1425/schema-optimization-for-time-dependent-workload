@@ -262,6 +262,8 @@ def mv_make(mv_nodes):
 		mv_id = mv_list[i]
 		# if mv_id != "non_leaf_666":
 		# 	continue
+		if mv_id == "NONE":
+			continue
 		
 		#mv_sql = "CREATE MATERIALIZED VIEW " + mv_id + " AS\nSELECT *\n"
 		mv_sql = "SELECT pgivm.create_immv('" + mv_id + "','SELECT *\n"
@@ -364,6 +366,7 @@ def mv_make(mv_nodes):
 						where_sql += where_str + " AND "
 
 		# removes uneccessary tables if not present in filter
+		
 		from_sql = remake_from_sql(from_sql, where_sql)
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"	
