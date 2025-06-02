@@ -7,12 +7,12 @@ conn = psycopg2.connect("dbname=imdbload user=postgres")
 cur = conn.cursor()
 
 # SQLファイルが格納されているフォルダのパス
-#sql_folder_path = 'dataset/RED_SQL'
-sql_folder_path = 'dataset/RED_SQL/job'
+sql_folder_path = 'dataset/RED_SQL'
+#sql_folder_path = 'dataset/RED_SQL/job'
 
 # 出力フォルダのパス
-#output_folder_path = os.path.join("dataset/", 'RED_JSON')
-output_folder_path = os.path.join("dataset/", 'RED_JSON/job')
+output_folder_path = os.path.join("dataset/", 'RED_JSON')
+#output_folder_path = os.path.join("dataset/", 'RED_JSON/job')
 
 # 出力フォルダが存在しない場合は作成
 if not os.path.exists(output_folder_path):

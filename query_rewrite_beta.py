@@ -13,6 +13,8 @@ import sqlparse
 from sqlparse.sql import Where, TokenList
 from sqlparse.tokens import Keyword, Comparison
 
+from utils import *
+
 def find_child_leaf(node, qp, child_list=None):
 	if child_list is None:
 		child_list = []
@@ -264,7 +266,7 @@ def mv_make(mv_nodes):
 		# 	continue
 		if mv_id == "NONE":
 			continue
-		
+
 		#mv_sql = "CREATE MATERIALIZED VIEW " + mv_id + " AS\nSELECT *\n"
 		mv_sql = "SELECT pgivm.create_immv('" + mv_id + "','SELECT *\n"
 
@@ -430,10 +432,10 @@ def mv_node_analize(node):
 	return sql_mv, from_conds
 
 def query_rewrite(method, rows):
-	#path = "dataset/JOB_sql"
-	#json_path = "dataset/JOB_json"
-	path = "dataset/RED_SQL/job"
-	json_path = "dataset/RED_JSON/job"
+	path = "dataset/JOB_sql"
+	json_path = "dataset/JOB_json"
+	#path = "dataset/RED_SQL/job"
+	#json_path = "dataset/RED_JSON/job"
 
 	os.system(f"rm -f Output/query_rewrite/re_sql/{method}/*")
 
@@ -442,6 +444,7 @@ def query_rewrite(method, rows):
 	result_path = output_path+'query_rewrite/re_sql/'
 	class_path = 'Output/qp_class.pkl'
 
+	# all queries
 	files = []
 	for folder, _ , file in os.walk(path):
 		temp = [folder +'/'+ f for f in file if f.endswith(".sql")]
@@ -449,12 +452,22 @@ def query_rewrite(method, rows):
 	
 	files = sorted( files, key=natural_sort_key)
 
+	#red queries
+	workloads_dir = "Output/RED_WORKLOADS"
+	files = sorted(get_red_queries_sql(path, workloads_dir, True)[0], key=natural_sort_key)
+
+	# all queries
 	json_files = []
 	for folder, _ , file in os.walk(json_path):
 		temp = [folder +'/'+ f for f in file if f.endswith(".json")]
 		json_files = json_files + temp
 
 	json_files = sorted(json_files, key=natural_sort_key)
+
+	#red queries
+	workloads_dir = "Output/RED_WORKLOADS"
+	json_files = sorted(get_red_queries(json_path, workloads_dir, True)[0], key=natural_sort_key)
+
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:

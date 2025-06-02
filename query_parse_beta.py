@@ -10,6 +10,7 @@ import ILP_proposed_u_b_beta
 import ILP_proposed_u_beta
 import ILP_bigsubs_beta
 
+from utils import *
 
 class QueryManager:
 	def __init__(self):
@@ -197,7 +198,6 @@ class QueryParser:
 				cost = 0
 
 			count_joins = 0
-
 			# seq scan and hash removes non_leaf_137
 			# but cant just have seq scan remove mvs or esle too many will be removed
 			# Gather and Index Scan removes non_leaf_150 and non_leaf_366/non_leaf_369
@@ -222,12 +222,17 @@ class QueryParser:
 			if count_joins >= 1:
 				cost = 0
 
+			if node["Plan Width"] == 0:
+				width = 1
+			else:
+				width = node["Plan Width"]
+
 			subquery_list.append({
 				"type": "non_leaf",
 				"operator": node["Node Type"],
 				"filter": filter,
 				"cost": cost,
-				"size": node.get("Plan Rows", 0) * node.get("Plan Width", 0),
+				"size": node.get("Plan Rows", 0) * width,
 				"width": node.get("Plan Width", 0),
 				"children": children
 			})
@@ -249,8 +254,10 @@ class QueryParser:
 				cost = 0
 
 			# TODO test for edge cases
-			if "Scan" in node["Node Type"] and ("Index Cond" not in node or "Filter" not in node):
+			# "Index Cond" not in node
+			if "Scan" in node["Node Type"] and "Filter" not in node:
 				cost = 0
+
 			if node["Plan Width"] == 0:
 				Width = 1
 			else:
@@ -346,6 +353,27 @@ class QueryParser:
 			m_cost[i + len_leaf] *= insert_times
 		return m_cost
 
+	def get_red_queries(self, source_path, workloads_dir, get_ceb = False):
+		query_paths = []
+		for subdir in sorted([x[0] for x in os.walk(workloads_dir) if x[0] != workloads_dir]):
+			for filename in os.listdir(subdir):
+				if not filename.endswith(".csv") or filename == "stats.csv":
+					continue
+				with open(os.path.join(subdir, filename), "r") as csv_file:
+					workload = csv_file.readlines()[1:]
+				for line in workload:
+					if not get_ceb:
+						query_path = source_path+'/'+line.split(",")[0].split('/')[-1]
+						query_path = query_path.split(".")[0] + ".json"
+					else:
+						query_path = source_path+'/'+"/".join(line.split(",")[0].split('/')[2:])
+						query_path = query_path.split(".")[0] + ".json"
+					if not os.path.exists(query_path):
+						continue
+					if query_path not in query_paths:
+						query_paths.append(query_path)
+		return query_paths
+	
 	def query_parse(self, q_num, path, insert_query):
 		opelist = []
 		subqlist = []
@@ -362,7 +390,12 @@ class QueryParser:
 		ope_wherelist = []
 		child_to_parent = {}
 
-		files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		workloads_dir = "Output/RED_WORKLOADS"
+
+		#files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		
+		files = sorted(get_red_queries(path, workloads_dir, True)[0], key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		
 		s_num = 0
 		q_num_len = len(files)
 		print("q_num_len= ", q_num_len)

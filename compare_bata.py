@@ -13,6 +13,7 @@ import ILP_proposed_u_beta as ILP_proposed_u_beta
 import ILP_bigsubs_beta as ILP_bigsubs_beta
 import ILP_proposed_f_beta as ILP_proposed_f_beta
 
+from utils import *
 
 q_num = 113 # JOB
 #q_num = 13759  # JOB + CEB
@@ -21,17 +22,20 @@ B_max = 0.05 * 1000 * 1000 * 1000   # 50 MB
 # Around 0.1G might be the best for all ILP
 
 # Which ILP to use
-ILP_normal = False
+ILP_normal = True
 ILP_bigsubs = True
 ILP_utility_capacity_based = True
 ILP_utility_based = True
 ILP_frequency_based = True
 
+query_path = "dataset/RED_JSON"
+workloads_dir = "Output/RED_WORKLOADS"
 
-query_path = "dataset/RED_JSON/job"
+q_num = len(get_red_queries(query_path, workloads_dir, True)[0])
+
 qp = QueryParser()
 #query_path = "dataset/RED_JSON"
-q_num = sum([len(files) for r, d, files in os.walk(query_path)])
+#q_num = sum([len(files) for r, d, files in os.walk(query_path)])
 
 qp.query_parse(q_num, query_path, insert_query)
 
