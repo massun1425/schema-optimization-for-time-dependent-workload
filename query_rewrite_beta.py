@@ -432,10 +432,10 @@ def mv_node_analize(node):
 	return sql_mv, from_conds
 
 def query_rewrite(method, rows):
-	path = "dataset/JOB_sql"
-	json_path = "dataset/JOB_json"
-	#path = "dataset/RED_SQL/job"
-	#json_path = "dataset/RED_JSON/job"
+	#path = "dataset/JOB_sql"
+	#json_path = "dataset/JOB_json"
+	path = "dataset/RED_SQL"
+	json_path = "dataset/RED_JSON"
 
 	os.system(f"rm -f Output/query_rewrite/re_sql/{method}/*")
 
@@ -467,7 +467,7 @@ def query_rewrite(method, rows):
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
 	json_files = sorted(get_red_queries(json_path, workloads_dir, True)[0], key=natural_sort_key)
-
+	print(files)
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
