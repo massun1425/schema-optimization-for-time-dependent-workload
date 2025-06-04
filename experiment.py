@@ -26,12 +26,15 @@ for ilp in ilp_types:
 
     print("ILP : "+ilp)
     if ilp != "none":    
-        # Materialized view sql scripts creation and rewrites queries with new mv
-        print("Mv creation and query rewrite")
-        os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/{ilp}.out")
+        # Materialized view sql scripts creation
+        print("Mv creation")
+        os.system(f"python re_sql_exe.py {ilp} mv > Output/experiment/mv_create/mv_{ilp}.out")
         # Run Materialized view sql scripts
         print("Creating MVs")
-        os.system(f"bash run_mv.sh > Output/experiment/run_mv/{ilp}.out")
+        os.system(f"bash run_mv.sh {ilp} > Output/experiment/run_mv/{ilp}.out")
+        # Rewrites queries with new mv
+        print("Query rewrite")
+        os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/query_{ilp}.out")
 
     print("Running all rewritten queries")
     os.system(f"python execute_rewritten.py {ilp} > Output/query_rewrite/{ilp}.out")
