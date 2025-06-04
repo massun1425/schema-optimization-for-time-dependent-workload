@@ -454,7 +454,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	files = sorted(get_red_queries_sql(path, workloads_dir, True)[0], key=natural_sort_key)
+	files = sorted(get_red_queries_sql(path, workloads_dir, False)[0], key=natural_sort_key)
 
 	# all queries
 	json_files = []
@@ -466,7 +466,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	json_files = sorted(get_red_queries(json_path, workloads_dir, True)[0], key=natural_sort_key)
+	json_files = sorted(get_red_queries(json_path, workloads_dir, False)[0], key=natural_sort_key)
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:

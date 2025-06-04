@@ -160,7 +160,7 @@ class QueryParser:
 				total += self.count_all_children(item["children"]) # Recursive call for nested lists
 		return total
 	
-	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = []):
+	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = [], frequency = 1): # default should be changed
 		deep_list.append(depth)
 
 		if "Plans" in node: # Non-leaf node
@@ -169,7 +169,7 @@ class QueryParser:
 			if node["Node Type"] == "Bitmap Heap Scan":
 				table_info = [node["Relation Name"], node["Alias"]]
 			for child in node["Plans"]:
-				converted_child, order_1 = self.convert_node(child, subquery_list, deep_list, order_list, new_order + 1, depth + 1, table_info)
+				converted_child, order_1 = self.convert_node(child, subquery_list, deep_list, order_list, new_order + 1, depth + 1, table_info, frequency)
 				children.append(converted_child)
 				new_order = order_1
 
@@ -196,7 +196,7 @@ class QueryParser:
 			filter = node.get(filter_name, "")
 			if filter == "":
 				cost = 0
-
+			"""
 			count_joins = 0
 			# seq scan and hash removes non_leaf_137
 			# but cant just have seq scan remove mvs or esle too many will be removed
@@ -221,7 +221,7 @@ class QueryParser:
 					break
 			if count_joins >= 1:
 				cost = 0
-
+			"""
 			if node["Plan Width"] == 0:
 				width = 1
 			else:
@@ -232,7 +232,7 @@ class QueryParser:
 				"operator": node["Node Type"],
 				"filter": filter,
 				"cost": cost,
-				"size": node.get("Plan Rows", 0) * width,
+				"size": node.get("Plan Rows", 0) * width * frequency,
 				"width": node.get("Plan Width", 0),
 				"children": children
 			})
@@ -276,19 +276,19 @@ class QueryParser:
 				"alias": alias,
 				"filter": filter,
 				"cost": cost,
-				"size": node.get("Plan Rows", 0) * Width,
+				"size": node.get("Plan Rows", 0) * Width * frequency,
 				"width": node.get("Plan Width", 0)
 			})
 			order_list.append(order)
 			return subquery_list[-1], order
 
-	def convert_json(self, json_data):
+	def convert_json(self, json_data, freq):
 		subquery_list = []
 		deep_list = []
 		order_list = []
 		order = 0
 		for plan in json_data:
-			self.convert_node(plan["Plan"], subquery_list, deep_list, order_list, order)
+			self.convert_node(plan["Plan"], subquery_list, deep_list, order_list, order, frequency= freq)
 		return subquery_list, deep_list, order_list
 
 	def make_reverse_dict(self, d):
@@ -352,27 +352,6 @@ class QueryParser:
 					m_cost[i + len_leaf] += insert_cost * self.qm.subquery_widths[node_id] / table_width[table_list.index(item[0])]
 			m_cost[i + len_leaf] *= insert_times
 		return m_cost
-
-	def get_red_queries(self, source_path, workloads_dir, get_ceb = False):
-		query_paths = []
-		for subdir in sorted([x[0] for x in os.walk(workloads_dir) if x[0] != workloads_dir]):
-			for filename in os.listdir(subdir):
-				if not filename.endswith(".csv") or filename == "stats.csv":
-					continue
-				with open(os.path.join(subdir, filename), "r") as csv_file:
-					workload = csv_file.readlines()[1:]
-				for line in workload:
-					if not get_ceb:
-						query_path = source_path+'/'+line.split(",")[0].split('/')[-1]
-						query_path = query_path.split(".")[0] + ".json"
-					else:
-						query_path = source_path+'/'+"/".join(line.split(",")[0].split('/')[2:])
-						query_path = query_path.split(".")[0] + ".json"
-					if not os.path.exists(query_path):
-						continue
-					if query_path not in query_paths:
-						query_paths.append(query_path)
-		return query_paths
 	
 	def query_parse(self, q_num, path, insert_query):
 		opelist = []
@@ -393,8 +372,8 @@ class QueryParser:
 		workloads_dir = "Output/RED_WORKLOADS"
 
 		#files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
-		
-		files = sorted(get_red_queries(path, workloads_dir, True)[0], key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		files, file_freq = get_red_queries(path, workloads_dir, False)
+		files = sorted(files, key=lambda f: self.natural_sort_key(os.path.basename(f)))
 		
 		s_num = 0
 		q_num_len = len(files)
@@ -411,7 +390,8 @@ class QueryParser:
 				ope = []
 				with open(files[i], 'r') as f:
 					data = json.load(f)
-					converted_data, deep_list, order_list = self.convert_json(data)
+					frequency = file_freq[files[i]]
+					converted_data, deep_list, order_list = self.convert_json(data, frequency)
 					deeplist.append(deep_list)
 					orderlist.append(order_list)
 					for j, subquery in zip(order_list, converted_data):

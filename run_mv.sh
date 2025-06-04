@@ -23,6 +23,13 @@ for file in `ls Output/query_rewrite/mv/*.sql`; do
     # fi
 	#PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
     psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
+    PGOPTIONS='--statement-timeout=1800000' psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile # 1800000 ms = 30 minutes
+    ERROR=$(grep "ERROR:  canceling statement due to statement timeout" $errorfile)
+    if [ -n "$ERROR" ]; then
+        echo "$file has timed out"
+        echo remove_mv.py $file $1
+        python remove_mv.py $file $1
+    fi
     end=$(date +%s)
     elapsed=$(( $end - $start ))
     echo "elapsed time: $elapsed s" >> $errorfile
