@@ -27,7 +27,7 @@ for ilp in ilp_types:
     print("ILP : "+ilp)
     if ilp != "none":    
         # Materialized view sql scripts creation
-        print("Mv creation")
+        print("MV creation")
         os.system(f"python re_sql_exe.py {ilp} mv > Output/experiment/mv_create/mv_{ilp}.out")
         # Run Materialized view sql scripts
         print("Creating MVs")

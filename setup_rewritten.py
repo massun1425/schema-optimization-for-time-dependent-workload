@@ -24,13 +24,31 @@ if sys.argv[1] not in ilp_types:
 
 #INPUT_DIR = "dataset/RED_SQL"
 
+match sys.argv[1]:
+    case "normal":
+        input_folder = "normal"
+    case "bigsubs":
+        input_folder = "bigsubs"
+    case "utility_capacity":
+        input_folder = "proposed_u_b"
+    case "utility":
+        input_folder = "proposed_u"
+    case "frequency":
+        input_folder = "proposed_f"
+    case "none":
+        input_folder = ""
+        if len(sys.argv) > 2:
+            input_folder ="/job"
+    
+
+
 if sys.argv[1] != "none":
-    INPUT_DIR = "Output/query_rewrite/re_sql/" + sys.argv[1]
+    INPUT_DIR = "Output/query_rewrite/re_sql/" + input_folder
 else:
-    INPUT_DIR = "dataset/RED_SQL/job"
+    INPUT_DIR = "dataset/RED_SQL" + input_folder
 
 # Unpack/ inline the workload queries (convert the csv files to runnable sql files)
-def unpack_workloads():
+def unpack_workloads(get_ceb = False):
     os.system(f"rm -f {WORKLOADS_DIR}/*/*.sql") # clean up
     log("Unpacking Redbench rewritten workloads.")
     num_queries = defaultdict(int)
@@ -48,11 +66,16 @@ def unpack_workloads():
             # Unpack the queries
             for line in workload:
                 num_queries[group_name] += 1
-                #query_path = INPUT_DIR+"/"+line.split(",")[0] # can be deleted
                 query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
-                #if sys.argv[1] == "none": # for: ceb
-                    #query_path = INPUT_DIR+'/'+ "/".join(line.split(",")[0].split('/')[2:])
-    
+                #test
+                if not get_ceb:
+                    query_path = INPUT_DIR+'/job/'+line.split(",")[0].split('/')[-1]
+                else:
+                    query_path = INPUT_DIR+'/'+"/".join(line.split(",")[0].split('/')[-1:])
+                    if sys.argv[1] == "none": # for unmodified ceb
+                        query_path = INPUT_DIR+'/'+ "/".join(line.split(",")[0].split('/')[2:])
+                if get_ceb and "job" in query_path:
+                    continue
                 if not os.path.exists(query_path):
                     continue
                 with open(query_path, "r") as query_file:
@@ -70,4 +93,4 @@ def unpack_workloads():
 
 if __name__ == "__main__":
     # Setup Workloads with rewritten queries
-    unpack_workloads()
+    unpack_workloads(True)

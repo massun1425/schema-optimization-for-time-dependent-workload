@@ -206,7 +206,7 @@ if query_mv:
 		print("Nomal ILP :")
 		print("len(mv_nodes_normal): ", len(mv_nodes_normal))
 		t1 = time.time()
-		if sys.argv[2] == "mv":
+		if len(sys.argv)>2 and sys.argv[2] == "mv":
 			query_rewrite_beta.mv_make(mv_nodes_normal)
 			query_rewrite_beta.mv_remake(mv_nodes_normal)
 		else:
@@ -219,7 +219,7 @@ if query_mv:
 		print("Bigsubs ILP :")
 		print("len(mv_nodes_bigsubs): ", len(mv_nodes_bigsubs))
 		t1 = time.time()
-		if sys.argv[2] == "mv":
+		if len(sys.argv)>2 and sys.argv[2] == "mv":
 			query_rewrite_beta.mv_make(mv_nodes_bigsubs)
 			query_rewrite_beta.mv_remake(mv_nodes_bigsubs)
 		else:
@@ -232,7 +232,7 @@ if query_mv:
 		print("Utility capacity based ILP : ")
 		print("len(mv_nodes_utility_capacity_based): ", len(mv_nodes_utility_capacity_based))
 		t1 = time.time()
-		if sys.argv[2] == "mv":
+		if len(sys.argv)>2 and sys.argv[2] == "mv":
 			query_rewrite_beta.mv_make(mv_nodes_utility_capacity_based)
 			query_rewrite_beta.mv_remake(mv_nodes_utility_capacity_based)
 		else:
@@ -245,7 +245,7 @@ if query_mv:
 		print("Utility base ILP :")
 		print("len(mv_nodes_utility_based): ", len(mv_nodes_utility_based))
 		t1 = time.time()
-		if sys.argv[2] == "mv":
+		if len(sys.argv)>2 and sys.argv[2] == "mv":
 			query_rewrite_beta.mv_make(mv_nodes_utility_based)
 			query_rewrite_beta.mv_remake(mv_nodes_utility_based)
 		else:
@@ -258,7 +258,7 @@ if query_mv:
 		print("Frequency based ILP : ")
 		print("len(mv_nodes_frequency_based): ", len(mv_nodes_frequency_based))
 		t1 = time.time()
-		if sys.argv[2] == "mv":
+		if len(sys.argv)>2 and sys.argv[2] == "mv":
 			query_rewrite_beta.mv_make(mv_nodes_frequency_based)
 			query_rewrite_beta.mv_remake(mv_nodes_frequency_based)
 		else:

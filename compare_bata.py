@@ -31,7 +31,7 @@ ILP_frequency_based = True
 query_path = "dataset/RED_JSON"
 workloads_dir = "Output/RED_WORKLOADS"
 
-q_num = len(get_red_queries(query_path, workloads_dir, False)[0])
+q_num = len(get_red_queries(query_path, workloads_dir, True)[0])
 
 qp = QueryParser()
 #query_path = "dataset/RED_JSON"

@@ -372,7 +372,7 @@ class QueryParser:
 		workloads_dir = "Output/RED_WORKLOADS"
 
 		#files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
-		files, file_freq = get_red_queries(path, workloads_dir, False)
+		files, file_freq = get_red_queries(path, workloads_dir, True)
 		files = sorted(files, key=lambda f: self.natural_sort_key(os.path.basename(f)))
 		
 		s_num = 0

@@ -49,7 +49,20 @@ def find_node(node, qp, query_id):
 			break
 
 def condition_analaize(where_str, table, alias, used_alias, condition_type):
-	aliases_in_condition = set(re.findall(r'(\b[a-zA-Z_][a-zA-Z0-9_]*)\.(?=[a-zA-Z_])', where_str))
+	aliases_in_condition2 = set(re.findall(r'(\b[a-zA-Z_][a-zA-Z0-9_]*)\.(?=[a-zA-Z_])', where_str))
+
+	aliases_in_condition = set(re.findall(r'(?:(?<=^)|(?<=[^,.]))([a-zA-Z_][a-zA-Z0-9_]*)(?=\.[a-zA-Z_])', where_str)) # fixes errors with words like m.i.t or w.i.p
+
+	# TODO fix error
+	temp = False
+	if where_str == "keyword = ANY ('{american-history,cleveland-playhouse,d.h.-lawrence,dinosaur-hunting,electioneering,imperial-seal,m.i.t.,overdue-rent,psychotropic,reference-to-hellboy,rules-of-profession,senate-confirmation-hearing,wallboard,will-to-power}'::text[])":
+		temp = True
+	
+	if aliases_in_condition2 != aliases_in_condition:
+		print(where_str, used_alias)
+		print(aliases_in_condition, aliases_in_condition2)
+		print(aliases_in_condition2 == aliases_in_condition)
+		print()
 
 	if aliases_in_condition: # 明示的なエイリアスが条件に含まれる場合
 		for cond_alias in aliases_in_condition:
@@ -75,6 +88,7 @@ def condition_analaize(where_str, table, alias, used_alias, condition_type):
 		where_str = where_str[:-1]
 	where_str = extract_parentheses(where_str)
 
+	
 	# like句の場合
 	if " ~~ " in where_str:
 		where_str = where_str.split(" ~~ ")
@@ -136,7 +150,7 @@ def where_analaize(where_str, table, alias, used_alias):
 	check_cond = 0
 	if where_str[0] == "(" and where_str[-1] == ")":
 		where_str = where_str[1:-1]
-	# print("where_str: ", where_str)
+	#print("where_str: ", where_str)
 	if "AND" in where_str:
 		where_list = where_str.split(" AND ")
 		for where in where_list:
@@ -337,6 +351,7 @@ def mv_make(mv_nodes):
 						continue
 					elif check_cond_and_filter == 0:
 						where_str = where_analaize(where_str, table, alias, used_alias)
+						
 					else:
 						where_str_1 = where_analaize(where_str_1, table, alias, used_alias)
 						where_str_2 = where_analaize(where_str_2, table, alias, used_alias)
@@ -372,7 +387,7 @@ def mv_make(mv_nodes):
 		from_sql = remake_from_sql(from_sql, where_sql)
 		if where_sql == "WHERE ": #条件がない場合
 			#mv_sql += from_sql + ";"	
-			from_sql = from_sql[:-2]
+			#from_sql = from_sql[:-2]
 			mv_sql += from_sql + "\n');"
 
 			print(mv_id, from_sql, print(mv_id, qp.qm.leaf_nodes_map_r[node]))
@@ -454,7 +469,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	files = sorted(get_red_queries_sql(path, workloads_dir, False)[0], key=natural_sort_key)
+	files = sorted(get_red_queries_sql(path, workloads_dir, True)[0], key=natural_sort_key)
 
 	# all queries
 	json_files = []
@@ -466,7 +481,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	json_files = sorted(get_red_queries(json_path, workloads_dir, False)[0], key=natural_sort_key)
+	json_files = sorted(get_red_queries(json_path, workloads_dir, True)[0], key=natural_sort_key)
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
@@ -563,7 +578,8 @@ def query_rewrite(method, rows):
 			where_str = content[1]
 
 			group_str = content[1].split("GROUP BY")
-			if len(group_str) > 2:
+		
+			if len(group_str) >= 2:
 				group_str = "GROUP BY " + group_str[1]
 			else:
 				group_str=""
