@@ -6,6 +6,8 @@ ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency", "
 
 input_folder = "Output/query_rewrite/re_sql/"
 
+from utils import *
+
 ## command line argument handler
 if len(sys.argv) < 2:
 	print(f"Usage: {sys.argv[0]} <ILP type>")
@@ -25,7 +27,7 @@ else:
 		case "frequency":
 			input_folder += "proposed_f"
 		case "none":
-			input_folder = "dataset/RED_SQL/job"
+			input_folder = "dataset/RED_SQL"
 		case _:
 			print("Non valid argument")
 			exit(0)
@@ -39,7 +41,11 @@ def getAllFiles(path):
 
 os.listdir()
 
+workloads_dir = "Output/RED_WORKLOADS"
+
 files = getAllFiles(input_folder)
+if sys.argv[1] == "none":
+	files = get_red_queries_sql(input_folder, workloads_dir, True)[0]
 t1 = time.time()
 for file in files:
 	print(file)

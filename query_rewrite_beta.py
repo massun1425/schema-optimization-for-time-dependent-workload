@@ -51,18 +51,15 @@ def find_node(node, qp, query_id):
 def condition_analaize(where_str, table, alias, used_alias, condition_type):
 	aliases_in_condition2 = set(re.findall(r'(\b[a-zA-Z_][a-zA-Z0-9_]*)\.(?=[a-zA-Z_])', where_str))
 
-	aliases_in_condition = set(re.findall(r'(?:(?<=^)|(?<=[^,.]))([a-zA-Z_][a-zA-Z0-9_]*)(?=\.[a-zA-Z_])', where_str)) # fixes errors with words like m.i.t or w.i.p
-
-	# TODO fix error
-	temp = False
-	if where_str == "keyword = ANY ('{american-history,cleveland-playhouse,d.h.-lawrence,dinosaur-hunting,electioneering,imperial-seal,m.i.t.,overdue-rent,psychotropic,reference-to-hellboy,rules-of-profession,senate-confirmation-hearing,wallboard,will-to-power}'::text[])":
-		temp = True
+	aliases_in_condition = set(re.findall(r'(?:(?<=^)|(?<=[^:,.-]))([a-zA-Z_][a-zA-Z0-9_]*)(?=\.[a-zA-Z_])', where_str)) # fixes errors with words like m.i.t or w.i.p, etc
 	
+	"""
 	if aliases_in_condition2 != aliases_in_condition:
 		print(where_str, used_alias)
 		print(aliases_in_condition, aliases_in_condition2)
 		print(aliases_in_condition2 == aliases_in_condition)
 		print()
+	"""
 
 	if aliases_in_condition: # 明示的なエイリアスが条件に含まれる場合
 		for cond_alias in aliases_in_condition:
@@ -390,7 +387,8 @@ def mv_make(mv_nodes):
 			#from_sql = from_sql[:-2]
 			mv_sql += from_sql + "\n');"
 
-			print(mv_id, from_sql, print(mv_id, qp.qm.leaf_nodes_map_r[node]))
+			print("LEAF PROBLEM ",mv_id, qp.qm.leaf_nodes_map_r[node])
+			print("NON WHERE ",mv_id, from_sql)
 		else:
 			where_sql = where_sql[:-5]
 			# if "= '" in where_sql:  #4a.sqlに対応させるため、ここの空白を消す
@@ -458,6 +456,9 @@ def query_rewrite(method, rows):
 	output_path = 'Output/'
 	result_path = output_path+'query_rewrite/re_sql/'
 	class_path = 'Output/qp_class.pkl'
+
+	#counter for unused MVs
+	unused_count = 0
 
 	# all queries
 	files = []
@@ -717,6 +718,19 @@ def query_rewrite(method, rows):
 			new_sql = "SELECT " + select_str + from_sql + where_sql + group_str +";"
 			#print(new_sql)
 
+			# TODO test to see if leaves appear when they should:
+
+			mvs = set(re.findall(r'\w*leaf\w*', from_sql))
+			
+			for mv in mvs:
+				if mv not in where_sql and mv not in group_str:
+					unused_count+=1
+					print("Unused MV :", mv, "FILE ID ", file_id, from_sql)
+					print()
+					print(new_sql)
+					print()
+					
+
 			tmpFile = files[file_id].split('/')[-1]
 			with open(result_path + method + '/' + tmpFile, "w+") as file:  #ファイル保存
 				#print("file: ", files[file_id]) TODO
@@ -733,6 +747,7 @@ def query_rewrite(method, rows):
 				
 		
 		i += 1
+	print("UNUSED MVS : ",unused_count)
 def extract_sql_str(content):
 	# sql = sql.split("WHERE ")
 	# content = sql[1]

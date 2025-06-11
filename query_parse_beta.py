@@ -231,8 +231,8 @@ class QueryParser:
 				"type": "non_leaf",
 				"operator": node["Node Type"],
 				"filter": filter,
-				"cost": cost,
-				"size": node.get("Plan Rows", 0) * width * frequency,
+				"cost": cost * frequency,
+				"size": node.get("Plan Rows", 0) * width,
 				"width": node.get("Plan Width", 0),
 				"children": children
 			})
@@ -275,8 +275,8 @@ class QueryParser:
 				"table": table,
 				"alias": alias,
 				"filter": filter,
-				"cost": cost,
-				"size": node.get("Plan Rows", 0) * Width * frequency,
+				"cost": cost* frequency,
+				"size": node.get("Plan Rows", 0) * Width,
 				"width": node.get("Plan Width", 0)
 			})
 			order_list.append(order)
@@ -373,7 +373,7 @@ class QueryParser:
 
 		#files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
 		files, file_freq = get_red_queries(path, workloads_dir, True)
-		files = sorted(files, key=lambda f: self.natural_sort_key(os.path.basename(f)))
+		files = sorted(files, key=natural_sort_key)
 		
 		s_num = 0
 		q_num_len = len(files)

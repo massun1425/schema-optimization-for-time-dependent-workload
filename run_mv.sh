@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+#set -e
 
 run() {
 CURDIR=$(cd `dirname $0`; pwd)
@@ -11,6 +11,7 @@ fi
 
 cd $CURDIR
 total_start=$(date +%s)
+count_skipped=0
 for file in `ls Output/query_rewrite/mv/*.sql`; do
     bname=`basename $file`
     name=${bname%.*}
@@ -18,17 +19,12 @@ for file in `ls Output/query_rewrite/mv/*.sql`; do
     errorfile=$OUTDIR/$name.err
     echo "run $file > $outputfile"
     start=$(date +%s)
-    # if ! timeout 20s bash -c "PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file" >$outputfile 2> $errorfile; then
-    #     echo "Error1: Execution of $file exceeded 20 seconds and was terminated." >> $errorfile
-    # fi
-	#PGPASSWORD='u039283a' psql -U postgres -h 127.0.0.1 -d imdbload -f $file >$outputfile 2> $errorfile
-    psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
-    PGOPTIONS='--statement-timeout=1800000' psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile # 1800000 ms = 30 minutes
-    ERROR=$(grep "ERROR:  canceling statement due to statement timeout" $errorfile)
-    if [ -n "$ERROR" ]; then
+    PGOPTIONS='--statement-timeout=600000' psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile # 600000 ms = 10 minutes
+    error=$(grep "ERROR:  canceling statement due to statement timeout" $errorfile)
+    if [ -n "$error" ]; then
         echo "$file has timed out"
-        echo remove_mv.py $file $1
         python remove_mv.py $file $1
+        count_skipped=$((count_skipped+1))
     fi
     end=$(date +%s)
     elapsed=$(( $end - $start ))
@@ -37,6 +33,7 @@ done
 total_end=$(date +%s)
 total_elapsed=$(( $total_end - $total_start ))
 echo "Total elapsed time: $total_elapsed s"
+echo "MVs skipped: $count_skipped"
 }
 
 if [ $# -eq 0 ]; then
