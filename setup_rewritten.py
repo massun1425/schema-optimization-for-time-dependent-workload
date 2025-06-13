@@ -23,6 +23,7 @@ if sys.argv[1] not in ilp_types:
     exit(0)
 
 #INPUT_DIR = "dataset/RED_SQL"
+get_ceb = True
 
 match sys.argv[1]:
     case "normal":
@@ -37,7 +38,7 @@ match sys.argv[1]:
         input_folder = "proposed_f"
     case "none":
         input_folder = ""
-        if len(sys.argv) > 2:
+        if not get_ceb:
             input_folder ="/job"
     
 
@@ -69,7 +70,7 @@ def unpack_workloads(get_ceb = False):
                 query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
                 #test
                 if not get_ceb:
-                    query_path = INPUT_DIR+'/job/'+line.split(",")[0].split('/')[-1]
+                    query_path = INPUT_DIR+'/'+line.split(",")[0].split('/')[-1]
                 else:
                     query_path = INPUT_DIR+'/'+"/".join(line.split(",")[0].split('/')[-1:])
                     if sys.argv[1] == "none": # for unmodified ceb
@@ -93,4 +94,4 @@ def unpack_workloads(get_ceb = False):
 
 if __name__ == "__main__":
     # Setup Workloads with rewritten queries
-    unpack_workloads(True)
+    unpack_workloads(get_ceb)

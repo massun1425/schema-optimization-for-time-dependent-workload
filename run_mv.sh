@@ -19,7 +19,7 @@ for file in `ls Output/query_rewrite/mv/*.sql`; do
     errorfile=$OUTDIR/$name.err
     echo "run $file > $outputfile"
     start=$(date +%s)
-    PGOPTIONS='--statement-timeout=600000' psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile # 600000 ms = 10 minutes
+    PGOPTIONS='--statement-timeout=10min' psql -U postgres -d imdbload -f $file >$outputfile 2> $errorfile
     error=$(grep "ERROR:  canceling statement due to statement timeout" $errorfile)
     if [ -n "$error" ]; then
         echo "$file has timed out"

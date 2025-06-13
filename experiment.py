@@ -37,7 +37,7 @@ for ilp in ilp_types:
         os.system(f"python re_sql_exe.py {ilp} > Output/experiment/mv_create/query_{ilp}.out")
 
     print("Running all rewritten queries")
-    os.system(f"python execute_rewritten.py {ilp} > Output/query_rewrite/{ilp}.out")
+    os.system(f"python execute_rewritten.py {ilp} &> Output/query_rewrite/{ilp}.out")
     
     # sets up workloads with new rewritten queries
     print("Setting up Workloads")

@@ -49,7 +49,7 @@ if sys.argv[1] == "none":
 t1 = time.time()
 for file in files:
 	print(file)
-	os.system(f"psql -U postgres -d imdbload -f {file}")
+	os.system(f"PGOPTIONS='--statement-timeout=2h' psql -U postgres -d imdbload -f {file}")
 t2 = time.time()
 print("Time: ", t2-t1)
     
