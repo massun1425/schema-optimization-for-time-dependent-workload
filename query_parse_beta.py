@@ -152,13 +152,6 @@ class QueryParser:
 
 	def natural_sort_key(self, s):
 		return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-		
-	def count_all_children(self, data):
-		total = len(data)
-		for item in data:
-			if "children" in item:
-				total += self.count_all_children(item["children"]) # Recursive call for nested lists
-		return total
 	
 	def convert_node(self, node, subquery_list, deep_list, order_list, order, depth=0, table_info = [], frequency = 1): # default should be changed
 		deep_list.append(depth)
@@ -196,32 +189,6 @@ class QueryParser:
 			filter = node.get(filter_name, "")
 			if filter == "":
 				cost = 0
-			"""
-			count_joins = 0
-			# seq scan and hash removes non_leaf_137
-			# but cant just have seq scan remove mvs or esle too many will be removed
-			# Gather and Index Scan removes non_leaf_150 and non_leaf_366/non_leaf_369
-			join_node_names = ["Nested Loop", "Gather", "Hash Join", "Hash", "Seq Scan"]
-			special_node_names = ["Index Scan"]
-			for i in range(len(children)):
-				do_count = (children[i]["operator"] in join_node_names)
-				if do_count:
-					count_joins += 1
-				elif children[i]["operator"] in special_node_names :
-					if (children[i]["filter"].count("AND") + children[i]["filter"].count("OR")) >= 1:
-						count_joins += 1
-					else:
-						# if there are too many children for the index scan
-						if self.count_all_children(children) < 10:
-							count_joins = 0
-							break
-						count_joins += 1
-				else:
-					count_joins = 0
-					break
-			if count_joins >= 1:
-				cost = 0
-			"""
 			if node["Plan Width"] == 0:
 				width = 1
 			else:

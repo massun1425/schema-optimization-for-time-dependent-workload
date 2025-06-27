@@ -26,7 +26,7 @@ Tip : For docker use `WLS Compute Server` licence
 
 In the [run.py](dataset/redbench/run.py) file change the DEFAULT_PSQL constant
 
-## Runnning
+## Runnning experiment
 
 ```bash
 python make_each_sqlfile.py
