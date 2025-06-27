@@ -22,7 +22,7 @@ for ilp in ilp_types:
     # clear up mv files
     os.system("rm -f Output/query_rewrite/mv/*") # to clean up extra mv
 
-    os.system(f"bash delete_mv.sh > /dev/null")
+    os.system(f"bash delete_mv.sh > /dev/null") # deletes mv from database
 
     print("ILP : "+ilp)
     if ilp != "none":    
@@ -30,7 +30,7 @@ for ilp in ilp_types:
         print("MV creation")
         os.system(f"python re_sql_exe.py {ilp} mv > Output/experiment/mv_create/mv_{ilp}.out")
         # Run Materialized view sql scripts
-        print("Creating MVs")
+        print("Creating MVs on database")
         os.system(f"bash run_mv.sh {ilp} > Output/experiment/run_mv/{ilp}.out")
         # Rewrites queries with new mv
         print("Query rewrite")
