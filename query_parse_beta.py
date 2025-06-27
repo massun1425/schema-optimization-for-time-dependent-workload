@@ -253,7 +253,6 @@ class QueryParser:
 				filter = ""
 				cost = 0
 
-			# TODO test for edge cases
 			# "Index Cond" not in node
 			if "Scan" in node["Node Type"] and "Filter" not in node:
 				cost = 0
@@ -372,7 +371,7 @@ class QueryParser:
 		workloads_dir = "Output/RED_WORKLOADS"
 
 		#files = sorted([os.path.join(path, f) for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))], key=lambda f: self.natural_sort_key(os.path.basename(f)))
-		files, file_freq = get_red_queries(path, workloads_dir, True)
+		files, file_freq = get_red_queries(path, workloads_dir, GET_CEB)
 		files = sorted(files, key=natural_sort_key)
 		
 		s_num = 0

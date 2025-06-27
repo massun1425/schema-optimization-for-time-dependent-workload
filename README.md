@@ -4,7 +4,7 @@
 
 Before doing anything make sure to install all the modules (Check [requirements.txt](requirements.txt))
 
-To install the required modules simply execute this command
+To install the required modules simply execute this commanddoc
 
 ```
 pip install -r requirements.txt
@@ -46,7 +46,7 @@ Setup docker image
 ```bash
 docker build -t rs_db_exp:1.0 .
 
-docker run -ti --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
+docker run -e POSTGRES_PASSWORD=pass -ti --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
 ```
 
 Then enter the container:
@@ -75,10 +75,18 @@ Then [run the program](#runnning)
 - `compare_capacity.py`
 - `compare_topk_beta.py`
 
-## IMMV
+## How to restart server:
+
+Execute this inside the docker container
+```bash
+kill -SIGINT 1
+```
+
+## IMMV : setting up pg_ivm
 
 See [pg_ivm](https://github.com/sraoss/pg_ivm).
 
+Inside the container:
 ```bash
 wget https://github.com/sraoss/pg_ivm/archive/refs/heads/main.zip
 unzip main.zip
@@ -88,3 +96,14 @@ make install
 psql -U postgres -c "CREATE EXTENSION pg_ivm;"
 echo "shared_preload_libraries = 'pg_ivm'" >> /var/lib/postgresql/data/postgresql.conf
 ```
+
+Then restart the server
+
+Then start uop the container as usual:
+```bash
+docker start mv_exp
+```
+
+## How to switch experiment from JOB to CEB queries
+
+Change the GET_CEB value in utils.py to True or False (True for CEB and False for JOB)

@@ -33,7 +33,7 @@ def find_child_leaf_alias(node, qp, child_alias_list=None):
 		child_alias_list = []
 	if node == "NONE":
 		child_alias_list = []
-		#child_alias_list.append(qp.qm.leaf_nodes_map_r[node][2])  # TODO test modification
+		#child_alias_list.append(qp.qm.leaf_nodes_map_r[node][2])
 	else:
 		if node in qp.qm.non_leaf_nodes_map_r.keys():
 			for child in qp.qm.non_leaf_nodes_map_r[node]:
@@ -49,17 +49,7 @@ def find_node(node, qp, query_id):
 			break
 
 def condition_analaize(where_str, table, alias, used_alias, condition_type):
-	aliases_in_condition2 = set(re.findall(r'(\b[a-zA-Z_][a-zA-Z0-9_]*)\.(?=[a-zA-Z_])', where_str))
-
 	aliases_in_condition = set(re.findall(r'(?:(?<=^)|(?<=[^:,.-]))([a-zA-Z_][a-zA-Z0-9_]*)(?=\.[a-zA-Z_])', where_str)) # fixes errors with words like m.i.t or w.i.p, etc
-	
-	"""
-	if aliases_in_condition2 != aliases_in_condition:
-		print(where_str, used_alias)
-		print(aliases_in_condition, aliases_in_condition2)
-		print(aliases_in_condition2 == aliases_in_condition)
-		print()
-	"""
 
 	if aliases_in_condition: # 明示的なエイリアスが条件に含まれる場合
 		for cond_alias in aliases_in_condition:
@@ -72,6 +62,8 @@ def condition_analaize(where_str, table, alias, used_alias, condition_type):
 		where_str = where_str.replace("::text", "")
 	if "::integer" in where_str:
 		where_str = where_str.replace("::integer", "")
+	if "::double precision" in where_str:
+		where_str = where_str.replace("::double precision", "")
 	if "[]" in where_str:
 		where_str = where_str.replace("[]", "")
 	# if ") = " in where_str or ") >" in where_str or ") <" in where_str:
@@ -111,6 +103,13 @@ def condition_analaize(where_str, table, alias, used_alias, condition_type):
 	elif " <> " in where_str:
 		where_str = where_str.split(" <> ")
 		where_sql += alias + "." + where_str[0] + " != " + where_str[1] + condition_type
+	elif where_str[0] == "'" and " <= " in where_str: # for "'1000'::double precision <= (info)::double precision" cases where the order of comparison is different
+		where_str = where_str.split(" <= ")
+		if where_str[1][0] == "(":
+			where_str[1] = where_str[1][1:]
+			where_sql += where_str[0] + " <= " + "(" + alias + "." + where_str[1] + condition_type
+		else:
+			where_sql += where_str[0] + " <= " + alias + "." + where_str[1] + condition_type
 	else:
 		# print("where_str_cd: ", where_str)
 		# print("alias: ", alias)
@@ -136,9 +135,8 @@ def extract_parentheses(where_str):
 	if where_str[0] == "(" and ")" not in where_str:
 		where_str = where_str[1:]
 	
-	# if where_str[-1] == ")" and "(" not in where_str:
-	# 	where_str = where_str[:-1]
-
+	if where_str[-1] == ")" and "(" not in where_str:
+		where_str = where_str[:-1]
 	return where_str
 
 def where_analaize(where_str, table, alias, used_alias):
@@ -180,7 +178,6 @@ def where_analaize(where_str, table, alias, used_alias):
 				where_sql += " AND "
 			else:
 				# print("where_b: ", where)
-				# where = extract_parentheses(where)
 				where = condition_analaize(where, table, alias, used_alias, " AND ")
 				# print("where_a: ", where)
 				where_sql += where
@@ -234,11 +231,26 @@ def remake_from_sql(from_sql, where_sql):
 	tables = from_sql.replace("FROM ", "")
 	tables = tables.split(",")
 	tables = [i.strip() for i in tables if i != " "]
-	aliases = [i.split("AS ")[1] for i in tables]
+	aliases = [i.split("AS ")[1] for i in tables if len(i.split("AS "))>1]
 	res = "FROM "
-	for i in range(len(tables)):
+	for i in range(len(aliases)):
 		if (" "+aliases[i]+".") in where_sql:
 			res += tables[i] + ", "
+	return res
+
+def remake_from_sql_query(from_sql, where_sql, group_sql, select_sql):
+	tables = from_sql.replace("FROM ", "")
+	tables = tables.split(",")
+	tables = [i.strip() for i in tables if i != " "]
+	aliases = [i.split("AS ")[1] for i in tables if len(i.split("AS "))>1]
+	res = "FROM "
+	for i in range(len(aliases)):
+		if (" "+aliases[i]+".") in where_sql or (" "+aliases[i]+".") in group_sql or (" "+aliases[i]+".") in select_sql:
+			res += tables[i] + ", "
+	for i in range(len(aliases),len(tables)):
+		res += tables[i]+ ", "
+	if len(aliases)!= len(tables):
+		res = res[:-2]
 	return res
 
 # Creates Materialized views
@@ -375,7 +387,7 @@ def mv_make(mv_nodes):
 						table = "t"
 						alias = ""
 					where_str = where_analaize(where_str, table, alias, used_alias)
-					#TODO change FROM SQL according to where_str
+					
 					if where_str != '':
 						where_sql += where_str + " AND "
 
@@ -412,6 +424,7 @@ def mv_make(mv_nodes):
 
 		# print(mv_sql, "\n")
 		# print("---------------------------------")
+		
 		if mv_id != "NONE":
 			with open(f"{output_path}query_rewrite/mv/{mv_id}.sql", "w+") as file:
 				file.write(mv_sql)
@@ -422,7 +435,8 @@ def mv_node_analize(node):
 	with open(path + node + ".sql", "r") as file:
 		content = file.read()
 		# ここで解析処理を行う
-	content = content.split("\n", 2)[1] # TODO check
+	content = content.split("\n", 2)[1]
+	content = content.replace(" as "," AS ")
 	sql_mv = content
 	if " IN " in sql_mv:
 		sql_mv = sql_mv.replace(" IN ", " == ")
@@ -441,7 +455,7 @@ def mv_node_analize(node):
 		from_conds[-1] = from_conds[-1][:-1]
 	
 	#print("mna_from_conds: ", from_conds)
-
+	
 	return sql_mv, from_conds
 
 def query_rewrite(method, rows):
@@ -470,7 +484,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	files = sorted(get_red_queries_sql(path, workloads_dir, True)[0], key=natural_sort_key)
+	files = sorted(get_red_queries_sql(path, workloads_dir, GET_CEB)[0], key=natural_sort_key)
 
 	# all queries
 	json_files = []
@@ -482,7 +496,7 @@ def query_rewrite(method, rows):
 
 	#red queries
 	workloads_dir = "Output/RED_WORKLOADS"
-	json_files = sorted(get_red_queries(json_path, workloads_dir, True)[0], key=natural_sort_key)
+	json_files = sorted(get_red_queries(json_path, workloads_dir, GET_CEB)[0], key=natural_sort_key)
 
 	i = 0
 	# with open(output_path + method + '/mv_y_list.csv', 'r') as file:
@@ -555,6 +569,8 @@ def query_rewrite(method, rows):
 			sql_original = sql_original.replace("IS NOT","!!=") #is notに対応するため, 7c.sqlにあり
 			sql_original = sql_original.replace("IS NULL","=== NULL") #is notに対応するため, 7c.sqlにあり
 
+			sql_original = sql_original.replace(" as "," AS ")
+
 			# print("sql_original: ", sql_original)
 			
 			if " IN " in sql_original or " in " in sql_original:
@@ -571,9 +587,10 @@ def query_rewrite(method, rows):
 			# print("sql_original: ", sql_original)
 
 			content = content.replace("\n"," ") # changes "" to " " beause it was causing errors
+			content = content.replace(" as "," AS ") # ceb uses as instead of AS
 			content = content.replace("     "," ")
 			content = content.split(" FROM ")
-			select_str = content[0].replace("SELECT ", "")
+			select_str = content[0].replace("SELECT ", " ")
 			content = content[1].split(" WHERE ")
 			from_str = content[0]
 			where_str = content[1]
@@ -650,7 +667,10 @@ def query_rewrite(method, rows):
 							# print("changed_u_cond: ", unique1[u_cond_id])
 						unique1[u_cond_id] = unique1[u_cond_id][1:]
 					select_str = select_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
+					select_str = select_str.replace(" " + mv_a + ".", " " + node + "." + mv_a + "_")
 					group_str = group_str.replace("(" + mv_a + ".", "(" + node + "." + mv_a + "_")
+					group_str = group_str.replace(" " + mv_a + ".", " " + node + "." + mv_a + "_")
+
 					where_sql = where_sql.replace(mv_a + ".", node + ".")
 					
 				new_conditions = unique1
@@ -715,10 +735,9 @@ def query_rewrite(method, rows):
 			if group_str != "":
 				group_str = "\n" + group_str
 
-			new_sql = "SELECT " + select_str + from_sql + where_sql + group_str +";"
+			from_sql = "\n" + remake_from_sql_query(from_sql, where_sql, group_str, select_str)
+			new_sql = "SELECT" + select_str + from_sql + where_sql + group_str +";"
 			#print(new_sql)
-
-			# TODO test to see if leaves appear when they should:
 
 			mvs = set(re.findall(r'\w*leaf\w*', from_sql))
 			
@@ -733,7 +752,7 @@ def query_rewrite(method, rows):
 
 			tmpFile = files[file_id].split('/')[-1]
 			with open(result_path + method + '/' + tmpFile, "w+") as file:  #ファイル保存
-				#print("file: ", files[file_id]) TODO
+				#print("file: ", files[file_id])
 				file.write(new_sql)
 			# print("---------------------------------")
 
@@ -1018,7 +1037,6 @@ def mv_remake(mv_nodes):
 			from_str = from_str[:-4] # This will iclude the " ');"
 		from_str = from_str.replace("\n", "")
 		from_str = from_str.split(", ")
-		
 		for table in from_str:
 			table = table.split(" AS ")
 			table_name = table[0]

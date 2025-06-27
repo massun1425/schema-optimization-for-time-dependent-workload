@@ -45,11 +45,14 @@ workloads_dir = "Output/RED_WORKLOADS"
 
 files = getAllFiles(input_folder)
 if sys.argv[1] == "none":
-	files = get_red_queries_sql(input_folder, workloads_dir, True)[0]
+	files = get_red_queries_sql(input_folder, workloads_dir, GET_CEB)[0]
+
+files = sorted(files, key= lambda f: natural_sort_key(os.path.basename(f)))
+
 t1 = time.time()
 for file in files:
 	print(file)
-	os.system(f"PGOPTIONS='--statement-timeout=2h' psql -U postgres -d imdbload -f {file}")
+	os.system(f"PGOPTIONS='--statement-timeout=30min' psql -U postgres -d imdbload -f {file}")
 t2 = time.time()
 print("Time: ", t2-t1)
     

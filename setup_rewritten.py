@@ -3,6 +3,8 @@ from collections import defaultdict
 import os
 import sys
 
+from utils import *
+
 WORKLOADS_DIR = "Output/RED_WORKLOADS"
 
 ilp_types =  ["normal", "bigsubs", "utility_capacity", "utility", "frequency", "none"]
@@ -23,7 +25,6 @@ if sys.argv[1] not in ilp_types:
     exit(0)
 
 #INPUT_DIR = "dataset/RED_SQL"
-get_ceb = True
 
 match sys.argv[1]:
     case "normal":
@@ -38,7 +39,7 @@ match sys.argv[1]:
         input_folder = "proposed_f"
     case "none":
         input_folder = ""
-        if not get_ceb:
+        if not GET_CEB:
             input_folder ="/job"
     
 
@@ -94,4 +95,4 @@ def unpack_workloads(get_ceb = False):
 
 if __name__ == "__main__":
     # Setup Workloads with rewritten queries
-    unpack_workloads(get_ceb)
+    unpack_workloads(GET_CEB)

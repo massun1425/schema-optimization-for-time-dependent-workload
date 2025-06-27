@@ -1,6 +1,18 @@
 import os
 import re
 
+GET_CEB = True
+
+
+"""
+Function returns all query jsons for redbench
+
+source_path: path to the json files
+workloads_dir: path to the redbench workloads
+get_ceb: If False then the function returns the JOB queries or else it returns the JOB queries
+
+return: List of all the jsons that are used in redbench and a dictionary with number of occurences of each file
+"""
 def get_red_queries(source_path, workloads_dir, get_ceb = False):
     query_paths = []
     query_count = {}
@@ -30,6 +42,15 @@ def get_red_queries(source_path, workloads_dir, get_ceb = False):
     return query_paths, query_count
 
 
+"""
+Function returns all query sql for redbench
+
+source_path: path to the sql files
+workloads_dir: path to the redbench workloads
+get_ceb: If False then the function returns the JOB queries or else it returns the JOB queries
+
+return: List of all the sql that are used in redbench and a dictionary with number of occurences of each file
+"""
 def get_red_queries_sql(source_path, workloads_dir, get_ceb = False):
     query_paths = []
     query_count = {}
@@ -59,6 +80,17 @@ def get_red_queries_sql(source_path, workloads_dir, get_ceb = False):
 def natural_sort_key(s):
 	return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
+
+"""
+Function returns all query jsons for redbench 
+and writes in a csv file all the queries used with how many times thay are used in redbench 
+
+source_path: path to the json files
+workloads_dir: path to the redbench workloads
+get_ceb: If False then the function returns the JOB queries or else it returns the JOB queries
+
+return: List of all the jsons that are used in redbench and a dictionary with number of occurences of each file
+"""
 def get_red_queries_to_file(source_path, workloads_dir, get_ceb = False):
     query_paths = []
     query_count = {}
@@ -96,4 +128,4 @@ def get_red_queries_to_file(source_path, workloads_dir, get_ceb = False):
 if __name__ == "__main__":
     workloads_dir = "Output/RED_WORKLOADS"
     json_path = "dataset/RED_JSON"
-    get_red_queries_to_file(json_path, workloads_dir, True)
+    get_red_queries_to_file(json_path, workloads_dir, GET_CEB)
