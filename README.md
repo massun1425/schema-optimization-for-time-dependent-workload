@@ -46,7 +46,7 @@ Setup docker image
 ```bash
 docker build -t rs_db_exp:1.0 .
 
-docker run -e POSTGRES_PASSWORD=pass -ti --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/paolo/rs_db_system --name mv_exp rs_db_exp:1.0
+docker run -ti -d --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/user/rs_db_system --name mv_exp rs_db_exp:1.0
 ```
 
 Then enter the container:
@@ -107,3 +107,37 @@ docker start mv_exp
 ## How to switch experiment from JOB to CEB queries
 
 Change the GET_CEB value in utils.py to True or False (True for CEB and False for JOB)
+
+
+## How to copy data from host to container
+
+Sometimes you may need to update the container with new programs from your host.
+
+To replace all the files in the container with the new ones, execute the following command
+
+```bash
+docker cp /home/user/mv-query-optimization mv_exp:/home/root
+```
+
+This will send the **mv-query-optimization** folder to the container
+
+## How to copy data from container to host
+
+To copy output data from container to the current folder, execute the following commands according to what you need.
+
+### redbench output
+
+> docker cp mv_exp:/home/root/mv-query-optimization/Output/redbench .
+
+### compare_bata output
+
+> docker cp mv_exp:/home/root/mv-query-optimization/Output/compare_bata.out .
+
+### run_mv output
+
+> docker cp mv_exp:/home/root/mv-query-optimization/Output/experiment/run_mv .
+
+### execute_rewritten output
+
+> docker cp mv_exp:/home/root/mv-query-optimization/Output/query_rewrite/*.out .
+

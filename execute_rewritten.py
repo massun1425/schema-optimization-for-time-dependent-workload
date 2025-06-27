@@ -31,7 +31,10 @@ else:
 		case _:
 			print("Non valid argument")
 			exit(0)
-			
+
+"""
+Returns list of all files in the given folder
+"""	
 def getAllFiles(path):
 		res = []
 		for folder, _ , files in os.walk(path):
