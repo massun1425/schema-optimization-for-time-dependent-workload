@@ -8,8 +8,8 @@
 - [x] Phase 1: 設定管理の外部化 (100%) ✅
 - [x] Phase 2: ユーティリティモジュール整理 (100%) ✅
 - [x] Phase 3: コアモジュールリファクタリング (100%) ✅
-- [ ] Phase 4: ILP最適化モジュール統合 (0%)
-- [ ] Phase 5: クエリ書き換えモジュール (0%)
+- [x] Phase 4: ILP最適化モジュール統合 (100%) ✅
+- [x] Phase 5: データベース操作モジュール (100%) ✅
 - [ ] Phase 6: クエリ書き換えモジュール (0%)
 - [ ] Phase 7: 実験スクリプト整理 (0%)
 - [ ] Phase 8: テストコード追加 (0%)
@@ -156,29 +156,78 @@
 
 ---
 
-## Phase 5: ILP最適化モジュール統合
+## Phase 4: ILP最適化モジュール統合
 
 ### タスク
-- [ ] 基底クラス実装
-  - [ ] src/optimization/base.py
-  - [ ] BaseILPOptimizer
-- [ ] 各アルゴリズム実装
-  - [ ] src/optimization/normal.py
-  - [ ] src/optimization/bigsubs.py
-  - [ ] src/optimization/utility_capacity.py
-  - [ ] src/optimization/utility.py
-  - [ ] src/optimization/frequency.py
-- [ ] Factory実装
-  - [ ] src/optimization/factory.py
-- [ ] テスト作成
-  - [ ] tests/unit/test_optimization.py
-- [ ] Git コミット
+- [x] 基底クラス実装
+  - [x] src/optimization/base.py
+  - [x] BaseILPOptimizer
+- [x] 各アルゴリズム実装
+  - [x] src/optimization/normal.py
+  - [x] src/optimization/bigsubs.py
+  - [x] src/optimization/utility_capacity.py
+  - [x] src/optimization/utility.py
+  - [x] src/optimization/frequency.py
+- [x] Factory実装
+  - [x] src/optimization/factory.py
+- [x] テスト作成
+  - [x] tests/unit/test_optimization.py (14テスト)
+- [x] Git コミット
 
 ### 検証
-- [ ] すべてのILPアルゴリズムが動作
-- [ ] Factoryパターンが動作
-- [ ] テストが通る
-- [ ] コードの重複が削減
+- [x] すべてのILPアルゴリズムが動作
+- [x] Factoryパターンが動作
+- [x] テストが通る (14/14 passed)
+- [x] コードの重複が削減
+
+### 成果物
+- 8個の新規ファイル
+- ILP最適化アルゴリズム5種類統合
+- Factoryパターンでアルゴリズム選択
+- ユニットテスト14個 (全てPASS)
+
+---
+
+## Phase 5: データベース操作モジュール
+
+### タスク
+- [x] DatabaseConnection 実装
+  - [x] src/database/connection.py
+  - [x] 接続管理、コンテキストマネージャ
+  - [x] カーソル管理、トランザクション処理
+  - [x] ConnectionPool実装
+- [x] MaterializedViewManager 実装
+  - [x] src/database/mv_manager.py
+  - [x] MV作成、削除、リフレッシュ
+  - [x] 一覧取得、存在確認、サイズ取得
+  - [x] インデックス作成
+- [x] SchemaManager 実装
+  - [x] src/database/schema.py
+  - [x] テーブル情報取得
+  - [x] カラム情報取得
+  - [x] インデックス情報取得
+- [x] パッケージ初期化
+  - [x] src/database/__init__.py
+- [x] ユニットテスト作成
+  - [x] tests/unit/test_database_connection.py (20テスト)
+  - [x] tests/unit/test_mv_manager.py (26テスト)
+- [x] 統合テスト作成
+  - [x] tests/integration/test_db_operations.py
+- [x] Git コミット
+
+### 検証
+- [x] DatabaseConnectionが動作
+- [x] MaterializedViewManagerが動作
+- [x] SchemaManagerが動作
+- [x] テストが通る (46/46 passed)
+- [x] connection.py: カバレッジ100%
+- [x] mv_manager.py: カバレッジ90%
+
+### 成果物
+- 3個の実装ファイル (connection, mv_manager, schema)
+- 46個のユニットテスト (全てPASS)
+- 統合テストフレームワーク
+- ~500行のコード追加
 
 ---
 
@@ -290,11 +339,11 @@
 ## 📊 統計
 
 - **総フェーズ数**: 10
-- **完了フェーズ**: 4 (Phase 0-3)
-- **進捗率**: 40%
-- **推定残り時間**: 3-4週間
-- **総テスト数**: 57 (26 Phase 1-2 + 31 Phase 3)
-- **総コード行数**: ~3,500行 (新規追加)
+- **完了フェーズ**: 6 (Phase 0-5)
+- **進捗率**: 60%
+- **推定残り時間**: 2-3週間
+- **総テスト数**: 103 (26 Phase 1-2 + 31 Phase 3 + 14 Phase 4 + 46 Phase 5 + integration)
+- **総コード行数**: ~5,000行 (新規追加)
 
 ---
 
@@ -303,12 +352,15 @@
 ### 変更履歴
 - 2025-10-03: Phase 0-2 完了
 - 2025-10-03: Phase 3 完了 (コアモジュール)
+- 2025-10-03: Phase 4 完了 (ILP最適化モジュール)
+- 2025-10-03: Phase 5 完了 (データベース操作モジュール)
 
 ### 課題・注意事項
 - query_parse_beta.py は残存 (既存コードとの互換性のため)
 - IMDBスキーマ情報がハードコード (将来的に外部化予定)
+- 統合テストは@pytest.mark.integrationでマーク済み
 
 ### 次のアクション
-1. Phase 4: ILP最適化モジュール統合
-2. Phase 5: クエリ書き換えモジュール
+1. Phase 6: クエリ書き換えモジュール
+2. Phase 7: 実験スクリプト整理
 3. 各フェーズ完了後にこのファイルを更新
