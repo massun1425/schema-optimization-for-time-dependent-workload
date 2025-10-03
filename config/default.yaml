@@ -1,0 +1,50 @@
+# Database Configuration
+database:
+  host: localhost
+  port: 5432
+  database: imdbload
+  user: postgres
+  password: ""
+  timeout: 1800  # 30 minutes in seconds
+
+# Optimization Parameters
+optimization:
+  storage_limit_mb: 50
+  storage_limit_bytes: 52428800  # 50 * 1024 * 1024
+  insert_queries: 1000
+  
+  # Which algorithms to run
+  algorithms:
+    normal: true
+    bigsubs: true
+    utility_capacity: true
+    utility: true
+    frequency: true
+
+# Benchmark Configuration
+benchmark:
+  type: job  # 'job' or 'ceb'
+  workloads_dir: Output/RED_WORKLOADS
+  queries_dir: dataset/RED_JSON
+  sql_dir: dataset/RED_SQL
+
+# Query Configuration
+query:
+  num_queries: 113  # JOB benchmark
+  use_ceb: false    # Use CEB queries in addition to JOB
+
+# Paths
+paths:
+  output_dir: Output
+  experiments_dir: Output/experiments
+  logs_dir: Output/logs
+  artifacts_dir: Output/artifacts
+  query_rewrite_dir: Output/query_rewrite
+  mv_list_dir: Output
+
+# Logging Configuration
+logging:
+  level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: output/logs/experiment.log
+  console: true
