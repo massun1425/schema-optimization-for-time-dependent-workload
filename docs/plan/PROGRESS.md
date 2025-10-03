@@ -4,12 +4,12 @@
 
 ## 📊 全体進捗
 
-- [ ] Phase 0: 準備・環境整備 (0%)
-- [ ] Phase 1: 設定管理の外部化 (0%)
-- [ ] Phase 2: ユーティリティモジュール整理 (0%)
-- [ ] Phase 3: QueryManager リファクタリング (0%)
-- [ ] Phase 4: QueryParser リファクタリング (0%)
-- [ ] Phase 5: ILP最適化モジュール統合 (0%)
+- [x] Phase 0: 準備・環境整備 (100%) ✅
+- [x] Phase 1: 設定管理の外部化 (100%) ✅
+- [x] Phase 2: ユーティリティモジュール整理 (100%) ✅
+- [x] Phase 3: コアモジュールリファクタリング (100%) ✅
+- [ ] Phase 4: ILP最適化モジュール統合 (0%)
+- [ ] Phase 5: クエリ書き換えモジュール (0%)
 - [ ] Phase 6: クエリ書き換えモジュール (0%)
 - [ ] Phase 7: 実験スクリプト整理 (0%)
 - [ ] Phase 8: テストコード追加 (0%)
@@ -95,26 +95,42 @@
 
 ---
 
-## Phase 3: QueryManager リファクタリング
+## Phase 3: コアモジュールリファクタリング
 
 ### タスク
-- [ ] データモデル定義
-  - [ ] src/core/models.py
-  - [ ] QueryNode, LeafNode, NonLeafNode
-- [ ] QueryManager 実装
-  - [ ] src/core/query_manager.py
-  - [ ] 型ヒント追加
-  - [ ] docstring 追加
-  - [ ] メソッド整理
-- [ ] テスト作成
-  - [ ] tests/unit/test_query_manager.py
-- [ ] 既存コードとの互換性確保
-- [ ] Git コミット
+- [x] データモデル定義
+  - [x] src/core/models.py
+  - [x] QueryNode, LeafNode, NonLeafNode
+  - [x] MaterializedView, OptimizationResult, QueryPlan
+- [x] QueryManager 実装
+  - [x] src/core/query_manager.py
+  - [x] 型ヒント追加
+  - [x] docstring 追加
+  - [x] メソッド整理
+- [x] QueryParser 実装
+  - [x] src/core/query_parser.py
+  - [x] ILP依存削除
+  - [x] 型ヒント追加
+  - [x] docstring 追加
+- [x] テスト作成
+  - [x] tests/unit/test_query_manager.py (17テスト)
+  - [x] tests/unit/test_query_parser.py (14テスト)
+- [x] 既存コードとの互換性確保
+- [x] Git コミット (789c769d)
 
 ### 検証
-- [ ] QueryManager が動作
-- [ ] 既存の query_parse_beta.py から移行
-- [ ] テストが通る
+- [x] QueryManager が動作
+- [x] QueryParser が動作
+- [x] 既存の query_parse_beta.py から移行
+- [x] テストが通る (31/31 passed)
+- [x] QueryManagerカバレッジ: 91%
+
+### 成果物
+- 5個の新規ファイル
+- 1,611行のコード追加
+- データモデル定義完了
+- 型安全性向上
+- テストカバレッジ拡充
 
 ---
 
@@ -274,20 +290,25 @@
 ## 📊 統計
 
 - **総フェーズ数**: 10
-- **完了フェーズ**: 0
-- **進捗率**: 0%
-- **推定残り時間**: 6-8週間
+- **完了フェーズ**: 4 (Phase 0-3)
+- **進捗率**: 40%
+- **推定残り時間**: 3-4週間
+- **総テスト数**: 57 (26 Phase 1-2 + 31 Phase 3)
+- **総コード行数**: ~3,500行 (新規追加)
 
 ---
 
 ## 📝 メモ
 
 ### 変更履歴
-- 2025-10-03: 初版作成
+- 2025-10-03: Phase 0-2 完了
+- 2025-10-03: Phase 3 完了 (コアモジュール)
 
 ### 課題・注意事項
-- （ここに気づいた課題を記録）
+- query_parse_beta.py は残存 (既存コードとの互換性のため)
+- IMDBスキーマ情報がハードコード (将来的に外部化予定)
 
 ### 次のアクション
-1. Phase 0 を開始
-2. 各フェーズ完了後にこのファイルを更新
+1. Phase 4: ILP最適化モジュール統合
+2. Phase 5: クエリ書き換えモジュール
+3. 各フェーズ完了後にこのファイルを更新
