@@ -1,146 +1,262 @@
-# RS DB SYSTEM
+# Materialized View Query Optimization
 
-## Installation
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/Kaina3/mv-query-optimization)
 
-Before doing anything make sure to install all the modules (Check [requirements.txt](requirements.txt))
+マテリアライズドビュー選択を用いたクエリ最適化システム
 
-To install the required modules simply execute this commanddoc
+## 📋 概要
 
-```
+このプロジェクトは、ILP（整数線形計画法）を用いてマテリアライズドビューを選択し、クエリ実行時間を最適化するシステムです。
+
+### 主要機能
+
+- **クエリ解析**: PostgreSQL EXPLAIN JSONからクエリプランを解析
+- **MV選択最適化**: 5種類のILPアルゴリズムによる最適化
+  - Normal ILP
+  - BigSubs ILP
+  - Utility-based
+  - Utility-Capacity
+  - Frequency-based
+- **クエリ書き換え**: 選択されたMVを使用するようクエリを自動書き換え
+- **ベンチマーク**: JOB/CEB/RedBenchでの性能評価
+
+## 🚀 クイックスタート
+
+### 前提条件
+
+- Python 3.10以上
+- PostgreSQL 13以上
+- Gurobi Optimizer（ライセンス必要）
+
+### インストール
+
+```bash
+# リポジトリクローン
+git clone https://github.com/Kaina3/mv-query-optimization.git
+cd mv-query-optimization
+
+# 依存関係インストール
 pip install -r requirements.txt
-```
-
-## PostgreSQL server setup
-
-Run `setup.sh` in data folder then run `psql -U postgres < setup.sql`.
-
-[JOB](https://github.com/viktorleis/job)
-
-## Setting up gurobi
-
-A gurobi licence is necessary to the project so be sure to go to the gurobi website to set up your licence.
-
-Tip : For docker use `WLS Compute Server` licence
-
-## RedBench
-
-In the [run.py](dataset/redbench/run.py) file change the DEFAULT_PSQL constant
-
-## Runnning experiment
-
-```bash
-python make_each_sqlfile.py
-python sqljson.py
-
-chmod +777 make_dirs.sh
-./make_dirs.sh
-
-python experiment.py
-```
-
-## Docker setup
-
-Run `setup.sh` in data folder before building image.
-
-Setup docker image
-```bash
-docker build -t rs_db_exp:1.0 .
-
-docker run -ti -d --shm-size=1g --volume postgres_data:/var/lib/postgresql/data --volume python_data:/home/user/rs_db_system --name mv_exp rs_db_exp:1.0
-```
 
 Then enter the container:
 
 ```bash
 docker exec -ti mv_exp bash
 cd data
+# Gurobi設定
+gurobi_clp -c "config/gurobi.lic"
+```
+
+### データベースセットアップ
+
+```bash
+# セットアップスクリプト実行
+cd data
+bash setup.sh
+
+# PostgreSQLにデータロード
 psql -U postgres < setup.sql
 ```
 
-Then [run the program](#runnning)
+**ベンチマークデータ**: [JOB (Join Order Benchmark)](https://github.com/viktorleis/job)
 
-## Method
+### Gurobiライセンス設定
 
-Method for redbench experiment:
+プロジェクトの実行にはGurobiライセンスが必要です。[Gurobi公式サイト](https://www.gurobi.com/)でライセンスを取得してください。
 
-- step 0.1 (optional): `python make_each_sqlfile.py` : puts sql files from ceb and job into a folder to rewrite later, only needs to be done once
-- step 0.2 (optional): `python sqljson.py` : turn sql files into json files, only needs to be done once
-- step 1: `python compare_bata.py`
-- step 2: `python re_sql_exe.py <ilp> mv` : creates mv scripts
-- step 3: `bash run_mv.sh` : creates mv on database, and removes the ones that timed out from the mv list
-- step 4: `python re_sql_exe.py <ilp>` : rewrites queries
-- step 5: `python setup_rewritten.py <ilp>` : will use the csv and rewritten queries to setup the proper workloads according to frequency
-- step 6: `python run.py` : runs redbench with new workload
+> **Tip**: Docker環境では `WLS Compute Server` ライセンスを使用してください。
 
-## Other experiments
+## 📚 使用方法
 
-- `compare_insertquery.py`
-- `compare_capacity.py`
-- `compare_topk_beta.py`
+### 基本的な実験フロー
 
-## How to restart server:
-
-Execute this inside the docker container
 ```bash
+# 1. クエリファイル準備（初回のみ）
+python make_each_sqlfile.py
+python sqljson.py
+
+# 2. 実験ディレクトリ作成
+chmod +777 make_dirs.sh
+./make_dirs.sh
+
+# 3. 実験実行
+python experiment.py
+```
+
+### CLIスクリプト
+
+#### 実験実行
+
+```bash
+# 基本的な実験
+python scripts/run_experiment.py --algorithm normal --workload data/workload.json
+
+# 複数アルゴリズム比較
+python scripts/run_experiment.py --algorithm all --workload data/workload.json
+
+# 詳細ログ出力
+python scripts/run_experiment.py --algorithm normal --workload data/workload.json --verbose
+```
+
+#### アルゴリズム比較
+
+```bash
+# 結果比較
+python scripts/compare_algorithms.py --result-dir Output/experiment_20231201
+
+# CSV出力
+python scripts/compare_algorithms.py --result-dir Output/experiment_20231201 --output results.csv
+```
+
+#### データベースセットアップ
+
+```bash
+# スキーマ作成
+python scripts/setup_database.py --schema data/schema.sql
+
+# データロード
+python scripts/setup_database.py --data data/insert_queries.sql
+
+# トリガー作成
+python scripts/setup_database.py --triggers data/triggers.sql
+```
+
+#### クエリ書き換え
+
+```bash
+# クエリ書き換え
+python scripts/rewrite_queries.py --mv-selections Output/mv_selections.json --queries data/queries/ --output Output/rewritten/
+```
+
+### RedBench実験
+
+RedBenchを使用する場合は、`dataset/redbench/run.py`の`DEFAULT_PSQL`定数を変更してください。
+
+## 🧪 テスト
+
+```bash
+# 全テスト実行
+pytest
+
+# カバレッジレポート
+pytest --cov=src --cov-report=html
+
+# 特定のテストのみ
+pytest tests/unit/test_query_rewriter.py
+
+# パフォーマンステスト
+pytest -m performance
+```
+
+## 🏗️ プロジェクト構造
+
+```
+mv-query-optimization/
+├── src/                    # ソースコード
+│   ├── core/              # コアモジュール
+│   ├── database/          # データベース操作
+│   ├── optimization/      # ILPアルゴリズム
+│   ├── rewrite/           # クエリ書き換え
+│   └── utils/             # ユーティリティ
+├── scripts/               # CLIスクリプト
+├── tests/                 # テストコード
+├── config/                # 設定ファイル
+├── data/                  # データとスキーマ
+└── docs/                  # ドキュメント
+```
+
+## 📊 対応アルゴリズム
+
+| アルゴリズム | 説明 | 用途 |
+|------------|------|------|
+| Normal ILP | 基本的なILP定式化 | ベースライン |
+| BigSubs ILP | 確率的フリップを使用 | 大規模問題 |
+| Utility-based | 効用最大化 | コスト重視 |
+| Utility-Capacity | 効用/容量比最大化 | ストレージ制約 |
+| Frequency-based | 頻度ベース選択 | 頻出パターン |
+
+## 🐳 Docker環境
+
+### イメージビルド
+
+```bash
+# データ準備
+cd data
+bash setup.sh
+
+# イメージビルド
+docker build -t mv_query_opt:1.0 .
+
+# コンテナ起動
+docker run -ti -d \
+  --shm-size=1g \
+  --volume postgres_data:/var/lib/postgresql/data \
+  --volume python_data:/home/user/mv-query-optimization \
+  --name mv_exp \
+  mv_query_opt:1.0
+```
+
+### サーバー再起動
+
+```bash
+# コンテナ内で実行
 kill -SIGINT 1
 ```
 
-## IMMV : setting up pg_ivm
+### ファイル転送
 
-See [pg_ivm](https://github.com/sraoss/pg_ivm).
-
-Inside the container:
 ```bash
+# ホスト→コンテナ
+docker cp /path/to/local/files mv_exp:/home/root/
+
+# コンテナ→ホスト
+docker cp mv_exp:/home/root/mv-query-optimization/Output/. ./Output/
+```
+
+## 🔧 高度な設定
+
+### JOB/CEBクエリ切り替え
+
+`utils.py`の`GET_CEB`値を変更:
+- `True`: CEBクエリ使用
+- `False`: JOBクエリ使用
+
+### pg_ivm設定（IMMV実験）
+
+```bash
+# コンテナ内で実行
 wget https://github.com/sraoss/pg_ivm/archive/refs/heads/main.zip
 unzip main.zip
 apt-get -y install postgresql-server-dev-17
+cd pg_ivm-main
 make install
 
+# PostgreSQLで有効化
 psql -U postgres -c "CREATE EXTENSION pg_ivm;"
 echo "shared_preload_libraries = 'pg_ivm'" >> /var/lib/postgresql/data/postgresql.conf
+
+# サーバー再起動
+kill -SIGINT 1
 ```
 
-Then restart the server
+## 📈 その他の実験
 
-Then start uop the container as usual:
-```bash
-docker start mv_exp
-```
+- `compare_insertquery.py`: INSERT クエリ性能比較
+- `compare_capacity.py`: ストレージ容量の影響評価
+- `compare_topk_beta.py`: Top-K MV選択の評価
 
-## How to switch experiment from JOB to CEB queries
+## 📝 ライセンス
 
-Change the GET_CEB value in utils.py to True or False (True for CEB and False for JOB)
+このプロジェクトは研究目的で開発されています。
 
+## 🤝 貢献
 
-## How to copy data from host to container
+バグ報告や機能提案は Issue でお願いします。
 
-Sometimes you may need to update the container with new programs from your host.
+## 📖 参考文献
 
-To replace all the files in the container with the new ones, execute the following command
-
-```bash
-docker cp /home/user/mv-query-optimization mv_exp:/home/root
-```
-
-This will send the **mv-query-optimization** folder to the container
-
-## How to copy data from container to host
-
-To copy output data from container to the current folder, execute the following commands according to what you need.
-
-### redbench output
-
-> docker cp mv_exp:/home/root/mv-query-optimization/Output/redbench .
-
-### compare_bata output
-
-> docker cp mv_exp:/home/root/mv-query-optimization/Output/compare_bata.out .
-
-### run_mv output
-
-> docker cp mv_exp:/home/root/mv-query-optimization/Output/experiment/run_mv .
-
-### execute_rewritten output
-
-> docker cp mv_exp:/home/root/mv-query-optimization/Output/query_rewrite/*.out .
+- [Join Order Benchmark (JOB)](https://github.com/viktorleis/job)
+- [pg_ivm - Incremental View Maintenance](https://github.com/sraoss/pg_ivm)
 

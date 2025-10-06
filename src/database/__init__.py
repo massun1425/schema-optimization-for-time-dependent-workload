@@ -16,17 +16,17 @@ Classes:
 Example:
     >>> from config.settings import Settings
     >>> from src.database import DatabaseConnection, MaterializedViewManager
-    >>> 
+    >>>
     >>> settings = Settings()
     >>> db = DatabaseConnection(settings.database)
     >>> mv_manager = MaterializedViewManager(db)
-    >>> 
+    >>>
     >>> # Create a materialized view
     >>> mv_manager.create_view(
     ...     "mv_active_users",
     ...     "SELECT * FROM users WHERE active = true"
     ... )
-    >>> 
+    >>>
     >>> # List all views
     >>> views = mv_manager.list_views()
     >>> print(f"Found {len(views)} materialized views")
@@ -34,17 +34,15 @@ Example:
 
 from .connection import DatabaseConnection, DatabaseConnectionPool
 from .mv_manager import MaterializedViewManager, ViewInfo
-from .schema import SchemaManager, TableInfo, ColumnInfo, IndexInfo
+from .schema import ColumnInfo, IndexInfo, SchemaManager, TableInfo
 
 __all__ = [
     # Connection management
     "DatabaseConnection",
     "DatabaseConnectionPool",
-    
     # Materialized view management
     "MaterializedViewManager",
     "ViewInfo",
-    
     # Schema management
     "SchemaManager",
     "TableInfo",
