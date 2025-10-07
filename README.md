@@ -160,6 +160,18 @@ ls -la Output/
 # 仮想環境をアクティベート
 source .venv/bin/activate
 
+# クエリパースのテスト
+python scripts/test_query_parse.py
+
+# ILP最適化のテスト (単一アルゴリズム)
+python scripts/test_optimization.py --algorithm bigsubs
+
+# MV作成SQL生成のテスト
+python scripts/test_mv_generation.py --algorithm bigsubs --max-mvs 5
+
+# 全アルゴリズムのテスト
+python scripts/test_optimization.py --algorithm all
+
 # 全テスト実行
 pytest
 

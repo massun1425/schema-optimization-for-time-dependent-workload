@@ -131,7 +131,25 @@ class MaterializedViewManager:
             ... )
             >>> mv_manager.create_view_from_model(view)
         """
-        return self.create_view(view_name=view.view_id, query=view.create_sql, replace=replace)
+        # Check if create_sql already contains CREATE MATERIALIZED VIEW
+        if view.create_sql.strip().upper().startswith("CREATE MATERIALIZED VIEW"):
+            # SQL is complete, execute directly
+            try:
+                # Drop existing view if replace is True
+                if replace and self.view_exists(view.view_id):
+                    logger.info(f"Dropping existing view '{view.view_id}' for replacement")
+                    self.drop_view(view.view_id)
+                
+                logger.info(f"Creating materialized view '{view.view_id}'")
+                self.db.execute(view.create_sql)
+                logger.info(f"Successfully created view '{view.view_id}'")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to create view '{view.view_id}': {e}")
+                raise
+        else:
+            # SQL is just the query part, use create_view method
+            return self.create_view(view_name=view.view_id, query=view.create_sql, replace=replace)
 
     def drop_view(self, view_name: str, if_exists: bool = True, cascade: bool = False) -> bool:
         """Drop a materialized view.

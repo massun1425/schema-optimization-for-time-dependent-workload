@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """実験実行メインスクリプト
 
-既存の experiment.py の機能を CLI 化したもの
+src/ 配下のリファクタリング済みコードを使用した実験実行スクリプト
 """
 import argparse
 import os
@@ -12,6 +12,68 @@ from pathlib import Path
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# src/ 配下のモジュールをインポート
+from src.core.query_manager import QueryManager
+from src.core.query_parser import QueryParser
+from src.optimization.factory import OptimizerFactory
+from src.database.connection import DatabaseConnection
+from src.utils.logging_utils import get_logger
+
+logger = get_logger(__name__)
+
+
+def _topological_sort_mvs(mvs: list, qm) -> list:
+    """Sort MVs in topological order (dependencies first).
+    
+    Args:
+        mvs: List of MaterializedView objects
+        qm: QueryManager with node information
+        
+    Returns:
+        Sorted list of MVs
+    """
+    from collections import defaultdict, deque
+    
+    # Build dependency graph
+    mv_dict = {mv.node_id: mv for mv in mvs}
+    in_degree = {node_id: 0 for node_id in mv_dict}
+    graph = defaultdict(list)
+    
+    for node_id in mv_dict:
+        if node_id.startswith('non_leaf_'):
+            # Get children from non_leaf_nodes_map_r
+            if node_id in qm.non_leaf_nodes_map_r:
+                children = qm.non_leaf_nodes_map_r[node_id]
+                for child_id in children:
+                    if child_id in mv_dict:
+                        # child_id depends on nothing (or other nodes)
+                        # node_id depends on child_id
+                        graph[child_id].append(node_id)
+                        in_degree[node_id] += 1
+    
+    # Topological sort using Kahn's algorithm
+    queue = deque([node_id for node_id in mv_dict if in_degree[node_id] == 0])
+    sorted_node_ids = []
+    
+    while queue:
+        node_id = queue.popleft()
+        sorted_node_ids.append(node_id)
+        
+        for neighbor in graph[node_id]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+    
+    # Check for cycles
+    if len(sorted_node_ids) != len(mv_dict):
+        logger.warning(f"Circular dependency detected! Only {len(sorted_node_ids)}/{len(mv_dict)} nodes sorted")
+        # Add remaining nodes at the end
+        remaining = [node_id for node_id in mv_dict if node_id not in sorted_node_ids]
+        sorted_node_ids.extend(remaining)
+    
+    # Convert back to MV objects
+    return [mv_dict[node_id] for node_id in sorted_node_ids]
 
 
 def parse_args():
@@ -37,9 +99,12 @@ def parse_args():
     parser.add_argument("--skip-benchmark", action="store_true", help="Skip benchmark execution")
 
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
-
+    
     parser.add_argument(
-        "--initialize", action="store_true", help="Initialize CSV comparison before running"
+        "--storage-limit", 
+        type=int, 
+        default=50 * 1024 * 1024,  # 50MB
+        help="Storage limit for materialized views in bytes (default: 50MB)"
     )
 
     return parser.parse_args()
@@ -63,122 +128,233 @@ def setup_directories(output_dir: str) -> None:
         print(f"Created directory: {d}")
 
 
-def initialize_csv() -> None:
-    """CSV比較を初期化"""
-    print("=== Initializing CSV for each ILP ===")
-    os.system("python compare_bata.py > Output/compare_bata.out")
-
-
 def cleanup_mv_files() -> None:
     """MV関連ファイルをクリーンアップ"""
-    print("  Cleaning up MV files...")
+    logger.info("Cleaning up MV files...")
 
     # MVファイル削除
     mv_dir = "Output/query_rewrite/mv"
     if os.path.exists(mv_dir):
         for file in Path(mv_dir).glob("*"):
             file.unlink()
+            logger.debug(f"Deleted: {file}")
 
     # データベースからMV削除
-    if os.path.exists("delete_mv.sh"):
-        os.system("bash delete_mv.sh > /dev/null 2>&1")
+    try:
+        from config.settings import Settings
+        settings = Settings()
+        db = DatabaseConnection(settings.database)
+        
+        with db.get_connection() as conn:
+            with conn.cursor() as cur:
+                # 既存のMVを削除
+                cur.execute("""
+                    SELECT matviewname FROM pg_matviews 
+                    WHERE schemaname = 'public'
+                """)
+                mvs = cur.fetchall()
+                for (mv_name,) in mvs:
+                    logger.debug(f"Dropping MV: {mv_name}")
+                    cur.execute(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name} CASCADE")
+            conn.commit()
+        logger.info(f"Dropped {len(mvs)} materialized views")
+    except Exception as e:
+        logger.warning(f"Error cleaning up MVs: {e}")
 
 
 def run_ilp_optimization(
     ilp_type: str,
     output_dir: str,
+    storage_limit: int = 50 * 1024 * 1024,
     skip_mv_creation: bool = False,
     skip_rewrite: bool = False,
     skip_benchmark: bool = False,
     verbose: bool = False,
 ) -> None:
-    """ILP最適化を実行
+    """ILP最適化を実行（src/ モジュールのみ使用）
 
     Args:
         ilp_type: ILPアルゴリズムタイプ
         output_dir: 出力ディレクトリ
+        storage_limit: ストレージ上限（バイト）
         skip_mv_creation: MV作成をスキップ
         skip_rewrite: クエリ書き換えをスキップ
         skip_benchmark: ベンチマーク実行をスキップ
         verbose: 詳細出力
     """
-    print(f"\n{'='*60}")
-    print(f"Running ILP: {ilp_type}")
-    print(f"{'='*60}")
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Running ILP: {ilp_type}")
+    logger.info(f"{'='*60}")
 
     start_time = time.time()
 
     # MVファイルクリーンアップ
     cleanup_mv_files()
 
-    if ilp_type != "none":
-        # 1. MV作成SQLスクリプト生成
-        if not skip_mv_creation:
-            print("\n[1/4] Creating MV SQL scripts...")
-            redirect = "" if verbose else f"> {output_dir}/experiment/mv_create/mv_{ilp_type}.out"
-            os.system(f"python re_sql_exe.py {ilp_type} mv {redirect}")
+    if ilp_type == "none":
+        logger.info("Running with 'none' algorithm (no optimization)")
+        elapsed = time.time() - start_time
+        logger.info(f"\n✓ Completed {ilp_type} in {elapsed:.2f} seconds")
+        return
 
-        # 2. データベースにMV作成
-        if not skip_mv_creation:
-            print("[2/4] Creating MVs in database...")
-            redirect = "" if verbose else f"> {output_dir}/experiment/run_mv/{ilp_type}.out"
-
-            if os.path.exists("run_mv.sh"):
-                os.system(f"bash run_mv.sh {ilp_type} {redirect}")
-            else:
-                print("  Warning: run_mv.sh not found, skipping MV creation in database")
-
-        # 3. クエリ書き換え
-        if not skip_rewrite:
-            print("[3/4] Rewriting queries...")
-            redirect = (
-                "" if verbose else f"> {output_dir}/experiment/mv_create/query_{ilp_type}.out"
-            )
-            os.system(f"python re_sql_exe.py {ilp_type} {redirect}")
-
-    # 4. 書き換えられたクエリを実行
-    print("[4/4] Running rewritten queries...")
-    redirect = "" if verbose else f"> {output_dir}/query_rewrite/{ilp_type}.out"
-    os.system(f"python execute_rewritten.py {ilp_type} {redirect}")
-
-    # 5. ワークロードセットアップ
-    if not skip_benchmark:
-        print("\n[Benchmark] Setting up workloads...")
-        os.system(f"python setup_rewritten.py {ilp_type}")
-
-        # 6. RedBench実行
-        print("[Benchmark] Running RedBench...")
-        cwd = os.getcwd()
-
-        if os.path.exists("dataset/redbench"):
-            os.chdir("dataset/redbench")
-            redirect = "" if verbose else f"> ../../{output_dir}/redbench/{ilp_type}.out"
-            os.system(f"python run.py {redirect}")
-            os.chdir(cwd)
+    try:
+        from config.settings import Settings
+        from src.rewrite.query_rewriter import QueryRewriter
+        from src.database.mv_manager import MaterializedViewManager
+        
+        settings = Settings()
+        
+        # [1/5] クエリパース
+        logger.info("[1/5] Parsing queries...")
+        pickle_path = Path(output_dir) / "qp_class.pkl"
+        
+        if pickle_path.exists():
+            logger.info(f"Loading query parser from {pickle_path}")
+            import pickle
+            with open(pickle_path, 'rb') as f:
+                qp = pickle.load(f)
         else:
-            print("  Warning: dataset/redbench not found, skipping benchmark")
+            logger.info("Creating QueryParser using src/ modules...")
+            qp = QueryParser(settings)
+            
+            query_path = settings.benchmark.queries_dir
+            q_num = 0
+            insert_query = settings.optimization.insert_queries
+            
+            qp.query_parse(q_num, query_path, insert_query)
+            
+            logger.info(f"Saving query parser to {pickle_path}")
+            import pickle
+            with open(pickle_path, 'wb') as f:
+                pickle.dump(qp, f)
+        
+        # [2/5] ILP最適化実行
+        logger.info(f"[2/5] Running {ilp_type} optimization...")
+        logger.info(f"Storage limit: {storage_limit / (1024*1024):.2f} MB")
+        
+        if not OptimizerFactory.is_available(ilp_type):
+            logger.error(f"Algorithm {ilp_type} is not available")
+            return
+        
+        # オプティマイザーのパラメータを準備
+        optimizer_params = {
+            "qm": qp.qm,
+            "s_num": qp.s_num,
+            "m_cost": qp.m_cost,
+            "node_list": qp.node_list,
+            "B_max": storage_limit,
+            "b_j": qp.b_j,
+            "u_ij": qp.u_ij,
+            "X": qp.X,
+            "q_s_list": qp.q_s_list,
+            "settings": settings,
+        }
+        
+        # BigSubs固有のパラメータを追加
+        if ilp_type == "bigsubs":
+            optimizer_params.update({
+                "U_j_max": qp.U_j_max if hasattr(qp, 'U_j_max') else [0] * qp.s_num,
+                "U_max": qp.U_max if hasattr(qp, 'U_max') else 0.0,
+                "y_ij": qp.y_ij if hasattr(qp, 'y_ij') else [[0] * qp.s_num for _ in range(len(qp.u_ij))],
+            })
+            
+        optimizer = OptimizerFactory.create(ilp_type, **optimizer_params)
+        
+        result = optimizer.optimize()
+        logger.info(f"Selected {len(result.selected_views)} materialized views")
+        logger.info(f"Total utility: {result.total_utility:,.2f}")
+        logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
+        
+        if len(result.selected_views) == 0:
+            logger.warning("No MVs selected. Check query parsing and optimization parameters.")
+            return
+        
+        # [3/5] MV作成SQL生成とデータベースへの登録
+        if not skip_mv_creation:
+            logger.info("[3/5] Creating MVs in database...")
+            mv_manager = MaterializedViewManager(DatabaseConnection(settings.database))
+            
+            # Sort MVs by dependency order using topological sort
+            sorted_mvs = _topological_sort_mvs(result.selected_views, qp.qm)
+            
+            logger.info(f"Creating {len(sorted_mvs)} MVs in dependency order")
+            
+            created_count = 0
+            failed_count = 0
+            
+            for mv in sorted_mvs:
+                try:
+                    success = mv_manager.create_view_from_model(mv, replace=True)
+                    if success:
+                        created_count += 1
+                        if verbose:
+                            logger.info(f"Created MV: {mv.view_id}")
+                    else:
+                        failed_count += 1
+                        logger.warning(f"Failed to create MV: {mv.view_id}")
+                except Exception as e:
+                    failed_count += 1
+                    logger.error(f"Failed to create MV {mv.view_id}: {e}")
+                    if verbose:
+                        import traceback
+                        traceback.print_exc()
+            
+            logger.info(f"Created {created_count}/{len(sorted_mvs)} MVs ({failed_count} failed)")
+        else:
+            logger.info("[3/5] Skipping MV creation in database")
+        
+        # [4/5] クエリ書き換え
+        if not skip_rewrite:
+            logger.info("[4/5] Rewriting queries...")
+            rewriter = QueryRewriter(settings)
+            
+            rewritten_dir = Path(output_dir) / "query_rewrite" / "re_sql" / ilp_type
+            rewritten_dir.mkdir(parents=True, exist_ok=True)
+            
+            rewritten_queries = rewriter.rewrite_queries(result.selected_views)
+            
+            for query_id, rewritten_sql in rewritten_queries.items():
+                output_file = rewritten_dir / f"{query_id}.sql"
+                with open(output_file, 'w') as f:
+                    f.write(rewritten_sql)
+            
+            logger.info(f"Rewritten {len(rewritten_queries)} queries to {rewritten_dir}")
+        else:
+            logger.info("[4/5] Skipping query rewriting")
+        
+        # [5/5] 書き換えられたクエリの実行
+        if not skip_benchmark:
+            logger.info("[5/5] Executing rewritten queries...")
+            # TODO: ベンチマーク実行機能を src/ に実装
+            logger.warning("Benchmark execution not yet implemented in src/ modules")
+        else:
+            logger.info("[5/5] Skipping benchmark execution")
+            
+    except Exception as e:
+        logger.error(f"Error in ILP optimization: {e}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        return
 
     elapsed = time.time() - start_time
-    print(f"\n✓ Completed {ilp_type} in {elapsed:.2f} seconds")
+    logger.info(f"\n✓ Completed {ilp_type} in {elapsed:.2f} seconds")
 
 
 def main():
     """メイン処理"""
     args = parse_args()
 
-    print("=" * 60)
-    print("MV Query Optimization Experiment")
-    print("=" * 60)
-    print(f"Algorithms: {', '.join(args.algorithms)}")
-    print(f"Output: {args.output}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("MV Query Optimization Experiment")
+    logger.info("=" * 60)
+    logger.info(f"Algorithms: {', '.join(args.algorithms)}")
+    logger.info(f"Output: {args.output}")
+    logger.info(f"Storage Limit: {args.storage_limit / (1024*1024):.2f} MB")
+    logger.info("=" * 60)
 
     # ディレクトリセットアップ
     setup_directories(args.output)
-
-    # CSV初期化
-    if args.initialize:
-        initialize_csv()
 
     # 各アルゴリズムで実行
     total_start = time.time()
@@ -188,26 +364,26 @@ def main():
             run_ilp_optimization(
                 ilp_type=ilp_type,
                 output_dir=args.output,
+                storage_limit=args.storage_limit,
                 skip_mv_creation=args.skip_mv_creation,
                 skip_rewrite=args.skip_rewrite,
                 skip_benchmark=args.skip_benchmark,
                 verbose=args.verbose,
             )
         except Exception as e:
-            print(f"\n✗ Error running {ilp_type}: {e}")
+            logger.error(f"\n✗ Error running {ilp_type}: {e}")
             if args.verbose:
                 import traceback
-
                 traceback.print_exc()
             continue
 
     total_elapsed = time.time() - total_start
 
-    print("\n" + "=" * 60)
-    print("Experiment completed successfully!")
-    print(f"Total time: {total_elapsed:.2f} seconds")
-    print(f"Results saved to: {args.output}/")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("Experiment completed successfully!")
+    logger.info(f"Total time: {total_elapsed:.2f} seconds")
+    logger.info(f"Results saved to: {args.output}/")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":

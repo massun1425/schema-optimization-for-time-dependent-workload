@@ -97,12 +97,13 @@ class QueryRewriter:
             replaced = False
 
             # このテーブルに対応するMVがあるか確認
-            if self.qm and hasattr(self.qm, "leaf_nodes_map"):
+            if self.qm and hasattr(self.qm, "leaf_nodes_map_r"):
                 for mv_node in mv_nodes:
-                    if mv_node.startswith("leaf_") and mv_node in self.qm.leaf_nodes_map:
-                        leaf_info = self.qm.leaf_nodes_map[mv_node]
-                        if leaf_info.get("table_name") == table:
-                            new_from_parts.append(f"{mv_node} {alias}")
+                    if mv_node.startswith("leaf_") and mv_node in self.qm.leaf_nodes_map_r:
+                        # leaf_nodes_map_r: {node_id: (operator, table_name, alias, conditions)}
+                        operator, table_name, node_alias, conditions = self.qm.leaf_nodes_map_r[mv_node]
+                        if table_name == table:
+                            new_from_parts.append(f"{mv_node} AS {alias}")
                             replaced_tables.add(table)
                             replaced = True
                             print(f"  Replaced {table} with {mv_node}")

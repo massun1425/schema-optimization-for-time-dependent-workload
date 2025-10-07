@@ -43,6 +43,7 @@ class BenchmarkConfig:
     workloads_dir: str = "Output/RED_WORKLOADS"
     queries_dir: str = "dataset/RED_JSON"
     sql_dir: str = "dataset/RED_SQL"
+    query_selection_mode: str = "redbench"  # 'redbench' or 'all_job'
 
 
 @dataclass
@@ -86,7 +87,21 @@ class Settings:
         query: Optional[QueryConfig] = None,
         paths: Optional[PathsConfig] = None,
         logging: Optional[LoggingConfig] = None,
+        auto_load: bool = True,
     ):
+        if auto_load and all(x is None for x in [database, optimization, benchmark, query, paths, logging]):
+            # Auto-load from YAML if no configs provided
+            config_path = os.environ.get('CONFIG_PATH', 'config/default.yaml')
+            if os.path.exists(config_path):
+                loaded = Settings.from_yaml(config_path)
+                self.database = loaded.database
+                self.optimization = loaded.optimization
+                self.benchmark = loaded.benchmark
+                self.query = loaded.query
+                self.paths = loaded.paths
+                self.logging = loaded.logging
+                return
+        
         self.database = database or DatabaseConfig()
         self.optimization = optimization or OptimizationConfig()
         self.benchmark = benchmark or BenchmarkConfig()
@@ -134,6 +149,7 @@ class Settings:
             query=query,
             paths=paths,
             logging=logging_cfg,
+            auto_load=False,  # Don't auto-load again to avoid recursion
         )
     
     @staticmethod

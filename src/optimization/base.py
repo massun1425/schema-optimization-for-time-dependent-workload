@@ -217,14 +217,29 @@ class BaseILPOptimizer(ABC):
         Returns:
             List of MaterializedView objects
         """
+        # Import here to avoid circular dependency
+        from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
+        
+        # Create MV generator
+        mv_generator = EnhancedMVGenerator(self.qm)
+        
         mvs = []
         for j in range(len(z_j)):
             if z_j[j] == 1:
                 node_id = self.node_list[j]
+                
+                # Generate SQL using EnhancedMVGenerator
+                try:
+                    create_sql = mv_generator.generate_mv_sql(node_id)
+                except Exception as e:
+                    logger = __import__('logging').getLogger(__name__)
+                    logger.warning(f"Failed to generate SQL for {node_id}: {e}")
+                    create_sql = f"-- Failed to generate SQL for {node_id}: {e}"
+                
                 mv = MaterializedView(
                     view_id=f"mv_{node_id}",
                     node_id=node_id,
-                    create_sql="",  # To be filled by query rewriter
+                    create_sql=create_sql,
                     size=self.b_j[j],
                     maintenance_cost=self.m_cost[j],
                     usage_positions=self.qm.subquery_positions.get(node_id, []),

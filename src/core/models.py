@@ -5,7 +5,7 @@ including query nodes, materialized views, and optimization results.
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -118,3 +118,81 @@ class QueryPlan:
     original_cost: float
     subquery_list: list[dict[str, Any]] = field(default_factory=list)
     depth_list: list[int] = field(default_factory=list)
+
+
+# ============================================================================
+# Enhanced Data Structures for JOIN Condition Tracking (Chapter 1)
+# ============================================================================
+
+
+@dataclass
+class ColumnRef:
+    """Column reference information.
+    
+    Attributes:
+        table: Table name or alias
+        column: Column name
+        alias: Optional column alias in SELECT clause
+    """
+    table: str
+    column: str
+    alias: Optional[str] = None
+
+
+@dataclass
+class JoinCondition:
+    """JOIN condition details.
+    
+    This class stores complete information about a JOIN condition extracted
+    from PostgreSQL EXPLAIN JSON output.
+    
+    Attributes:
+        left_table: Left table name or alias
+        left_column: Left column name
+        operator: Comparison operator (=, <, >, <=, >=, !=)
+        right_table: Right table name or alias
+        right_column: Right column name
+        condition_type: Type of condition (Hash Cond, Merge Cond, Join Filter, Index Cond)
+        original_text: Original condition text from EXPLAIN JSON (e.g., "(t.id = ci.movie_id)")
+    """
+    left_table: str
+    left_column: str
+    operator: str
+    right_table: str
+    right_column: str
+    condition_type: str
+    original_text: str
+
+
+@dataclass
+class NonLeafNodeInfo:
+    """Detailed information for non-leaf nodes.
+    
+    This class stores comprehensive information about JOIN operations,
+    including the exact JOIN conditions, operator type, and filters.
+    This is an enhanced version that preserves much more information
+    than the simple tuple-based representation.
+    
+    Attributes:
+        node_id: Unique identifier for this node
+        operator: Operator type (Hash Join, Merge Join, Nested Loop, etc.)
+        join_type: JOIN type (Inner, Left, Right, Full, Semi, Anti)
+        children: List of child node IDs (order preserved, NOT sorted)
+        join_conditions: List of JOIN conditions with full details
+        filters: Additional WHERE clause filters applied after JOIN
+        output_columns: Optional list of output columns
+        cost: Total cost of this operation
+        rows: Estimated number of rows produced
+        width: Width of result tuples in bytes
+    """
+    node_id: str
+    operator: str
+    join_type: str
+    children: list[str]
+    join_conditions: list[JoinCondition] = field(default_factory=list)
+    filters: list[str] = field(default_factory=list)
+    output_columns: Optional[list[ColumnRef]] = None
+    cost: float = 0.0
+    rows: int = 0
+    width: int = 1
+

@@ -11,8 +11,9 @@ from typing import Any
 
 from config.settings import Settings
 
-from ..utils.legacy import get_red_queries, natural_sort_key
+from ..utils.legacy import get_red_queries, get_all_job_queries, natural_sort_key
 from .query_manager import QueryManager
+from .models import JoinCondition
 
 
 class QueryParser:
@@ -82,6 +83,89 @@ class QueryParser:
         """
         return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", s)]
 
+    def extract_join_conditions(self, node: dict[str, Any]) -> list[JoinCondition]:
+        """Extract JOIN conditions from EXPLAIN JSON node (Chapter 2).
+
+        This method extracts detailed JOIN condition information from different
+        types of JOIN operators in PostgreSQL EXPLAIN output.
+
+        Args:
+            node: PostgreSQL EXPLAIN plan node
+
+        Returns:
+            List of JoinCondition objects
+        """
+        conditions = []
+        
+        # Map node types to their condition keys
+        condition_keys = {
+            "Hash Join": "Hash Cond",
+            "Merge Join": "Merge Cond",
+            "Nested Loop": "Join Filter",
+        }
+        
+        node_type = node.get("Node Type", "")
+        cond_key = condition_keys.get(node_type)
+        
+        # Extract conditions based on node type
+        if cond_key and cond_key in node:
+            condition_text = node[cond_key]
+            parsed = self.parse_join_condition(condition_text, cond_key)
+            conditions.extend(parsed)
+        
+        # Also check for Index Cond (can appear with JOIN operations)
+        if "Index Cond" in node:
+            parsed = self.parse_join_condition(node["Index Cond"], "Index Cond")
+            conditions.extend(parsed)
+        
+        return conditions
+
+    def parse_join_condition(self, condition_text: str, condition_type: str) -> list[JoinCondition]:
+        """Parse JOIN condition text into structured format (Chapter 2).
+
+        Extracts table.column comparisons from condition strings.
+        
+        Examples:
+            "(t.id = ci.movie_id)" -> JoinCondition(...)
+            "(mc.company_type_id = ct.id)" -> JoinCondition(...)
+
+        Args:
+            condition_text: Raw condition text from EXPLAIN
+            condition_type: Type of condition (Hash Cond, Merge Cond, etc.)
+
+        Returns:
+            List of JoinCondition objects
+        """
+        conditions = []
+        
+        # Pattern: (alias1.column1 operator alias2.column2)
+        # Supports =, <, >, <=, >=, !=
+        pattern = r'\((\w+)\.(\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
+        matches = re.finditer(pattern, condition_text)
+        
+        for match in matches:
+            left_table = match.group(1)
+            left_column = match.group(2)
+            operator = match.group(3)
+            right_table = match.group(4)
+            right_column = match.group(5)
+            
+            # Normalize <> to !=
+            if operator == "<>":
+                operator = "!="
+            
+            conditions.append(JoinCondition(
+                left_table=left_table,
+                left_column=left_column,
+                operator=operator,
+                right_table=right_table,
+                right_column=right_column,
+                condition_type=condition_type,
+                original_text=match.group(0)
+            ))
+        
+        return conditions
+
     def convert_node(
         self,
         node: dict[str, Any],
@@ -136,6 +220,12 @@ class QueryParser:
                 children.append(converted_child)
                 new_order = order_1
 
+            # Extract JOIN conditions (Chapter 2 enhancement)
+            join_conditions = self.extract_join_conditions(node)
+            
+            # Get JOIN type (default to Inner)
+            join_type = node.get("Join Type", "Inner")
+
             # Determine filter condition key based on operator type
             if node["Node Type"] == "Hash Join":
                 filter_name = "Hash Cond"
@@ -147,6 +237,12 @@ class QueryParser:
                 filter_name = "Filter"
 
             filter_condition = node.get(filter_name, "")
+            
+            # Collect additional filters (not JOIN conditions)
+            additional_filters = []
+            for filter_key in ["Filter", "Join Filter"]:
+                if filter_key in node and filter_key != filter_name:
+                    additional_filters.append(node[filter_key])
 
             # Cost calculation logic
             # Prevent MVs with no filter condition
@@ -169,13 +265,18 @@ class QueryParser:
             if width == 0:
                 width = 1
 
+            # Enhanced subquery structure (Chapter 2)
             subquery_list.append(
                 {
                     "type": "non_leaf",
                     "operator": node["Node Type"],
+                    "join_type": join_type,  # New field
+                    "join_conditions": join_conditions,  # New field
+                    "additional_filters": additional_filters,  # New field
                     "filter": filter_condition,
                     "cost": cost * frequency,
                     "size": node.get("Plan Rows", 0) * width,
+                    "rows": node.get("Plan Rows", 0),  # New field
                     "width": width,
                     "children": children,
                 }
@@ -428,9 +529,18 @@ class QueryParser:
         """
         workloads_dir = self.settings.benchmark.workloads_dir
         get_ceb = self.settings.benchmark.type == "ceb"
+        query_selection_mode = self.settings.benchmark.query_selection_mode
 
-        # Get query files with frequencies
-        files, file_freq = get_red_queries(path, workloads_dir, get_ceb)
+        # Get query files with frequencies based on selection mode
+        if query_selection_mode == "all_job":
+            # Use all JOB queries from the directory
+            print(f"Query selection mode: all_job (using all JOB queries)")
+            files, file_freq = get_all_job_queries(path)
+        else:
+            # Use RedBench workload-based selection (default)
+            print(f"Query selection mode: redbench (using workload-based queries)")
+            files, file_freq = get_red_queries(path, workloads_dir, get_ceb)
+        
         files = sorted(files, key=natural_sort_key)
 
         q_num_len = len(files)
@@ -440,6 +550,7 @@ class QueryParser:
             query = []
             deeplist = []
             orderlist = []
+            result = None  # Initialize result to handle empty query case
 
             # Process each query file
             for i in range(q_num_len):
@@ -464,7 +575,10 @@ class QueryParser:
                         child_to_parent[item] = []
                     child_to_parent[item].append(value)
 
-            print(f"Root node ID: {result}")
+            if result is not None:
+                print(f"Root node ID: {result}")
+            else:
+                print("Warning: No queries were processed")
 
             # Build node lists and mappings
             node_list = list(self.qm.leaf_nodes_map.values()) + list(
