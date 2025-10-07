@@ -2,7 +2,8 @@
 
 \connect imdbload
 
-CREATE EXTENSION pg_ivm;
+-- pg_ivmは現在未使用のためコメントアウト
+-- CREATE EXTENSION pg_ivm;
 
 --set schema 'pgivm';
 
