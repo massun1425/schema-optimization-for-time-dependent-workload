@@ -1,4 +1,4 @@
-CREATE DATABASE imdbload;
+--CREATE DATABASE imdbload;
 
 \connect imdbload
 
