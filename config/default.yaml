@@ -47,6 +47,20 @@ paths:
   query_rewrite_dir: Output/query_rewrite
   mv_list_dir: Output
 
+# Execution Phases Configuration
+# フェーズごとに実行するかどうかを制御
+execution:
+  phases:
+    query_parsing: false      # [1/5] クエリパース
+    optimization: true        # [2/5] MV選択（ILP最適化）
+    mv_creation: true         # [3/5] MV作成（データベース）
+    query_rewriting: false    # [4/5] クエリ書き換え
+    benchmark: false          # [5/5] ベンチマーク実行
+  
+  # または start_from / end_at で範囲指定も可能
+  # start_from: query_parsing     # この フェーズから開始
+  # end_at: query_rewriting       # このフェーズで終了
+
 # Logging Configuration
 logging:
   level: INFO  # DEBUG, INFO, WARNING, ERROR, CRITICAL

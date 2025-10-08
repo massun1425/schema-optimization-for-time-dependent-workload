@@ -90,13 +90,39 @@ def parse_args():
 
     parser.add_argument("--output", type=str, default="Output", help="Output directory")
 
+    # Legacy skip flags (deprecated, use --phases instead)
     parser.add_argument(
-        "--skip-mv-creation", action="store_true", help="Skip MV creation in database"
+        "--skip-mv-creation", action="store_true", 
+        help="(Deprecated) Skip MV creation in database. Use --phases instead."
+    )
+    parser.add_argument(
+        "--skip-rewrite", action="store_true", 
+        help="(Deprecated) Skip query rewriting. Use --phases instead."
+    )
+    parser.add_argument(
+        "--skip-benchmark", action="store_true", 
+        help="(Deprecated) Skip benchmark execution. Use --phases instead."
     )
 
-    parser.add_argument("--skip-rewrite", action="store_true", help="Skip query rewriting")
-
-    parser.add_argument("--skip-benchmark", action="store_true", help="Skip benchmark execution")
+    # New phase control options
+    parser.add_argument(
+        "--phases",
+        nargs="+",
+        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
+        help="Specify which phases to run (e.g., --phases query_parsing optimization)"
+    )
+    
+    parser.add_argument(
+        "--start-from",
+        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
+        help="Start execution from this phase (inclusive)"
+    )
+    
+    parser.add_argument(
+        "--end-at",
+        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
+        help="End execution at this phase (inclusive)"
+    )
 
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
     
@@ -105,6 +131,12 @@ def parse_args():
         type=int, 
         default=50 * 1024 * 1024,  # 50MB
         help="Storage limit for materialized views in bytes (default: 50MB)"
+    )
+    
+    parser.add_argument(
+        "--config",
+        type=str,
+        help="Path to configuration YAML file (overrides default)"
     )
 
     return parser.parse_args()
@@ -165,10 +197,8 @@ def cleanup_mv_files() -> None:
 def run_ilp_optimization(
     ilp_type: str,
     output_dir: str,
+    settings,  # Settings object with execution phase config
     storage_limit: int = 50 * 1024 * 1024,
-    skip_mv_creation: bool = False,
-    skip_rewrite: bool = False,
-    skip_benchmark: bool = False,
     verbose: bool = False,
 ) -> None:
     """ILP最適化を実行（src/ モジュールのみ使用）
@@ -176,20 +206,33 @@ def run_ilp_optimization(
     Args:
         ilp_type: ILPアルゴリズムタイプ
         output_dir: 出力ディレクトリ
+        settings: Settings object with execution configuration
         storage_limit: ストレージ上限（バイト）
-        skip_mv_creation: MV作成をスキップ
-        skip_rewrite: クエリ書き換えをスキップ
-        skip_benchmark: ベンチマーク実行をスキップ
         verbose: 詳細出力
     """
     logger.info(f"\n{'='*60}")
     logger.info(f"Running ILP: {ilp_type}")
     logger.info(f"{'='*60}")
 
-    start_time = time.time()
+    # Display which phases will run
+    phases_to_run = []
+    for phase in ['query_parsing', 'optimization', 'mv_creation', 'query_rewriting', 'benchmark']:
+        if settings.execution.should_run_phase(phase):
+            phases_to_run.append(phase)
+    logger.info(f"Phases to execute: {', '.join(phases_to_run)}")
 
-    # MVファイルクリーンアップ
-    cleanup_mv_files()
+    start_time = time.time()
+    
+    # アルゴリズム専用のディレクトリを作成
+    algorithm_dir = Path(output_dir) / ilp_type
+    algorithm_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 各フェーズの実行時間を記録
+    phase_times = {}
+
+    # MVファイルクリーンアップ (always run before optimization)
+    if settings.execution.should_run_phase('optimization'):
+        cleanup_mv_files()
 
     if ilp_type == "none":
         logger.info("Running with 'none' algorithm (no optimization)")
@@ -198,79 +241,125 @@ def run_ilp_optimization(
         return
 
     try:
-        from config.settings import Settings
         from src.rewrite.query_rewriter import QueryRewriter
         from src.database.mv_manager import MaterializedViewManager
         
-        settings = Settings()
-        
         # [1/5] クエリパース
-        logger.info("[1/5] Parsing queries...")
-        pickle_path = Path(output_dir) / "qp_class.pkl"
-        
-        if pickle_path.exists():
-            logger.info(f"Loading query parser from {pickle_path}")
+        if settings.execution.should_run_phase('query_parsing'):
+            logger.info("[1/5] Parsing queries...")
+            pickle_path = Path(output_dir) / "qp_class.pkl"
+            
+            if pickle_path.exists():
+                logger.info(f"Loading query parser from {pickle_path}")
+                import pickle
+                with open(pickle_path, 'rb') as f:
+                    qp = pickle.load(f)
+            else:
+                logger.info("Creating QueryParser using src/ modules...")
+                qp = QueryParser(settings)
+                
+                query_path = settings.benchmark.queries_dir
+                q_num = 0
+                insert_query = settings.optimization.insert_queries
+                
+                qp.query_parse(q_num, query_path, insert_query)
+                
+                logger.info(f"Saving query parser to {pickle_path}")
+                import pickle
+                with open(pickle_path, 'wb') as f:
+                    pickle.dump(qp, f)
+        else:
+            logger.info("[1/5] Skipping query parsing (loading from cache)")
+            pickle_path = Path(output_dir) / "qp_class.pkl"
+            if not pickle_path.exists():
+                logger.error("Query parser cache not found! Run with query_parsing phase first.")
+                return
             import pickle
             with open(pickle_path, 'rb') as f:
                 qp = pickle.load(f)
-        else:
-            logger.info("Creating QueryParser using src/ modules...")
-            qp = QueryParser(settings)
-            
-            query_path = settings.benchmark.queries_dir
-            q_num = 0
-            insert_query = settings.optimization.insert_queries
-            
-            qp.query_parse(q_num, query_path, insert_query)
-            
-            logger.info(f"Saving query parser to {pickle_path}")
-            import pickle
-            with open(pickle_path, 'wb') as f:
-                pickle.dump(qp, f)
         
         # [2/5] ILP最適化実行
-        logger.info(f"[2/5] Running {ilp_type} optimization...")
-        logger.info(f"Storage limit: {storage_limit / (1024*1024):.2f} MB")
-        
-        if not OptimizerFactory.is_available(ilp_type):
-            logger.error(f"Algorithm {ilp_type} is not available")
-            return
-        
-        # オプティマイザーのパラメータを準備
-        optimizer_params = {
-            "qm": qp.qm,
-            "s_num": qp.s_num,
-            "m_cost": qp.m_cost,
-            "node_list": qp.node_list,
-            "B_max": storage_limit,
-            "b_j": qp.b_j,
-            "u_ij": qp.u_ij,
-            "X": qp.X,
-            "q_s_list": qp.q_s_list,
-            "settings": settings,
-        }
-        
-        # BigSubs固有のパラメータを追加
-        if ilp_type == "bigsubs":
-            optimizer_params.update({
-                "U_j_max": qp.U_j_max if hasattr(qp, 'U_j_max') else [0] * qp.s_num,
-                "U_max": qp.U_max if hasattr(qp, 'U_max') else 0.0,
-                "y_ij": qp.y_ij if hasattr(qp, 'y_ij') else [[0] * qp.s_num for _ in range(len(qp.u_ij))],
-            })
+        if settings.execution.should_run_phase('optimization'):
+            phase_start = time.time()
+            logger.info(f"[2/5] Running {ilp_type} optimization...")
+            logger.info(f"Storage limit: {storage_limit / (1024*1024):.2f} MB")
             
-        optimizer = OptimizerFactory.create(ilp_type, **optimizer_params)
-        
-        result = optimizer.optimize()
-        logger.info(f"Selected {len(result.selected_views)} materialized views")
-        logger.info(f"Total utility: {result.total_utility:,.2f}")
-        logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
-        
-        if len(result.selected_views) == 0:
-            logger.warning("No MVs selected. Check query parsing and optimization parameters.")
-            return
+            if not OptimizerFactory.is_available(ilp_type):
+                logger.error(f"Algorithm {ilp_type} is not available")
+                return
+            
+            # オプティマイザーのパラメータを準備
+            optimizer_params = {
+                "qm": qp.qm,
+                "s_num": qp.s_num,
+                "m_cost": qp.m_cost,
+                "node_list": qp.node_list,
+                "B_max": storage_limit,
+                "b_j": qp.b_j,
+                "u_ij": qp.u_ij,
+                "X": qp.X,
+                "q_s_list": qp.q_s_list,
+                "settings": settings,
+            }
+            
+            # BigSubs固有のパラメータを追加
+            if ilp_type == "bigsubs":
+                optimizer_params.update({
+                    "U_j_max": qp.U_j_max if hasattr(qp, 'U_j_max') else [0] * qp.s_num,
+                    "U_max": qp.U_max if hasattr(qp, 'U_max') else 0.0,
+                    "y_ij": qp.y_ij if hasattr(qp, 'y_ij') else [[0] * qp.s_num for _ in range(len(qp.u_ij))],
+                })
+                
+            optimizer = OptimizerFactory.create(ilp_type, **optimizer_params)
+            
+            result = optimizer.optimize()
+            phase_times['optimization'] = time.time() - phase_start
+            
+            logger.info(f"Selected {len(result.selected_views)} materialized views")
+            logger.info(f"Total utility: {result.total_utility:,.2f}")
+            logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
+            logger.info(f"Optimization time: {phase_times['optimization']:.2f} seconds")
+            
+            if len(result.selected_views) == 0:
+                logger.warning("No MVs selected. Check query parsing and optimization parameters.")
+                return
+            
+            # 最適化結果を保存
+            optimization_dir = algorithm_dir / "optimization"
+            optimization_dir.mkdir(parents=True, exist_ok=True)
+            
+            # JSON形式で保存
+            result.save_to_json(str(optimization_dir / "result.json"))
+            logger.info(f"Saved optimization result to {optimization_dir / 'result.json'}")
+            
+            # CSV形式で保存（旧形式互換）
+            result.save_to_csv(str(optimization_dir / "mv_list.csv"))
+            logger.info(f"Saved MV list to {optimization_dir / 'mv_list.csv'}")
+        else:
+            logger.info("[2/5] Skipping optimization (loading existing results)")
+            # Load optimization results from file
+            optimization_dir = algorithm_dir / "optimization"
+            result_json_path = optimization_dir / "result.json"
+            
+            if not result_json_path.exists():
+                logger.error(f"Optimization result not found: {result_json_path}")
+                logger.error("Please run Phase 2 (optimization) first, or check the algorithm name.")
+                return
+            
+            logger.info(f"Loading optimization result from {result_json_path}")
+            
+            # Load OptimizationResult using the new load_from_json method
+            from src.core.models import OptimizationResult
+            
+            result = OptimizationResult.load_from_json(str(result_json_path))
+            logger.info(f"Loaded {len(result.selected_views)} materialized views")
+            logger.info(f"Total utility: {result.total_utility:,.2f}")
+            logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
+
         
         # [3/5] MV作成SQL生成とデータベースへの登録
-        if not skip_mv_creation:
+        if settings.execution.should_run_phase('mv_creation'):
+            phase_start = time.time()
             logger.info("[3/5] Creating MVs in database...")
             mv_manager = MaterializedViewManager(DatabaseConnection(settings.database))
             
@@ -281,30 +370,73 @@ def run_ilp_optimization(
             
             created_count = 0
             failed_count = 0
+            mv_creation_log = []
             
             for mv in sorted_mvs:
+                mv_start = time.time()
                 try:
                     success = mv_manager.create_view_from_model(mv, replace=True)
+                    mv_time = time.time() - mv_start
+                    
                     if success:
                         created_count += 1
+                        status = "SUCCESS"
                         if verbose:
-                            logger.info(f"Created MV: {mv.view_id}")
+                            logger.info(f"Created MV: {mv.view_id} ({mv_time:.2f}s)")
                     else:
                         failed_count += 1
+                        status = "FAILED"
                         logger.warning(f"Failed to create MV: {mv.view_id}")
+                    
+                    mv_creation_log.append({
+                        "view_id": mv.view_id,
+                        "node_id": mv.node_id,
+                        "status": status,
+                        "creation_time": round(mv_time, 2),
+                        "size_mb": round(mv.size / (1024 * 1024), 2),
+                    })
                 except Exception as e:
                     failed_count += 1
+                    mv_time = time.time() - mv_start
                     logger.error(f"Failed to create MV {mv.view_id}: {e}")
+                    
+                    mv_creation_log.append({
+                        "view_id": mv.view_id,
+                        "node_id": mv.node_id,
+                        "status": "ERROR",
+                        "creation_time": round(mv_time, 2),
+                        "error": str(e),
+                    })
+                    
                     if verbose:
                         import traceback
                         traceback.print_exc()
             
+            phase_times['mv_creation'] = time.time() - phase_start
             logger.info(f"Created {created_count}/{len(sorted_mvs)} MVs ({failed_count} failed)")
+            logger.info(f"MV creation time: {phase_times['mv_creation']:.2f} seconds")
+            
+            # MV作成結果を保存
+            mv_creation_dir = algorithm_dir / "mv_creation"
+            mv_creation_dir.mkdir(parents=True, exist_ok=True)
+            
+            import json
+            with open(mv_creation_dir / "creation_log.json", 'w', encoding='utf-8') as f:
+                json.dump({
+                    "total_mvs": len(sorted_mvs),
+                    "created": created_count,
+                    "failed": failed_count,
+                    "total_time": round(phase_times['mv_creation'], 2),
+                    "mvs": mv_creation_log,
+                }, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Saved MV creation log to {mv_creation_dir / 'creation_log.json'}")
         else:
             logger.info("[3/5] Skipping MV creation in database")
         
         # [4/5] クエリ書き換え
-        if not skip_rewrite:
+        if settings.execution.should_run_phase('query_rewriting'):
+            phase_start = time.time()
             logger.info("[4/5] Rewriting queries...")
             rewriter = QueryRewriter(settings)
             
@@ -313,17 +445,43 @@ def run_ilp_optimization(
             
             rewritten_queries = rewriter.rewrite_queries(result.selected_views)
             
+            rewrite_log = []
             for query_id, rewritten_sql in rewritten_queries.items():
+                query_start = time.time()
                 output_file = rewritten_dir / f"{query_id}.sql"
                 with open(output_file, 'w') as f:
                     f.write(rewritten_sql)
+                query_time = time.time() - query_start
+                
+                rewrite_log.append({
+                    "query_id": query_id,
+                    "output_file": str(output_file),
+                    "rewrite_time": round(query_time, 4),
+                })
             
+            phase_times['query_rewriting'] = time.time() - phase_start
             logger.info(f"Rewritten {len(rewritten_queries)} queries to {rewritten_dir}")
+            logger.info(f"Query rewriting time: {phase_times['query_rewriting']:.2f} seconds")
+            
+            # クエリ書き換え結果を保存
+            query_rewrite_dir = algorithm_dir / "query_rewrite"
+            query_rewrite_dir.mkdir(parents=True, exist_ok=True)
+            
+            import json
+            with open(query_rewrite_dir / "rewrite_log.json", 'w', encoding='utf-8') as f:
+                json.dump({
+                    "total_queries": len(rewritten_queries),
+                    "total_time": round(phase_times['query_rewriting'], 2),
+                    "output_directory": str(rewritten_dir),
+                    "queries": rewrite_log,
+                }, f, indent=2, ensure_ascii=False)
+            
+            logger.info(f"Saved query rewrite log to {query_rewrite_dir / 'rewrite_log.json'}")
         else:
             logger.info("[4/5] Skipping query rewriting")
         
         # [5/5] 書き換えられたクエリの実行
-        if not skip_benchmark:
+        if settings.execution.should_run_phase('benchmark'):
             logger.info("[5/5] Executing rewritten queries...")
             # TODO: ベンチマーク実行機能を src/ に実装
             logger.warning("Benchmark execution not yet implemented in src/ modules")
@@ -338,12 +496,62 @@ def run_ilp_optimization(
         return
 
     elapsed = time.time() - start_time
+    
+    # 統合サマリーを保存
+    import json
+    summary = {
+        "algorithm": ilp_type,
+        "total_execution_time": round(elapsed, 2),
+        "phases": phase_times,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    
+    with open(algorithm_dir / "summary.json", 'w', encoding='utf-8') as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    
     logger.info(f"\n✓ Completed {ilp_type} in {elapsed:.2f} seconds")
+    logger.info(f"Results saved to {algorithm_dir}")
+    logger.info(f"Summary: {algorithm_dir / 'summary.json'}")
 
 
 def main():
     """メイン処理"""
     args = parse_args()
+
+    # Load settings from config file or use defaults
+    from config.settings import Settings
+    if args.config:
+        settings = Settings.from_yaml(args.config)
+    else:
+        settings = Settings()
+    
+    # Override settings with command-line arguments
+    if args.phases or args.start_from or args.end_at:
+        # Use new phase control
+        if args.phases:
+            # Only run specified phases
+            settings.execution.query_parsing = 'query_parsing' in args.phases
+            settings.execution.optimization = 'optimization' in args.phases
+            settings.execution.mv_creation = 'mv_creation' in args.phases
+            settings.execution.query_rewriting = 'query_rewriting' in args.phases
+            settings.execution.benchmark = 'benchmark' in args.phases
+        
+        if args.start_from:
+            settings.execution.start_from = args.start_from
+        
+        if args.end_at:
+            settings.execution.end_at = args.end_at
+    else:
+        # Legacy skip flags (backward compatibility)
+        if args.skip_mv_creation:
+            settings.execution.mv_creation = False
+            logger.warning("--skip-mv-creation is deprecated. Use --phases or execution.phases in config YAML.")
+        if args.skip_rewrite:
+            settings.execution.query_rewriting = False
+            logger.warning("--skip-rewrite is deprecated. Use --phases or execution.phases in config YAML.")
+        if args.skip_benchmark:
+            settings.execution.benchmark = False
+            logger.warning("--skip-benchmark is deprecated. Use --phases or execution.phases in config YAML.")
 
     logger.info("=" * 60)
     logger.info("MV Query Optimization Experiment")
@@ -351,6 +559,13 @@ def main():
     logger.info(f"Algorithms: {', '.join(args.algorithms)}")
     logger.info(f"Output: {args.output}")
     logger.info(f"Storage Limit: {args.storage_limit / (1024*1024):.2f} MB")
+    
+    # Display execution phases
+    phases_status = []
+    for phase in ['query_parsing', 'optimization', 'mv_creation', 'query_rewriting', 'benchmark']:
+        status = "✓" if settings.execution.should_run_phase(phase) else "✗"
+        phases_status.append(f"{status} {phase}")
+    logger.info(f"Execution Phases:\n  " + "\n  ".join(phases_status))
     logger.info("=" * 60)
 
     # ディレクトリセットアップ
@@ -364,10 +579,8 @@ def main():
             run_ilp_optimization(
                 ilp_type=ilp_type,
                 output_dir=args.output,
+                settings=settings,
                 storage_limit=args.storage_limit,
-                skip_mv_creation=args.skip_mv_creation,
-                skip_rewrite=args.skip_rewrite,
-                skip_benchmark=args.skip_benchmark,
                 verbose=args.verbose,
             )
         except Exception as e:
