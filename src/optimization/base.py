@@ -220,8 +220,14 @@ class BaseILPOptimizer(ABC):
         # Import here to avoid circular dependency
         from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
         
-        # Create MV generator
-        mv_generator = EnhancedMVGenerator(self.qm)
+        # Build set of selected MV node IDs
+        selected_node_ids = set()
+        for j in range(len(z_j)):
+            if z_j[j] == 1:
+                selected_node_ids.add(self.node_list[j])
+        
+        # Create MV generator with selected MVs info
+        mv_generator = EnhancedMVGenerator(self.qm, selected_mvs=selected_node_ids)
         
         mvs = []
         for j in range(len(z_j)):

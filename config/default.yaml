@@ -4,7 +4,7 @@ database:
   port: 5432
   database: imdbload
   user: postgres
-  password: ""
+  password: "pass"
   timeout: 1800  # 30 minutes in seconds
 
 # Optimization Parameters
@@ -51,14 +51,15 @@ paths:
 # フェーズごとに実行するかどうかを制御
 execution:
   phases:
-    query_parsing: false      # [1/5] クエリパース
-    optimization: true        # [2/5] MV選択（ILP最適化）
-    mv_creation: true         # [3/5] MV作成（データベース）
-    query_rewriting: false    # [4/5] クエリ書き換え
-    benchmark: false          # [5/5] ベンチマーク実行
+    query_parsing: true       # [1/6] クエリパース
+    optimization: true         # [2/6] MV選択（ILP最適化）
+    sql_generation: true      # [3/6] MV作成SQL生成
+    mv_creation: true         # [4/6] MV作成（データベース）
+    query_rewriting: true      # [5/6] クエリ書き換え
+    benchmark: true            # [6/6] ベンチマーク実行
   
   # または start_from / end_at で範囲指定も可能
-  # start_from: query_parsing     # この フェーズから開始
+  # start_from: query_parsing     # このフェーズから開始
   # end_at: query_rewriting       # このフェーズで終了
 
 # Logging Configuration

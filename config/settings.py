@@ -52,6 +52,7 @@ class ExecutionPhasesConfig:
     
     query_parsing: bool = True
     optimization: bool = True
+    sql_generation: bool = True
     mv_creation: bool = True
     query_rewriting: bool = True
     benchmark: bool = True
@@ -64,14 +65,14 @@ class ExecutionPhasesConfig:
         """Check if a phase should be run based on configuration.
         
         Args:
-            phase_name: Name of the phase ('query_parsing', 'optimization', etc.)
+            phase_name: Name of the phase ('query_parsing', 'optimization', 'sql_generation', etc.)
             
         Returns:
             True if the phase should be executed.
         """
         # If start_from/end_at are specified, use range-based logic
         if self.start_from or self.end_at:
-            phases_order = ['query_parsing', 'optimization', 'mv_creation', 'query_rewriting', 'benchmark']
+            phases_order = ['query_parsing', 'optimization', 'sql_generation', 'mv_creation', 'query_rewriting', 'benchmark']
             try:
                 phase_idx = phases_order.index(phase_name)
                 start_idx = phases_order.index(self.start_from) if self.start_from else 0
@@ -189,6 +190,7 @@ class Settings:
             execution_config = {
                 'query_parsing': phases.get('query_parsing', True),
                 'optimization': phases.get('optimization', True),
+                'sql_generation': phases.get('sql_generation', True),
                 'mv_creation': phases.get('mv_creation', True),
                 'query_rewriting': phases.get('query_rewriting', True),
                 'benchmark': phases.get('benchmark', True),

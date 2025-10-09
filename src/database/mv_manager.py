@@ -92,7 +92,7 @@ class MaterializedViewManager:
             # Drop if exists and replace is True
             if replace and self.view_exists(view_name):
                 logger.info(f"Dropping existing view '{view_name}' for replacement")
-                self.drop_view(view_name)
+                self.drop_view(view_name, cascade=True)
 
             # Create the materialized view
             with_clause = "WITH DATA" if with_data else "WITH NO DATA"
@@ -135,14 +135,20 @@ class MaterializedViewManager:
         if view.create_sql.strip().upper().startswith("CREATE MATERIALIZED VIEW"):
             # SQL is complete, execute directly
             try:
-                # Drop existing view if replace is True
-                if replace and self.view_exists(view.view_id):
-                    logger.info(f"Dropping existing view '{view.view_id}' for replacement")
-                    self.drop_view(view.view_id)
+                # Extract view name from SQL
+                # Pattern: CREATE MATERIALIZED VIEW <view_name> AS
+                import re
+                match = re.search(r'CREATE\s+MATERIALIZED\s+VIEW\s+(\w+)', view.create_sql, re.IGNORECASE)
+                actual_view_name = match.group(1) if match else view.view_id
                 
-                logger.info(f"Creating materialized view '{view.view_id}'")
+                # Drop existing view if replace is True
+                if replace and self.view_exists(actual_view_name):
+                    logger.info(f"Dropping existing view '{actual_view_name}' for replacement")
+                    self.drop_view(actual_view_name, cascade=True)
+                
+                logger.info(f"Creating materialized view '{actual_view_name}'")
                 self.db.execute(view.create_sql)
-                logger.info(f"Successfully created view '{view.view_id}'")
+                logger.info(f"Successfully created view '{actual_view_name}'")
                 return True
             except Exception as e:
                 logger.error(f"Failed to create view '{view.view_id}': {e}")

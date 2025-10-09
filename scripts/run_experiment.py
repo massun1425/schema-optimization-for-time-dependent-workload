@@ -18,8 +18,9 @@ from src.core.query_manager import QueryManager
 from src.core.query_parser import QueryParser
 from src.optimization.factory import OptimizerFactory
 from src.database.connection import DatabaseConnection
-from src.utils.logging_utils import get_logger
+from src.utils.logging_utils import setup_logging, get_logger
 
+# Initialize logger (will be properly configured in main())
 logger = get_logger(__name__)
 
 
@@ -108,19 +109,19 @@ def parse_args():
     parser.add_argument(
         "--phases",
         nargs="+",
-        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
-        help="Specify which phases to run (e.g., --phases query_parsing optimization)"
+        choices=["query_parsing", "optimization", "sql_generation", "mv_creation", "query_rewriting", "benchmark"],
+        help="Specify which phases to run (e.g., --phases query_parsing optimization sql_generation)"
     )
     
     parser.add_argument(
         "--start-from",
-        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
+        choices=["query_parsing", "optimization", "sql_generation", "mv_creation", "query_rewriting", "benchmark"],
         help="Start execution from this phase (inclusive)"
     )
     
     parser.add_argument(
         "--end-at",
-        choices=["query_parsing", "optimization", "mv_creation", "query_rewriting", "benchmark"],
+        choices=["query_parsing", "optimization", "sql_generation", "mv_creation", "query_rewriting", "benchmark"],
         help="End execution at this phase (inclusive)"
     )
 
@@ -167,12 +168,15 @@ def cleanup_mv_files() -> None:
     # MVファイル削除
     mv_dir = "Output/query_rewrite/mv"
     if os.path.exists(mv_dir):
+        file_count = 0
         for file in Path(mv_dir).glob("*"):
             file.unlink()
-            logger.debug(f"Deleted: {file}")
+            file_count += 1
+        logger.info(f"Deleted {file_count} MV files from {mv_dir}")
 
     # データベースからMV削除
     try:
+        logger.info("Connecting to database to drop existing MVs...")
         from config.settings import Settings
         settings = Settings()
         db = DatabaseConnection(settings.database)
@@ -185,11 +189,12 @@ def cleanup_mv_files() -> None:
                     WHERE schemaname = 'public'
                 """)
                 mvs = cur.fetchall()
-                for (mv_name,) in mvs:
-                    logger.debug(f"Dropping MV: {mv_name}")
+                logger.info(f"Found {len(mvs)} existing materialized views to drop")
+                for idx, (mv_name,) in enumerate(mvs, 1):
+                    logger.info(f"  [{idx}/{len(mvs)}] Dropping {mv_name}...")
                     cur.execute(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name} CASCADE")
             conn.commit()
-        logger.info(f"Dropped {len(mvs)} materialized views")
+        logger.info(f"Successfully dropped {len(mvs)} materialized views")
     except Exception as e:
         logger.warning(f"Error cleaning up MVs: {e}")
 
@@ -216,7 +221,7 @@ def run_ilp_optimization(
 
     # Display which phases will run
     phases_to_run = []
-    for phase in ['query_parsing', 'optimization', 'mv_creation', 'query_rewriting', 'benchmark']:
+    for phase in ['query_parsing', 'optimization', 'sql_generation', 'mv_creation', 'query_rewriting', 'benchmark']:
         if settings.execution.should_run_phase(phase):
             phases_to_run.append(phase)
     logger.info(f"Phases to execute: {', '.join(phases_to_run)}")
@@ -244,9 +249,9 @@ def run_ilp_optimization(
         from src.rewrite.query_rewriter import QueryRewriter
         from src.database.mv_manager import MaterializedViewManager
         
-        # [1/5] クエリパース
+        # [1/6] クエリパース
         if settings.execution.should_run_phase('query_parsing'):
-            logger.info("[1/5] Parsing queries...")
+            logger.info("[1/6] Parsing queries...")
             pickle_path = Path(output_dir) / "qp_class.pkl"
             
             if pickle_path.exists():
@@ -269,7 +274,7 @@ def run_ilp_optimization(
                 with open(pickle_path, 'wb') as f:
                     pickle.dump(qp, f)
         else:
-            logger.info("[1/5] Skipping query parsing (loading from cache)")
+            logger.info("[1/6] Skipping query parsing (loading from cache)")
             pickle_path = Path(output_dir) / "qp_class.pkl"
             if not pickle_path.exists():
                 logger.error("Query parser cache not found! Run with query_parsing phase first.")
@@ -278,10 +283,10 @@ def run_ilp_optimization(
             with open(pickle_path, 'rb') as f:
                 qp = pickle.load(f)
         
-        # [2/5] ILP最適化実行
+        # [2/6] ILP最適化実行
         if settings.execution.should_run_phase('optimization'):
             phase_start = time.time()
-            logger.info(f"[2/5] Running {ilp_type} optimization...")
+            logger.info(f"[2/6] Running {ilp_type} optimization...")
             logger.info(f"Storage limit: {storage_limit / (1024*1024):.2f} MB")
             
             if not OptimizerFactory.is_available(ilp_type):
@@ -324,11 +329,11 @@ def run_ilp_optimization(
                 logger.warning("No MVs selected. Check query parsing and optimization parameters.")
                 return
             
-            # 最適化結果を保存
+            # 最適化結果を保存（MV選択結果のみ、SQL生成なし）
             optimization_dir = algorithm_dir / "optimization"
             optimization_dir.mkdir(parents=True, exist_ok=True)
             
-            # JSON形式で保存
+            # JSON形式で保存（create_sql は空の状態で保存）
             result.save_to_json(str(optimization_dir / "result.json"))
             logger.info(f"Saved optimization result to {optimization_dir / 'result.json'}")
             
@@ -336,7 +341,7 @@ def run_ilp_optimization(
             result.save_to_csv(str(optimization_dir / "mv_list.csv"))
             logger.info(f"Saved MV list to {optimization_dir / 'mv_list.csv'}")
         else:
-            logger.info("[2/5] Skipping optimization (loading existing results)")
+            logger.info("[2/6] Skipping optimization (loading existing results)")
             # Load optimization results from file
             optimization_dir = algorithm_dir / "optimization"
             result_json_path = optimization_dir / "result.json"
@@ -357,13 +362,79 @@ def run_ilp_optimization(
             logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
 
         
-        # [3/5] MV作成SQL生成とデータベースへの登録
+        # [3/6] MV作成SQL生成
+        if settings.execution.should_run_phase('sql_generation'):
+            phase_start = time.time()
+            logger.info("[3/6] Generating MV creation SQL...")
+            
+            # EnhancedMVGeneratorを使用してSQL生成
+            # Note: SQL生成のみならデータベース接続は不要
+            from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
+            
+            # SchemaProviderなしで初期化（静的スキーマを使用）
+            mv_generator = EnhancedMVGenerator(qp.qm, schema_provider=None)
+            
+            # 各MVのSQLを生成
+            sql_generation_log = []
+            for mv in result.selected_views:
+                try:
+                    # SQL生成
+                    create_sql = mv_generator.generate_mv_sql(mv.node_id)
+                    mv.create_sql = create_sql
+                    
+                    sql_generation_log.append({
+                        "view_id": mv.view_id,
+                        "node_id": mv.node_id,
+                        "status": "SUCCESS",
+                        "sql_length": len(create_sql)
+                    })
+                    
+                    if verbose:
+                        logger.info(f"Generated SQL for {mv.view_id} ({len(create_sql)} chars)")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to generate SQL for {mv.view_id}: {e}")
+                    sql_generation_log.append({
+                        "view_id": mv.view_id,
+                        "node_id": mv.node_id,
+                        "status": "FAILED",
+                        "error": str(e)
+                    })
+            
+            phase_times['sql_generation'] = time.time() - phase_start
+            
+            # SQL生成結果を保存
+            sql_dir = algorithm_dir / "sql"
+            sql_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 各MVのSQLを個別ファイルに保存
+            for mv in result.selected_views:
+                if mv.create_sql:
+                    sql_file = sql_dir / f"{mv.view_id}.sql"
+                    with open(sql_file, 'w', encoding='utf-8') as f:
+                        f.write(mv.create_sql)
+            
+            # 更新されたresultを保存
+            result.save_to_json(str(optimization_dir / "result.json"))
+            
+            logger.info(f"Generated SQL for {len([log for log in sql_generation_log if log['status'] == 'SUCCESS'])} MVs")
+            logger.info(f"SQL generation time: {phase_times['sql_generation']:.2f} seconds")
+            logger.info(f"SQL files saved to {sql_dir}")
+        else:
+            logger.info("[3/6] Skipping SQL generation (using existing SQL)")
+            # SQL生成をスキップする場合、resultにSQLが含まれているか確認
+            if result.selected_views and not result.selected_views[0].create_sql:
+                logger.warning("No SQL found in result. Please run Phase 3 (sql_generation) first.")
+        
+        # [4/6] MV作成（データベースへの登録）
         if settings.execution.should_run_phase('mv_creation'):
             phase_start = time.time()
-            logger.info("[3/5] Creating MVs in database...")
+            logger.info("[4/6] Creating MVs in database...")
+            logger.info("Initializing MaterializedViewManager...")
             mv_manager = MaterializedViewManager(DatabaseConnection(settings.database))
             
             # Sort MVs by dependency order using topological sort
+            logger.info("Sorting MVs by dependency order...")
             sorted_mvs = _topological_sort_mvs(result.selected_views, qp.qm)
             
             logger.info(f"Creating {len(sorted_mvs)} MVs in dependency order")
@@ -371,9 +442,14 @@ def run_ilp_optimization(
             created_count = 0
             failed_count = 0
             mv_creation_log = []
+            total_mvs = len(sorted_mvs)
             
-            for mv in sorted_mvs:
+            for idx, mv in enumerate(sorted_mvs, 1):
                 mv_start = time.time()
+                
+                # 各MVの作成開始時に必ずログを出力
+                logger.info(f"[{idx}/{total_mvs}] Creating {mv.view_id}...")
+                
                 try:
                     success = mv_manager.create_view_from_model(mv, replace=True)
                     mv_time = time.time() - mv_start
@@ -381,12 +457,11 @@ def run_ilp_optimization(
                     if success:
                         created_count += 1
                         status = "SUCCESS"
-                        if verbose:
-                            logger.info(f"Created MV: {mv.view_id} ({mv_time:.2f}s)")
+                        logger.info(f"  ✓ {mv.view_id} created successfully ({mv_time:.2f}s)")
                     else:
                         failed_count += 1
                         status = "FAILED"
-                        logger.warning(f"Failed to create MV: {mv.view_id}")
+                        logger.warning(f"  ✗ Failed to create {mv.view_id}")
                     
                     mv_creation_log.append({
                         "view_id": mv.view_id,
@@ -398,7 +473,12 @@ def run_ilp_optimization(
                 except Exception as e:
                     failed_count += 1
                     mv_time = time.time() - mv_start
-                    logger.error(f"Failed to create MV {mv.view_id}: {e}")
+                    
+                    # エラーメッセージを簡潔に表示
+                    error_msg = str(e)
+                    if len(error_msg) > 100:
+                        error_msg = error_msg[:100] + "..."
+                    logger.error(f"  ✗ Failed to create MV {mv.view_id}: {error_msg}")
                     
                     mv_creation_log.append({
                         "view_id": mv.view_id,
@@ -413,8 +493,15 @@ def run_ilp_optimization(
                         traceback.print_exc()
             
             phase_times['mv_creation'] = time.time() - phase_start
-            logger.info(f"Created {created_count}/{len(sorted_mvs)} MVs ({failed_count} failed)")
-            logger.info(f"MV creation time: {phase_times['mv_creation']:.2f} seconds")
+            
+            # 最終結果をサマリー表示
+            success_rate = (created_count / total_mvs * 100) if total_mvs > 0 else 0
+            logger.info(f"")
+            logger.info(f"MV Creation Summary:")
+            logger.info(f"  ✓ Success: {created_count}/{total_mvs} ({success_rate:.1f}%)")
+            logger.info(f"  ✗ Failed:  {failed_count}/{total_mvs} ({failed_count/total_mvs*100:.1f}%)")
+            logger.info(f"  ⏱  Total time: {phase_times['mv_creation']:.2f} seconds")
+            logger.info(f"  ⚡ Avg time per MV: {phase_times['mv_creation']/total_mvs:.2f} seconds")
             
             # MV作成結果を保存
             mv_creation_dir = algorithm_dir / "mv_creation"
@@ -432,12 +519,12 @@ def run_ilp_optimization(
             
             logger.info(f"Saved MV creation log to {mv_creation_dir / 'creation_log.json'}")
         else:
-            logger.info("[3/5] Skipping MV creation in database")
+            logger.info("[4/6] Skipping MV creation in database")
         
-        # [4/5] クエリ書き換え
+        # [5/6] クエリ書き換え
         if settings.execution.should_run_phase('query_rewriting'):
             phase_start = time.time()
-            logger.info("[4/5] Rewriting queries...")
+            logger.info("[5/6] Rewriting queries...")
             rewriter = QueryRewriter(settings)
             
             rewritten_dir = Path(output_dir) / "query_rewrite" / "re_sql" / ilp_type
@@ -478,15 +565,45 @@ def run_ilp_optimization(
             
             logger.info(f"Saved query rewrite log to {query_rewrite_dir / 'rewrite_log.json'}")
         else:
-            logger.info("[4/5] Skipping query rewriting")
+            logger.info("[5/6] Skipping query rewriting")
         
-        # [5/5] 書き換えられたクエリの実行
+        # [6/6] 書き換えられたクエリの実行
         if settings.execution.should_run_phase('benchmark'):
-            logger.info("[5/5] Executing rewritten queries...")
-            # TODO: ベンチマーク実行機能を src/ に実装
-            logger.warning("Benchmark execution not yet implemented in src/ modules")
+            phase_start = time.time()
+            logger.info("[6/6] Executing rewritten queries...")
+            
+            from src.benchmark import QueryExecutor
+            
+            # 書き換えられたクエリのディレクトリ
+            rewritten_dir = Path(output_dir) / "query_rewrite" / "re_sql" / ilp_type
+            
+            if not rewritten_dir.exists():
+                logger.error(f"Rewritten queries directory not found: {rewritten_dir}")
+                logger.error("Please run query_rewriting phase first")
+            else:
+                # QueryExecutorを初期化
+                executor = QueryExecutor(settings)
+                
+                # ベンチマークを実行
+                benchmark_results = executor.execute_benchmark(
+                    rewritten_dir,
+                    timeout_minutes=30,
+                    verbose=verbose
+                )
+                
+                phase_times['benchmark'] = time.time() - phase_start
+                
+                # ベンチマーク結果を保存
+                benchmark_dir = algorithm_dir / "benchmark"
+                benchmark_dir.mkdir(parents=True, exist_ok=True)
+                
+                import json
+                with open(benchmark_dir / "benchmark_results.json", 'w', encoding='utf-8') as f:
+                    json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
+                
+                logger.info(f"Saved benchmark results to {benchmark_dir / 'benchmark_results.json'}")
         else:
-            logger.info("[5/5] Skipping benchmark execution")
+            logger.info("[6/6] Skipping benchmark execution")
             
     except Exception as e:
         logger.error(f"Error in ILP optimization: {e}")
@@ -525,6 +642,17 @@ def main():
     else:
         settings = Settings()
     
+    # Setup logging first (root logger to capture all modules)
+    setup_logging(
+        name=None,
+        level=settings.logging.level,
+        console=True
+    )
+    
+    # Get logger for this module
+    global logger
+    logger = get_logger('run_experiment')
+    
     # Override settings with command-line arguments
     if args.phases or args.start_from or args.end_at:
         # Use new phase control
@@ -532,6 +660,7 @@ def main():
             # Only run specified phases
             settings.execution.query_parsing = 'query_parsing' in args.phases
             settings.execution.optimization = 'optimization' in args.phases
+            settings.execution.sql_generation = 'sql_generation' in args.phases
             settings.execution.mv_creation = 'mv_creation' in args.phases
             settings.execution.query_rewriting = 'query_rewriting' in args.phases
             settings.execution.benchmark = 'benchmark' in args.phases
@@ -562,7 +691,7 @@ def main():
     
     # Display execution phases
     phases_status = []
-    for phase in ['query_parsing', 'optimization', 'mv_creation', 'query_rewriting', 'benchmark']:
+    for phase in ['query_parsing', 'optimization', 'sql_generation', 'mv_creation', 'query_rewriting', 'benchmark']:
         status = "✓" if settings.execution.should_run_phase(phase) else "✗"
         phases_status.append(f"{status} {phase}")
     logger.info(f"Execution Phases:\n  " + "\n  ".join(phases_status))

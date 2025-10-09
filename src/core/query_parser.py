@@ -84,44 +84,60 @@ class QueryParser:
         """
         return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", s)]
 
-    def extract_join_conditions(self, node: dict[str, Any]) -> list[JoinCondition]:
-        """Extract JOIN conditions from EXPLAIN JSON node (Chapter 2).
-
-        This method extracts detailed JOIN condition information from different
-        types of JOIN operators in PostgreSQL EXPLAIN output.
-
-        Args:
-            node: PostgreSQL EXPLAIN plan node
-
+    def extract_join_conditions(self, node):
+        """Extract JOIN conditions from Hash/Merge Cond and Index Cond in descendant nodes."""
+        condition_texts = []
+        
+        # Extract from current node
+        if "Hash Cond" in node:
+            condition_texts.append(("Hash Cond", node["Hash Cond"], None))
+        if "Merge Cond" in node:
+            condition_texts.append(("Merge Cond", node["Merge Cond"], None))
+        
+        if node.get("Node Type") == "Nested Loop":
+            if "Plans" in node:
+                for child in node["Plans"]:
+                    # Index Condとそれが実行されるテーブル情報を抽出
+                    child_conds = self._extract_index_cond_recursive(child)
+                    for cond_text, table_alias in child_conds:
+                        condition_texts.append(("Index Cond", cond_text, table_alias))
+            
+        # Recursively extract Index Cond from all descendant nodes
+        # index_conds = self._extract_index_cond_recursive(node)
+        # for cond in index_conds:
+        #     condition_texts.append(("Index Cond", cond))
+        
+        # Parse all condition texts into JoinCondition objects
+        join_conditions = []
+        for condition_type, condition_text, table_alias in condition_texts:
+            parsed = self.parse_join_condition(condition_text, condition_type, table_alias)
+            join_conditions.extend(parsed)
+        
+        return join_conditions
+    
+    def _extract_index_cond_recursive(self, node):
+        """Recursively extract Index Cond from current node and all descendant nodes.
+        
         Returns:
-            List of JoinCondition objects
+            List of tuples: (condition_text, table_alias)
         """
         conditions = []
         
-        # Map node types to their condition keys
-        condition_keys = {
-            "Hash Join": "Hash Cond",
-            "Merge Join": "Merge Cond",
-            "Nested Loop": "Join Filter",
-        }
-        
-        node_type = node.get("Node Type", "")
-        cond_key = condition_keys.get(node_type)
-        
-        # Extract conditions based on node type
-        if cond_key and cond_key in node:
-            condition_text = node[cond_key]
-            parsed = self.parse_join_condition(condition_text, cond_key)
-            conditions.extend(parsed)
-        
-        # Also check for Index Cond (can appear with JOIN operations)
+        # Extract from current node
         if "Index Cond" in node:
-            parsed = self.parse_join_condition(node["Index Cond"], "Index Cond")
-            conditions.extend(parsed)
+            # Index Scanノードの場合、テーブルエイリアスも取得
+            table_alias = node.get("Alias", "")
+            conditions.append((node["Index Cond"], table_alias))
+        
+        # Recursively process child nodes
+        # if "Plans" in node:
+        #     for child in node["Plans"]:
+        #         child_conds = self._extract_index_cond_recursive(child)
+        #         conditions.extend(child_conds)
         
         return conditions
 
-    def parse_join_condition(self, condition_text: str, condition_type: str) -> list[JoinCondition]:
+    def parse_join_condition(self, condition_text: str, condition_type: str, table_alias: str = None) -> list[JoinCondition]:
         """Parse JOIN condition text into structured format (Chapter 2).
 
         Extracts table.column comparisons from condition strings.
@@ -129,22 +145,23 @@ class QueryParser:
         Examples:
             "(t.id = ci.movie_id)" -> JoinCondition(...)
             "(mc.company_type_id = ct.id)" -> JoinCondition(...)
+            "(movie_id = mc.movie_id)" -> JoinCondition(...) # Index Cond format
 
         Args:
             condition_text: Raw condition text from EXPLAIN
             condition_type: Type of condition (Hash Cond, Merge Cond, etc.)
+            table_alias: Table alias for Index Cond (when left table is missing)
 
         Returns:
             List of JoinCondition objects
         """
         conditions = []
         
-        # Pattern: (alias1.column1 operator alias2.column2)
-        # Supports =, <, >, <=, >=, !=
-        pattern = r'\((\w+)\.(\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
-        matches = re.finditer(pattern, condition_text)
+        # Pattern 1: (alias1.column1 operator alias2.column2) - standard format
+        pattern1 = r'\((\w+)\.(\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
+        matches1 = re.finditer(pattern1, condition_text)
         
-        for match in matches:
+        for match in matches1:
             left_table = match.group(1)
             left_column = match.group(2)
             operator = match.group(3)
@@ -164,6 +181,37 @@ class QueryParser:
                 condition_type=condition_type,
                 original_text=match.group(0)
             ))
+        
+        # Pattern 2: (column operator alias.column) - Index Cond format without left table
+        # This pattern is used when Index Scan references the indexed table's column
+        if not conditions:
+            pattern2 = r'\((\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
+            matches2 = re.finditer(pattern2, condition_text)
+            
+            for match in matches2:
+                left_column = match.group(1)
+                operator = match.group(2)
+                right_table = match.group(3)
+                right_column = match.group(4)
+                
+                # Normalize <> to !=
+                if operator == "<>":
+                    operator = "!="
+                
+                # Use the provided table_alias for left table (from Index Scan node)
+                left_table = table_alias if table_alias else ""
+                
+                conditions.append(JoinCondition(
+                    left_table=left_table,
+                    left_column=left_column,
+                    operator=operator,
+                    right_table=right_table,
+                    right_column=right_column,
+                    condition_type=condition_type,
+                    original_text=match.group(0)
+                ))
+        
+        return conditions
         
         return conditions
 
@@ -233,7 +281,15 @@ class QueryParser:
             elif node["Node Type"] == "Merge Join":
                 filter_name = "Merge Cond"
             elif node["Node Type"] == "Nested Loop":
-                filter_name = "Join Filter"
+                if "Join Filter" in node:
+                    filter_name = "Join Filter"
+                else:
+                    # Check if any child has Index Cond
+                    filter_name = "Filter"  # Default
+                    for child in node["Plans"]:
+                        if "Index Cond" in child:
+                            filter_name = "Index Cond"
+                            break
             else:
                 filter_name = "Filter"
 
@@ -287,13 +343,10 @@ class QueryParser:
 
         else:  # Leaf node
             # Determine filter condition
-            if "Index Cond" in node and "Filter" in node:
-                filter_condition = f"{node['Index Cond']} AND {node['Filter']}"
-                cost = node["Total Cost"]
-            elif "Index Cond" in node:
-                filter_condition = node["Index Cond"]
-                cost = node["Total Cost"]
-            elif "Filter" in node:
+            # Note: Index Condは結合条件なのでリーフMV生成時は使わない
+            # 親ノードのextract_join_conditions()で抽出される
+            if "Filter" in node:
+                # Filterのみを使用（Index Condは除外）
                 filter_condition = node["Filter"]
                 cost = node["Total Cost"]
             else:
