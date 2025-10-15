@@ -143,23 +143,26 @@ class EnhancedMVGenerator:
             
             # すべての子ノードをフラットに展開（テーブルまたは選択済みMV）
             flat_components = []
-            all_join_conditions = []
+            all_join_conditions_set = set()  # 重複除去のためsetを使用
             all_filters = list(node_info.filters) if node_info.filters else []
             
             # 各子ノードをフラット化
             for child_id in node_info.children:
                 child_flat = self._flatten_node(child_id)
                 flat_components.append(child_flat)
-                # 子ノードのJOIN条件とフィルタも収集
-                all_join_conditions.extend(child_flat.get('join_conditions', []))
+                # 子ノードのJOIN条件とフィルタも収集（重複除去）
+                for jc in child_flat.get('join_conditions', []):
+                    all_join_conditions_set.add(jc)
                 all_filters.extend(child_flat.get('filters', []))
             
-            # 現在のノードのJOIN条件を追加
+            # 現在のノードのJOIN条件を追加（重複除去）
             if node_info.join_conditions:
                 for jc in node_info.join_conditions:
-                    all_join_conditions.append(
-                        f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
-                    )
+                    jc_str = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
+                    all_join_conditions_set.add(jc_str)
+            
+            # setをlistに変換
+            all_join_conditions = list(all_join_conditions_set)
             
             # FROM句を構築：最初のコンポーネント
             from_parts = []
@@ -184,23 +187,21 @@ class EnhancedMVGenerator:
                         # 通常のテーブル
                         table_to_alias[source_name] = alias
             
-            # サブツリー全体から全てのJOIN条件を収集
-            all_join_conditions = self._collect_all_join_conditions(node_info, self.qm)
+            # サブツリー全体から全てのJOIN条件を収集（既存の条件に追加）
+            subtree_join_conditions = self._collect_all_join_conditions(node_info, self.qm)
+            for jc in subtree_join_conditions:
+                jc_str = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
+                all_join_conditions_set.add(jc_str)
             
             # JOIN条件のテーブル名をエイリアスに変換
             converted_join_conditions = []
-            for jc in all_join_conditions:
-                # JOIN条件文字列を構築
-                converted_jc = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
-                
+            for jc_str in all_join_conditions_set:
                 # テーブル名をエイリアスに置換（まだ置換されていない場合）
+                converted_jc = jc_str
                 for table_name, alias in table_to_alias.items():
                     converted_jc = converted_jc.replace(f"{table_name}.", f"{alias}.")
                 
                 converted_join_conditions.append(converted_jc)
-            
-            
-            all_join_conditions = converted_join_conditions
             
             # 残りをカンマ結合で追加（JOIN条件は全てWHERE句で指定）
             for comp in flat_components:
@@ -244,7 +245,7 @@ class EnhancedMVGenerator:
             
             # WHERE句構築: すべてのJOIN条件とフィルタを含める
             where_clause = ""
-            where_conditions = all_join_conditions + all_filters
+            where_conditions = converted_join_conditions + all_filters
             if where_conditions:
                 where_clause = f"\nWHERE {' AND '.join(where_conditions)}"
             
@@ -313,12 +314,12 @@ FROM {from_clause}{where_clause};"""
                 result['join_conditions'].extend(child_flat['join_conditions'])
                 result['filters'].extend(child_flat['filters'])
             
-            # このノードのJOIN条件を追加
+            # このノードのJOIN条件を追加（重複除去）
             if node_info.join_conditions:
                 for jc in node_info.join_conditions:
-                    result['join_conditions'].append(
-                        f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
-                    )
+                    jc_str = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
+                    if jc_str not in result['join_conditions']:
+                        result['join_conditions'].append(jc_str)
             
             return result
         

@@ -8,6 +8,7 @@ import logging
 
 from src.rewrite.mv_generator import MVGenerator
 from src.rewrite.sql_parser import SQLParser
+from src.rewrite.join_graph import JoinGraph, JoinMinimizer
 from src.utils.legacy import natural_sort_key
 import sqlparse
 from sqlparse.sql import Where, TokenList
@@ -243,7 +244,7 @@ class QueryRewriter:
         return parts
     
     def _apply_mv_to_query(self, parts: dict, mv: dict) -> dict:
-        """MVを適用してクエリの構成要素を書き換え
+        """MVを適用してクエリの構成要素を書き換え（グラフベースの最小化）
         
         Args:
             parts: クエリの構成要素
@@ -267,16 +268,20 @@ class QueryRewriter:
         if view_id.startswith('mv_'):
             view_id = view_id[3:]  # "mv_" を削除
         
+        logger.info(f"Applying MV: {view_id}")
+        
         # MV定義を解析
         mv_parts = self._analyze_mv_definition(create_sql)
         
         if not mv_parts:
+            logger.warning(f"Could not analyze MV definition for {view_id}")
             return parts
         
         # MVのテーブルとエイリアスを取得
         mv_tables = self._extract_tables_from_from_clause(mv_parts['from'])
-        # MVのテーブル名→エイリアスマッピング（例: company_name → cn）
         mv_table_mappings = self._extract_table_mappings_from_from_clause(mv_parts['from'])
+        
+        logger.debug(f"MV contains tables: {mv_tables}")
         
         # クエリ側のテーブル名→エイリアスマッピング
         query_table_mappings = self._extract_table_mappings_from_from_clause(parts['from'])
@@ -284,44 +289,83 @@ class QueryRewriter:
         # MVのSELECT句からエイリアス→カラム名のマッピングを作成
         alias_to_column_mapping = self._extract_mv_column_mapping(mv_parts.get('select', ''), mv_tables)
         
-        # WHERE句から、MVに含まれる条件を削除（エイリアス更新の前に実行）
-        if parts['where'] and mv_parts['where']:
-            parts['where'] = self._remove_common_conditions(
-                parts['where'], 
-                mv_parts['where'],
-                mv_table_mappings,
-                query_table_mappings
-            )
+        # ===== STEP 1: WHERE句を結合条件とフィルタ条件に分類 =====
+        minimizer = JoinMinimizer()
+        join_conditions, filter_conditions = minimizer.classify_conditions(parts['where'])
         
-        # FROM句を書き換え（MVのテーブルをMVに置き換え）
+        logger.debug(f"Original: {len(join_conditions)} joins, {len(filter_conditions)} filters")
+        
+        # ===== STEP 2: MVの内部結合条件を削除 =====
+        external_joins = []
+        for join_cond in join_conditions:
+            involved_tables = self._extract_tables_from_condition(join_cond, query_table_mappings)
+            
+            # 両方のテーブルがMVに含まれている → MVの内部結合なので削除
+            if len(involved_tables) == 2 and all(table in mv_tables for table in involved_tables):
+                logger.debug(f"Removing MV internal join: {join_cond}")
+                continue
+            
+            external_joins.append(join_cond)
+        
+        logger.debug(f"After removing MV internal joins: {len(external_joins)} joins")
+        
+        # ===== STEP 3: FROM句を書き換え（MVのテーブルをMVに置き換え） =====
         parts['from'] = self._replace_tables_with_mv(parts['from'], mv_tables, view_id)
         
-        # SELECT句、WHERE句、GROUP BY句のエイリアス参照を更新
-        # 例: mi_idx.movie_id → non_leaf_2.movie_id, it.id → non_leaf_2.it_id
-        logger.debug(f"=== Applying MV: {view_id} ===")
-        logger.debug(f"Alias to column mapping: {alias_to_column_mapping}")
-        logger.debug(f"Original SELECT: '{parts['select']}'")
+        # ===== STEP 4: SELECT句とWHERE句のエイリアス参照を更新 =====
+        logger.debug(f"Updating aliases with mapping: {alias_to_column_mapping}")
         
         for old_ref, new_column in alias_to_column_mapping.items():
-            # old_ref は "alias.column" の形式
-            # これを "view_id.new_column" に置き換える
             pattern = r'\b' + re.escape(old_ref) + r'\b'
             replacement = f"{view_id}.{new_column}"
             
-            old_select = parts['select']
+            # SELECT句の更新
             parts['select'] = re.sub(pattern, replacement, parts['select'])
             
-            if old_select != parts['select']:
-                logger.debug(f"  Replaced '{old_ref}' with '{replacement}'")
-                logger.debug(f"  Before: '{old_select}'")
-                logger.debug(f"  After:  '{parts['select']}'")
+            # WHERE句の結合条件を更新
+            updated_joins = []
+            for join_cond in external_joins:
+                updated_joins.append(re.sub(pattern, replacement, join_cond))
+            external_joins = updated_joins
             
-            if parts['where']:
-                parts['where'] = re.sub(pattern, replacement, parts['where'])
+            # フィルタ条件も更新
+            updated_filters = []
+            for filter_cond in filter_conditions:
+                updated_filters.append(re.sub(pattern, replacement, filter_cond))
+            filter_conditions = updated_filters
+            
+            # GROUP BY句の更新
             if parts['group_by']:
                 parts['group_by'] = re.sub(pattern, replacement, parts['group_by'])
         
-        logger.debug(f"Final SELECT: '{parts['select']}'")
+        # ===== STEP 5: MVに含まれるフィルタ条件を削除 =====
+        if mv_parts['where']:
+            mv_filter_conds = self._extract_conditions(mv_parts['where'])
+            normalized_mv_conds = [
+                self._normalize_condition_for_comparison(c, mv_table_mappings) 
+                for c in mv_filter_conds
+            ]
+            
+            remaining_filters = []
+            for cond in filter_conditions:
+                normalized = self._normalize_condition_for_comparison(cond, query_table_mappings)
+                if normalized not in normalized_mv_conds:
+                    remaining_filters.append(cond)
+                else:
+                    logger.debug(f"Removing filter covered by MV: {cond}")
+            
+            filter_conditions = remaining_filters
+        
+        # ===== STEP 6: 結合グラフで冗長な結合条件を削除 =====
+        minimal_joins, _ = minimizer.minimize_joins(external_joins, filter_conditions)
+        
+        logger.info(f"Join minimization: {len(external_joins)} → {len(minimal_joins)}")
+        
+        # ===== STEP 7: WHERE句を再構築 =====
+        all_conditions = minimal_joins + filter_conditions
+        parts['where'] = ' AND '.join(all_conditions) if all_conditions else ''
+        
+        logger.debug(f"Final WHERE ({len(all_conditions)} conditions): {parts['where'][:200]}...")
         
         return parts
     
@@ -600,6 +644,97 @@ class QueryRewriter:
         normalized = normalized.lower()
         
         return normalized
+    
+    def _is_join_condition(self, condition: str) -> bool:
+        """条件が結合条件かどうかを判定
+        
+        結合条件は alias1.col1 = alias2.col2 の形式
+        
+        Args:
+            condition: 条件文字列
+            
+        Returns:
+            結合条件ならTrue
+        """
+        # alias1.col1 = alias2.col2 のパターンをチェック
+        pattern = r'^\s*(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)\s*$'
+        return re.match(pattern, condition.strip()) is not None
+    
+    def _extract_tables_from_condition(self, condition: str, table_mappings: dict[str, str]) -> list[str]:
+        """条件に含まれるテーブルエイリアスを抽出
+        
+        Args:
+            condition: 条件文字列（例: "t.id = ci.movie_id"）
+            table_mappings: テーブル名→エイリアスのマッピング
+            
+        Returns:
+            テーブルエイリアスのリスト
+        """
+        tables = []
+        # alias.column のパターンを検索
+        pattern = r'(\w+)\.(\w+)'
+        matches = re.findall(pattern, condition)
+        
+        for alias, column in matches:
+            # エイリアスがtable_mappingsの値に含まれるか、またはMVテーブル名か
+            if alias in table_mappings.values() or alias.startswith(('leaf_', 'non_leaf_')):
+                tables.append(alias)
+        
+        return list(set(tables))  # 重複を削除
+    
+    def _remove_redundant_join_conditions(self, where_clause: str, mv_id: str) -> str:
+        """冗長な結合条件を削除
+        
+        例: non_leaf_475.movie_id = mc.movie_id と non_leaf_475.t_id = mc.movie_id
+        は、MVの定義により同等なので、1つだけ残す
+        
+        Args:
+            where_clause: WHERE句
+            mv_id: MVのID
+            
+        Returns:
+            クリーンアップされたWHERE句
+        """
+        conditions = self._extract_conditions(where_clause)
+        
+        # 同じMVと外部テーブルの結合条件をグループ化
+        join_groups = {}  # {(mv_id, external_table): [conditions]}
+        other_conditions = []
+        
+        for cond in conditions:
+            # mv_id.col = table.col の形式かチェック
+            pattern = rf'{re.escape(mv_id)}\.(\w+)\s*=\s*(\w+)\.(\w+)'
+            match = re.match(pattern, cond.strip())
+            if match:
+                mv_col, ext_table, ext_col = match.groups()
+                key = (mv_id, ext_table, ext_col)
+                if key not in join_groups:
+                    join_groups[key] = []
+                join_groups[key].append(cond)
+            else:
+                # 逆パターン table.col = mv_id.col もチェック
+                pattern_rev = rf'(\w+)\.(\w+)\s*=\s*{re.escape(mv_id)}\.(\w+)'
+                match_rev = re.match(pattern_rev, cond.strip())
+                if match_rev:
+                    ext_table, ext_col, mv_col = match_rev.groups()
+                    key = (mv_id, ext_table, ext_col)
+                    if key not in join_groups:
+                        join_groups[key] = []
+                    join_groups[key].append(cond)
+                else:
+                    other_conditions.append(cond)
+        
+        # 各グループから1つだけ選択
+        selected_joins = []
+        for key, conds in join_groups.items():
+            if len(conds) > 1:
+                logger.debug(f"Removing redundant join conditions for {key}: {conds}")
+                logger.debug(f"  Keeping: {conds[0]}")
+            selected_joins.append(conds[0])
+        
+        # 再構築
+        all_conditions = selected_joins + other_conditions
+        return ' AND '.join(all_conditions) if all_conditions else ''
     
     def _extract_conditions(self, where_clause: str) -> list[str]:
         """WHERE句から個別の条件を抽出

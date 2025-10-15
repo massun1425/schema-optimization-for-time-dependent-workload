@@ -94,18 +94,24 @@ class QueryParser:
         if "Merge Cond" in node:
             condition_texts.append(("Merge Cond", node["Merge Cond"], None))
         
+        # Nested Loop: Extract Index Cond from both Outer and Inner sides
         if node.get("Node Type") == "Nested Loop":
-            if "Plans" in node:
-                for child in node["Plans"]:
-                    # Index Condとそれが実行されるテーブル情報を抽出
-                    child_conds = self._extract_index_cond_recursive(child)
-                    for cond_text, table_alias in child_conds:
-                        condition_texts.append(("Index Cond", cond_text, table_alias))
+            if "Plans" in node and len(node["Plans"]) >= 2:
+                # Extract from Outer side (Plans[0])
+                outer_plan = node["Plans"][0]
+                outer_conds = self._extract_index_cond_recursive(outer_plan)
+                for cond_text, table_alias in outer_conds:
+                    condition_texts.append(("Index Cond", cond_text, table_alias))
+                
+                # Extract from Inner side (Plans[1])
+                inner_plan = node["Plans"][1]
+                inner_conds = self._extract_index_cond_from_inner(inner_plan)
+                for cond_text, table_alias in inner_conds:
+                    condition_texts.append(("Index Cond", cond_text, table_alias))
             
-        # Recursively extract Index Cond from all descendant nodes
-        # index_conds = self._extract_index_cond_recursive(node)
-        # for cond in index_conds:
-        #     condition_texts.append(("Index Cond", cond))
+            # Also check for Join Filter (explicit join condition)
+            if "Join Filter" in node:
+                condition_texts.append(("Join Filter", node["Join Filter"], None))
         
         # Parse all condition texts into JoinCondition objects
         join_conditions = []
@@ -115,6 +121,39 @@ class QueryParser:
         
         return join_conditions
     
+    def _extract_index_cond_from_inner(self, inner_plan):
+        """Extract Index Cond from Nested Loop's inner side.
+        
+        Handles cases where inner side is:
+        - Direct Index Scan: Use its Index Cond
+        - Memoize/Materialize: Search inside for Index Scan
+        
+        Args:
+            inner_plan: Inner side plan (typically Plans[1] of Nested Loop)
+            
+        Returns:
+            List of tuples: (condition_text, table_alias)
+        """
+        conditions = []
+        
+        # Case 1: Inner side is directly an Index Scan
+        if "Index Cond" in inner_plan:
+            table_alias = inner_plan.get("Alias", "")
+            conditions.append((inner_plan["Index Cond"], table_alias))
+            return conditions
+        
+        # Case 2: Inner side is Memoize/Materialize/similar intermediate node
+        node_type = inner_plan.get("Node Type", "")
+        if node_type in ["Memoize", "Materialize", "CTE Scan", "Subquery Scan"]:
+            # Look one level deeper
+            if "Plans" in inner_plan and len(inner_plan["Plans"]) > 0:
+                child = inner_plan["Plans"][0]
+                if "Index Cond" in child:
+                    table_alias = child.get("Alias", "")
+                    conditions.append((child["Index Cond"], table_alias))
+        
+        return conditions
+
     def _extract_index_cond_recursive(self, node):
         """Recursively extract Index Cond from current node and all descendant nodes.
         
@@ -130,10 +169,10 @@ class QueryParser:
             conditions.append((node["Index Cond"], table_alias))
         
         # Recursively process child nodes
-        # if "Plans" in node:
-        #     for child in node["Plans"]:
-        #         child_conds = self._extract_index_cond_recursive(child)
-        #         conditions.extend(child_conds)
+        if "Plans" in node:
+            for child in node["Plans"]:
+                child_conds = self._extract_index_cond_recursive(child)
+                conditions.extend(child_conds)
         
         return conditions
 
