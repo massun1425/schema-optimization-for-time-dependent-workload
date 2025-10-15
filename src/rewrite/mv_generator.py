@@ -28,6 +28,11 @@ class MVGenerator:
         Returns:
             生成されたファイルパスのリスト
         """
+        # 既存のSQLファイルをクリーンアップ
+        output_path = Path(output_dir)
+        for file_path in output_path.glob("*.sql"):
+            file_path.unlink()
+        
         os.makedirs(output_dir, exist_ok=True)
         generated_files = []
 
@@ -161,6 +166,10 @@ class MVGenerator:
             mv_data: MV情報のリスト
             output_dir: 出力ディレクトリ
         """
+        # 既存のSQLファイルをクリーンアップ
+        for file_path in output_dir.glob("*.sql"):
+            file_path.unlink()
+        
         output_dir.mkdir(parents=True, exist_ok=True)
 
         for mv in mv_data:

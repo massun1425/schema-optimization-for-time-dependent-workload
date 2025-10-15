@@ -235,10 +235,6 @@ def run_ilp_optimization(
     # 各フェーズの実行時間を記録
     phase_times = {}
 
-    # MVファイルクリーンアップ (always run before optimization)
-    if settings.execution.should_run_phase('optimization'):
-        cleanup_mv_files()
-
     if ilp_type == "none":
         logger.info("Running with 'none' algorithm (no optimization)")
         elapsed = time.time() - start_time
@@ -407,6 +403,10 @@ def run_ilp_optimization(
             sql_dir = algorithm_dir / "sql"
             sql_dir.mkdir(parents=True, exist_ok=True)
             
+            # 既存のSQLファイルをクリーンアップ
+            for file_path in sql_dir.glob("*.sql"):
+                file_path.unlink()
+            
             # 各MVのSQLを個別ファイルに保存
             for mv in result.selected_views:
                 if mv.create_sql:
@@ -430,6 +430,10 @@ def run_ilp_optimization(
         if settings.execution.should_run_phase('mv_creation'):
             phase_start = time.time()
             logger.info("[4/6] Creating MVs in database...")
+            
+            # MVファイルクリーンアップ (既存のMVを削除してから新しいMVを作成)
+            cleanup_mv_files()
+            
             logger.info("Initializing MaterializedViewManager...")
             mv_manager = MaterializedViewManager(DatabaseConnection(settings.database))
             
@@ -571,6 +575,36 @@ def run_ilp_optimization(
         if settings.execution.should_run_phase('benchmark'):
             phase_start = time.time()
             logger.info("[6/6] Executing rewritten queries...")
+            
+            # ベンチマーク実行前にマテリアライズドビューの統計情報を更新
+            logger.info("Updating statistics for materialized views...")
+            try:
+                db_conn = DatabaseConnection(settings.database)
+                conn = db_conn.get_connection()
+                
+                # すべてのマテリアライズドビューに対してANALYZEを実行
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT schemaname, matviewname 
+                    FROM pg_matviews 
+                    WHERE schemaname = 'public'
+                """)
+                
+                mv_count = 0
+                for schema, mv_name in cursor.fetchall():
+                    cursor.execute(f"ANALYZE {schema}.{mv_name}")
+                    mv_count += 1
+                
+                conn.commit()
+                cursor.close()
+                db_conn.close()
+                
+                logger.info(f"✓ Analyzed {mv_count} materialized views")
+            except Exception as e:
+                logger.warning(f"Failed to analyze materialized views: {e}")
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
             
             from src.benchmark import QueryExecutor
             

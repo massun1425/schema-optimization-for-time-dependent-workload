@@ -55,6 +55,8 @@ docker ps
 
 # データベース接続テスト
 docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT count(*) FROM title;"
+
+docker exec -it mv_postgres psql -U postgres -d imdbload
 ```
 
 **接続情報:**
