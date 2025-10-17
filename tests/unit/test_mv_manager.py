@@ -50,7 +50,7 @@ class TestMaterializedViewManager:
         with patch.object(mv_manager, "drop_view") as mock_drop:
             mv_manager.create_view("test_view", "SELECT * FROM users", replace=True)
 
-        mock_drop.assert_called_once_with("test_view")
+        mock_drop.assert_called_once_with("test_view", cascade=True)
         mock_db.execute.assert_called_once()
 
     def test_create_view_without_data(self, mv_manager, mock_db):

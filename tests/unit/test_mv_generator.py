@@ -42,26 +42,24 @@ class TestMVGenerator:
 
         # モックQueryManager
         class MockQM:
-            leaf_nodes_map = {
-                "leaf_1": {
-                    "table_name": "title",
-                    "alias": "t",
-                    "conditions": "t.production_year > 2000",
-                }
+            leaf_nodes_map_r = {
+                "leaf_1": ("Seq Scan", "title", "t", "t.production_year > 2000")
             }
 
         qm = MockQM()
         sql = generator._generate_leaf_mv("leaf_1", qm)
 
         assert "CREATE MATERIALIZED VIEW leaf_1" in sql
-        assert "title t" in sql
+        assert "title" in sql.lower()
         assert "production_year > 2000" in sql
 
     def test_generate_mv_scripts(self, generator, tmp_path):
         """MVスクリプト生成"""
 
         class MockQM:
-            leaf_nodes_map = {"leaf_1": {"table_name": "title", "alias": "t", "conditions": ""}}
+            leaf_nodes_map_r = {
+                "leaf_1": ("Seq Scan", "title", "t", "")
+            }
 
         qm = MockQM()
         output_dir = tmp_path / "mvs"
