@@ -28,6 +28,11 @@ class MVGenerator:
         Returns:
             生成されたファイルパスのリスト
         """
+        # 既存のSQLファイルをクリーンアップ
+        output_path = Path(output_dir)
+        for file_path in output_path.glob("*.sql"):
+            file_path.unlink()
+        
         os.makedirs(output_dir, exist_ok=True)
         generated_files = []
 
@@ -71,13 +76,12 @@ class MVGenerator:
         Returns:
             CREATE文
         """
-        if not hasattr(qm, "leaf_nodes_map") or leaf_id not in qm.leaf_nodes_map:
+        if not hasattr(qm, "leaf_nodes_map_r") or leaf_id not in qm.leaf_nodes_map_r:
+            print(f"Warning: {leaf_id} not found in leaf_nodes_map_r")
             return ""
 
-        leaf_node = qm.leaf_nodes_map[leaf_id]
-        table_name = leaf_node.get("table_name", "")
-        alias = leaf_node.get("alias", table_name)
-        conditions = leaf_node.get("conditions", "")
+        # leaf_nodes_map_r から情報を取得: (operator, table_name, alias, conditions)
+        operator, table_name, alias, conditions = qm.leaf_nodes_map_r[leaf_id]
 
         if not table_name:
             return ""
@@ -162,6 +166,10 @@ class MVGenerator:
             mv_data: MV情報のリスト
             output_dir: 出力ディレクトリ
         """
+        # 既存のSQLファイルをクリーンアップ
+        for file_path in output_dir.glob("*.sql"):
+            file_path.unlink()
+        
         output_dir.mkdir(parents=True, exist_ok=True)
 
         for mv in mv_data:

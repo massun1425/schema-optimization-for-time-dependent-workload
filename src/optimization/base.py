@@ -104,6 +104,42 @@ class BaseILPOptimizer(ABC):
 
         return y, z
 
+    def build_ilp_model_with_candidates(
+        self, cand_i: list[int], cand_j: list[int]
+    ) -> tuple[dict, dict]:
+        """Build ILP model with only candidate variables (original code behavior).
+
+        This creates a smaller ILP problem by only creating variables for
+        candidate queries and subqueries, matching the original implementation.
+
+        Creates a Gurobi model with:
+        - y[i,j]: Binary variable for candidate query i and candidate MV j
+        - z[j]: Binary variable for candidate MV j
+
+        Args:
+            cand_i: List of query indices that are MV candidates
+            cand_j: List of subquery indices that are MV candidates
+
+        Returns:
+            Tuple of (y_variables, z_variables) indexed by candidate positions
+        """
+        self.model = gp.Model(f"{self.__class__.__name__}")
+        self.model.Params.OutputFlag = 0
+
+        # Decision variables - only for candidates
+        y = {}
+        for i in range(len(cand_i)):
+            for j in range(len(cand_j)):
+                y[i, j] = self.model.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}")
+
+        z = {}
+        for j in range(len(cand_j)):
+            z[j] = self.model.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}")
+
+        self.model.update()
+
+        return y, z
+
     def add_common_constraints(
         self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]
     ) -> None:
@@ -139,6 +175,62 @@ class BaseILPOptimizer(ABC):
             gp.quicksum(self.b_j[j] * z[j] for j in range(len(self.b_j))) <= self.B_max
         )
 
+    def add_constraints_with_candidates(
+        self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]
+    ) -> None:
+        """Add constraints using candidate indices (original code behavior).
+
+        This matches the original implementation where constraints are only
+        added for candidate queries and subqueries.
+
+        Args:
+            y: Query-MV usage variables (indexed by candidate positions)
+            z: MV materialization variables (indexed by candidate positions)
+            cand_i: Candidate query indices (original indices)
+            cand_j: Candidate subquery indices (original indices)
+        """
+        # Build M: beneficial subqueries for each candidate query
+        M = []
+        for i in range(len(cand_i)):
+            M_i = []
+            M_i_ = []
+            for j in range(len(cand_j)):
+                if self.u_ij[cand_i[i]][cand_j[j]] > 0:
+                    M_i.append(j)
+                # All cand_j are considered materialized in this iteration
+                M_i_.append(j)
+            k = list(set(M_i) & set(M_i_))
+            M.append(k)
+
+        # Overlapping subexpression constraints - only for candidates
+        t = 0
+        for i in range(len(cand_i)):
+            for j in M[i]:
+                # Build candidate X matrix for this j
+                cand_x_j = {}
+                for u_idx, u in enumerate(cand_j):
+                    cand_x_j[u_idx] = self.X[cand_j[j]][u]
+                
+                # Constraint: y[i,j] + sum(y[i,u] * X[j][u]) / |cand_j| <= 1
+                self.model.addConstr(
+                    y[i, j]
+                    + gp.quicksum(y[i, u] * cand_x_j[u] for u in M[i])
+                    / len(cand_j)
+                    <= 1,
+                    name=f"overlap_{t}",
+                )
+                
+                # y[i,j] can only be 1 if z[j]=1
+                self.model.addConstr(y[i, j] <= z[j], name=f"materialize_{t}")
+                t += 1
+
+        # Storage budget constraint - use original indices
+        self.model.addConstr(
+            gp.quicksum(self.b_j[cand_j[j]] * z[j] for j in range(len(cand_j)))
+            <= self.B_max,
+            name="storage_budget",
+        )
+
     def set_objective(self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]) -> None:
         """Set the optimization objective function.
 
@@ -147,16 +239,46 @@ class BaseILPOptimizer(ABC):
         Args:
             y: Query-MV usage variables
             z: MV materialization variables
-            cand_i: Candidate query indices
-            cand_j: Candidate subquery indices
+            cand_i: Candidate query indices (list of query indices)
+            cand_j: Candidate subquery indices (list of subquery indices)
         """
+        # Use full index ranges since y and z are defined for all i,j
+        # The ILP solver will automatically handle variables with zero coefficients
         self.model.setObjective(
             gp.quicksum(
-                self.u_ij[i][j] * y[i, j] for i in range(len(cand_i)) for j in range(len(cand_j))
+                self.u_ij[i][j] * y[i, j] for i in range(len(self.u_ij)) for j in range(len(self.b_j))
             )
-            - gp.quicksum(z[j] * self.m_cost[j] for j in range(len(cand_j))),
+            - gp.quicksum(z[j] * self.m_cost[j] for j in range(len(self.b_j))),
             gp.GRB.MAXIMIZE,
         )
+
+    def set_objective_with_candidates(
+        self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]
+    ) -> None:
+        """Set objective function using candidate indices (original code behavior).
+
+        Maximizes: total utility - maintenance cost
+        Only considers candidate queries and subqueries.
+
+        Args:
+            y: Query-MV usage variables (indexed by candidate positions)
+            z: MV materialization variables (indexed by candidate positions)
+            cand_i: Candidate query indices (original indices)
+            cand_j: Candidate subquery indices (original indices)
+        """
+        # Build utility component using candidate indices
+        utility_terms = gp.quicksum(
+            self.u_ij[cand_i[i]][cand_j[j]] * y[i, j]
+            for i in range(len(cand_i))
+            for j in range(len(cand_j))
+        )
+
+        # Build maintenance cost component using candidate indices
+        maintenance_terms = gp.quicksum(
+            z[j] * self.m_cost[cand_j[j]] for j in range(len(cand_j))
+        )
+
+        self.model.setObjective(utility_terms - maintenance_terms, gp.GRB.MAXIMIZE)
 
     def solve_ilp(self, y: dict, z: dict) -> tuple[list[list[int]], list[int], float]:
         """Solve the ILP model and extract results.
@@ -186,6 +308,46 @@ class BaseILPOptimizer(ABC):
 
         return ret_y, ret_z, obj_val
 
+    def solve_ilp_with_candidates(
+        self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]
+    ) -> tuple[list[list[int]], list[int], float]:
+        """Solve ILP and map results back to original indices (original code behavior).
+
+        This solves the smaller ILP problem with only candidate variables,
+        then maps the results back to the full index space.
+
+        Args:
+            y: Query-MV usage variables (indexed by candidate positions)
+            z: MV materialization variables (indexed by candidate positions)
+            cand_i: Candidate query indices (original indices)
+            cand_j: Candidate subquery indices (original indices)
+
+        Returns:
+            Tuple of (y_ij solution, z_j solution, objective value)
+            Solutions are in the original full index space.
+        """
+        if self.model is None:
+            raise RuntimeError("Model not built. Call build_ilp_model_with_candidates first.")
+
+        self.model.optimize()
+
+        # Initialize solution arrays in full index space
+        ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
+        ret_z = [0] * len(self.b_j)
+
+        # Extract solution from candidate variables and map to original indices
+        for j_idx in range(len(cand_j)):
+            j_orig = cand_j[j_idx]
+            ret_z[j_orig] = int(z[j_idx].X)
+            
+            for i_idx in range(len(cand_i)):
+                i_orig = cand_i[i_idx]
+                ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X)
+
+        obj_val = self.model.objVal
+
+        return ret_y, ret_z, obj_val
+
     def make_nodename_from_id(self, x_list: list[int]) -> list[str]:
         """Convert node indices to node names.
 
@@ -208,23 +370,51 @@ class BaseILPOptimizer(ABC):
         """
         return sum(self.b_j[j] * z_j[j] for j in range(len(z_j)))
 
-    def get_materialized_views(self, z_j: list[int]) -> list[MaterializedView]:
+    def get_materialized_views(self, z_j: list[int], generate_sql: bool = False) -> list[MaterializedView]:
         """Create MaterializedView objects from solution.
 
         Args:
             z_j: Binary list indicating which MVs are materialized
+            generate_sql: If True, generate CREATE SQL immediately (requires database).
+                         If False (default), SQL will be generated later in sql_generation phase.
 
         Returns:
             List of MaterializedView objects
         """
         mvs = []
+        
+        # If SQL generation is requested, create MV generator
+        mv_generator = None
+        if generate_sql:
+            from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
+            
+            # Build set of selected MV node IDs
+            selected_node_ids = set()
+            for j in range(len(z_j)):
+                if z_j[j] == 1:
+                    selected_node_ids.add(self.node_list[j])
+            
+            # Create MV generator with selected MVs info
+            mv_generator = EnhancedMVGenerator(self.qm, selected_mvs=selected_node_ids)
+        
         for j in range(len(z_j)):
             if z_j[j] == 1:
                 node_id = self.node_list[j]
+                
+                # Generate SQL only if requested
+                create_sql = ""
+                if generate_sql and mv_generator:
+                    try:
+                        create_sql = mv_generator.generate_mv_sql(node_id)
+                    except Exception as e:
+                        logger = __import__('logging').getLogger(__name__)
+                        logger.warning(f"Failed to generate SQL for {node_id}: {e}")
+                        create_sql = f"-- Failed to generate SQL for {node_id}: {e}"
+                
                 mv = MaterializedView(
                     view_id=f"mv_{node_id}",
                     node_id=node_id,
-                    create_sql="",  # To be filled by query rewriter
+                    create_sql=create_sql,
                     size=self.b_j[j],
                     maintenance_cost=self.m_cost[j],
                     usage_positions=self.qm.subquery_positions.get(node_id, []),
@@ -264,6 +454,7 @@ class BaseILPOptimizer(ABC):
         z_j: list[int],
         obj_val: float,
         execution_time: float,
+        generate_sql: bool = False,
         **metadata,
     ) -> OptimizationResult:
         """Create an OptimizationResult from algorithm output.
@@ -273,12 +464,14 @@ class BaseILPOptimizer(ABC):
             z_j: MV materialization solution
             obj_val: Objective function value
             execution_time: Time taken in seconds
+            generate_sql: If True, generate CREATE SQL immediately (requires database).
+                         If False (default), SQL will be generated later in sql_generation phase.
             **metadata: Additional algorithm-specific metadata
 
         Returns:
             OptimizationResult object
         """
-        selected_mvs = self.get_materialized_views(z_j)
+        selected_mvs = self.get_materialized_views(z_j, generate_sql=generate_sql)
         total_storage = self.calculate_storage_used(z_j)
 
         return OptimizationResult(

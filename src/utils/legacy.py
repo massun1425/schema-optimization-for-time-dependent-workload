@@ -2,6 +2,34 @@
 
 import os
 import re
+from pathlib import Path
+
+
+def get_all_job_queries(source_path: str) -> tuple[list[str], dict[str, int]]:
+    """
+    Get all JOB query JSON files from the directory.
+    
+    Args:
+        source_path: Path to the JSON files directory
+        
+    Returns:
+        Tuple of (query_paths, query_count_dict)
+        - query_paths: List of all JOB JSON files
+        - query_count_dict: Dictionary with count 1 for each file
+    """
+    query_paths = []
+    query_count = {}
+    
+    job_dir = Path(source_path) / "job"
+    if not job_dir.exists():
+        return [], {}
+    
+    for json_file in sorted(job_dir.glob("*.json")):
+        query_path = str(json_file)
+        query_paths.append(query_path)
+        query_count[query_path] = 1
+    
+    return query_paths, query_count
 
 
 def get_red_queries(

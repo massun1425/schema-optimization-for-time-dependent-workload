@@ -145,8 +145,10 @@ class TestDatabaseConnection:
         db = DatabaseConnection(config)
         mock_conn = mock_psycopg2_connect.return_value
         mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
         mock_cursor.fetchone.return_value = (1, "Alice")
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
 
         result = db.fetch_one("SELECT * FROM users WHERE id = %s", (1,))
 
@@ -159,8 +161,10 @@ class TestDatabaseConnection:
         db = DatabaseConnection(config)
         mock_conn = mock_psycopg2_connect.return_value
         mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
         mock_cursor.fetchall.return_value = [(1, "Alice"), (2, "Bob")]
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
 
         results = db.fetch_all("SELECT * FROM users")
 
@@ -172,8 +176,10 @@ class TestDatabaseConnection:
         db = DatabaseConnection(config)
         mock_conn = mock_psycopg2_connect.return_value
         mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
         mock_cursor.fetchone.return_value = (42,)
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
 
         result = db.fetch_value("SELECT COUNT(*) FROM users")
 
@@ -184,8 +190,10 @@ class TestDatabaseConnection:
         db = DatabaseConnection(config)
         mock_conn = mock_psycopg2_connect.return_value
         mock_cursor = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
         mock_cursor.fetchone.return_value = None
+        mock_cursor.__enter__ = MagicMock(return_value=mock_cursor)
+        mock_cursor.__exit__ = MagicMock(return_value=False)
+        mock_conn.cursor.return_value = mock_cursor
 
         result = db.fetch_value("SELECT * FROM users WHERE id = 999", default="Not found")
 

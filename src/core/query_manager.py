@@ -6,6 +6,8 @@ between query nodes (leaf and non-leaf) and their properties.
 
 from typing import Any
 
+from .models import NonLeafNodeInfo, JoinCondition
+
 
 class QueryManager:
     """Manages query nodes and their relationships.
@@ -39,6 +41,15 @@ class QueryManager:
         self.non_leaf_nodes_map: dict[tuple[str, ...], str] = {}
         self.non_leaf_nodes_map_r: dict[str, tuple[str, ...]] = {}
         self.non_leaf_nodes_filter: dict[str, str] = {}
+
+        # Enhanced: Non-leaf node detailed information (Chapter 1)
+        self.non_leaf_nodes_info: dict[str, NonLeafNodeInfo] = {}
+        
+        # Enhanced: JOIN conditions mapping (Chapter 1)
+        self.join_conditions: dict[str, list[JoinCondition]] = {}
+        
+        # Enhanced: Operator information (Chapter 1)
+        self.node_operators: dict[str, str] = {}
 
         # ID counters
         self.leaf_id_counter: int = 0
@@ -185,6 +196,96 @@ class QueryManager:
 
         return node_id
 
+    def process_non_leaf_node_v2(
+        self,
+        operator: str,
+        join_type: str,
+        child_node_ids: list[str],
+        join_conditions: list[JoinCondition],
+        filters: list[str],
+        position: list[int],
+        total_cost: float,
+        rows: int,
+        width: int,
+        output_columns: list | None = None,
+    ) -> str:
+        """Process a non-leaf node with enhanced information (Chapter 1 & 2).
+
+        This is an enhanced version of process_non_leaf_node that preserves
+        detailed JOIN condition information instead of losing it.
+
+        Args:
+            operator: Operator type (e.g., 'Hash Join', 'Merge Join')
+            join_type: JOIN type (e.g., 'Inner', 'Left', 'Right')
+            child_node_ids: List of child node IDs (order preserved)
+            join_conditions: List of JOIN conditions with full details
+            filters: Additional WHERE clause filters
+            position: [query_id, position] in the query plan
+            total_cost: Cost of executing this node
+            rows: Estimated number of rows
+            width: Width of result tuples in bytes
+            output_columns: Optional list of output columns
+
+        Returns:
+            Node ID for this non-leaf node
+        """
+        # Create key that includes JOIN conditions to distinguish different JOINs
+        # of the same tables
+        join_cond_hash = hash(
+            tuple(sorted([jc.original_text for jc in join_conditions]))
+        ) if join_conditions else 0
+        
+        # Key includes: children (order preserved) + join condition hash
+        key = tuple(child_node_ids)  # Don't sort - preserve order
+        
+        # For backward compatibility with existing code, we also maintain
+        # the old sorted key mapping
+        sorted_key = tuple(sorted(child_node_ids))
+
+        # Check if this non-leaf node already exists (using sorted key for compatibility)
+        if sorted_key in self.non_leaf_nodes_map:
+            node_id = self.non_leaf_nodes_map[sorted_key]
+        else:
+            # Create new non-leaf node
+            node_id = self._generate_unique_id("non_leaf")
+            self.non_leaf_nodes_map[sorted_key] = node_id
+            self.non_leaf_nodes_map_r[node_id] = sorted_key
+            
+            # Store detailed information (enhanced)
+            self.non_leaf_nodes_info[node_id] = NonLeafNodeInfo(
+                node_id=node_id,
+                operator=operator,
+                join_type=join_type,
+                children=child_node_ids,  # Order preserved
+                join_conditions=join_conditions,
+                filters=filters,
+                output_columns=output_columns,
+                cost=total_cost,
+                rows=rows,
+                width=width,
+            )
+            
+            # Store JOIN conditions separately for easy access
+            self.join_conditions[node_id] = join_conditions
+            
+            # Store operator type
+            self.node_operators[node_id] = operator
+
+        # Update position if valid
+        if position[0] != -1:
+            if node_id in self.subquery_positions:
+                self.subquery_positions[node_id].append(position)
+            else:
+                self.subquery_positions[node_id] = [position]
+
+        # Update properties
+        self.non_leaf_nodes_filter[node_id] = " AND ".join(filters) if filters else ""
+        self.subquery_costs[node_id] = total_cost
+        self.subquery_sizes[node_id] = rows * width
+        self.subquery_widths[node_id] = width
+
+        return node_id
+
     def depth_first_search(self, node: dict[str, Any], position: list[int]) -> str:
         """Perform depth-first search on a query plan tree.
 
@@ -197,6 +298,7 @@ class QueryManager:
                 - operator: Operator type
                 - For leaf: table, alias, filter, cost, size, width
                 - For non-leaf: children, filter, cost, size, width
+                  (Enhanced: also join_type, join_conditions, additional_filters, rows)
             position: [query_id, position] in the query plan
 
         Returns:
@@ -219,14 +321,36 @@ class QueryManager:
         elif node["type"] == "non_leaf":
             # Recursively process children
             child_ids = [self.depth_first_search(child, [-1, -1]) for child in node["children"]]
-            return self.process_non_leaf_node(
-                child_ids,
-                position,
-                node["cost"],
-                node["size"],
-                node["width"],
-                node.get("filter", ""),
-            )
+            
+            # Check if enhanced information is available (Chapter 2)
+            if "join_conditions" in node and "join_type" in node:
+                # Use enhanced processing
+                join_conditions = node.get("join_conditions", [])
+                join_type = node.get("join_type", "Inner")
+                additional_filters = node.get("additional_filters", [])
+                rows = node.get("rows", 0)
+                
+                return self.process_non_leaf_node_v2(
+                    operator=node["operator"],
+                    join_type=join_type,
+                    child_node_ids=child_ids,
+                    join_conditions=join_conditions,
+                    filters=additional_filters,
+                    position=position,
+                    total_cost=node["cost"],
+                    rows=rows,
+                    width=node["width"],
+                )
+            else:
+                # Fallback to legacy processing for backward compatibility
+                return self.process_non_leaf_node(
+                    child_ids,
+                    position,
+                    node["cost"],
+                    node["size"],
+                    node["width"],
+                    node.get("filter", ""),
+                )
         else:
             raise ValueError(f"Invalid node type: {node.get('type')}")
 
@@ -328,6 +452,12 @@ class QueryManager:
         self.non_leaf_nodes_map.clear()
         self.non_leaf_nodes_map_r.clear()
         self.non_leaf_nodes_filter.clear()
+        
+        # Enhanced: Clear new mappings (Chapter 1)
+        self.non_leaf_nodes_info.clear()
+        self.join_conditions.clear()
+        self.node_operators.clear()
+        
         self.leaf_id_counter = 0
         self.non_leaf_id_counter = 0
         self.subquery_positions.clear()

@@ -127,9 +127,10 @@ class DatabaseConnection:
             >>> db.execute("CREATE TABLE users (id SERIAL, name TEXT)")
             >>> db.execute("INSERT INTO users (name) VALUES (%s)", ("Alice",))
         """
+        logger.info(f"Executing SQL: {sql[:150]}...")
         with self.cursor(commit=commit) as cur:
             cur.execute(sql, params)
-            logger.debug(f"Executed SQL: {sql[:100]}...")
+            logger.info(f"SQL execution completed: {sql[:150]}...")
 
     def execute_many(self, sql: str, params_list: list[tuple], commit: bool = True) -> None:
         """Execute a SQL statement multiple times with different parameters.
@@ -165,11 +166,18 @@ class DatabaseConnection:
         Examples:
             >>> user = db.fetch_one("SELECT * FROM users WHERE id = %s", (1,))
         """
-        with self.cursor(commit=False) as cur:
-            cur.execute(sql, params)
-            result = cur.fetchone()
-            logger.debug(f"Fetched one result from: {sql[:100]}...")
-            return result
+        conn = self.get_connection()
+        # Set autocommit for read-only queries to avoid transaction issues
+        old_autocommit = conn.autocommit
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                result = cur.fetchone()
+                logger.debug(f"Fetched one result from: {sql[:100]}...")
+                return result
+        finally:
+            conn.autocommit = old_autocommit
 
     def fetch_all(self, sql: str, params: tuple | None = None) -> list[tuple]:
         """Execute query and fetch all results.
@@ -184,11 +192,18 @@ class DatabaseConnection:
         Examples:
             >>> users = db.fetch_all("SELECT * FROM users WHERE age > %s", (18,))
         """
-        with self.cursor(commit=False) as cur:
-            cur.execute(sql, params)
-            results = cur.fetchall()
-            logger.debug(f"Fetched {len(results)} results from: {sql[:100]}...")
-            return results
+        conn = self.get_connection()
+        # Set autocommit for read-only queries to avoid transaction issues
+        old_autocommit = conn.autocommit
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                results = cur.fetchall()
+                logger.debug(f"Fetched {len(results)} results from: {sql[:100]}...")
+                return results
+        finally:
+            conn.autocommit = old_autocommit
 
     def fetch_value(self, sql: str, params: tuple | None = None, default: Any = None) -> Any:
         """Execute query and fetch a single value.

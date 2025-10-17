@@ -7,12 +7,14 @@ from PostgreSQL EXPLAIN output and processes them for optimization.
 import json
 import random
 import re
+from pathlib import Path
 from typing import Any
 
 from config.settings import Settings
 
-from ..utils.legacy import get_red_queries, natural_sort_key
+from ..utils.legacy import get_red_queries, get_all_job_queries, natural_sort_key
 from .query_manager import QueryManager
+from .models import JoinCondition
 
 
 class QueryParser:
@@ -82,6 +84,176 @@ class QueryParser:
         """
         return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", s)]
 
+    def extract_join_conditions(self, node):
+        """Extract JOIN conditions from Hash/Merge Cond and Index Cond in descendant nodes."""
+        condition_texts = []
+        
+        # Extract from current node
+        if "Hash Cond" in node:
+            condition_texts.append(("Hash Cond", node["Hash Cond"], None))
+        if "Merge Cond" in node:
+            condition_texts.append(("Merge Cond", node["Merge Cond"], None))
+        
+        # Nested Loop: Extract Index Cond from both Outer and Inner sides
+        if node.get("Node Type") == "Nested Loop":
+            if "Plans" in node and len(node["Plans"]) >= 2:
+                # Extract from Outer side (Plans[0])
+                outer_plan = node["Plans"][0]
+                outer_conds = self._extract_index_cond_recursive(outer_plan)
+                for cond_text, table_alias in outer_conds:
+                    condition_texts.append(("Index Cond", cond_text, table_alias))
+                
+                # Extract from Inner side (Plans[1])
+                inner_plan = node["Plans"][1]
+                inner_conds = self._extract_index_cond_from_inner(inner_plan)
+                for cond_text, table_alias in inner_conds:
+                    condition_texts.append(("Index Cond", cond_text, table_alias))
+            
+            # Also check for Join Filter (explicit join condition)
+            if "Join Filter" in node:
+                condition_texts.append(("Join Filter", node["Join Filter"], None))
+        
+        # Parse all condition texts into JoinCondition objects
+        join_conditions = []
+        for condition_type, condition_text, table_alias in condition_texts:
+            parsed = self.parse_join_condition(condition_text, condition_type, table_alias)
+            join_conditions.extend(parsed)
+        
+        return join_conditions
+    
+    def _extract_index_cond_from_inner(self, inner_plan):
+        """Extract Index Cond from Nested Loop's inner side.
+        
+        Handles cases where inner side is:
+        - Direct Index Scan: Use its Index Cond
+        - Memoize/Materialize: Search inside for Index Scan
+        
+        Args:
+            inner_plan: Inner side plan (typically Plans[1] of Nested Loop)
+            
+        Returns:
+            List of tuples: (condition_text, table_alias)
+        """
+        conditions = []
+        
+        # Case 1: Inner side is directly an Index Scan
+        if "Index Cond" in inner_plan:
+            table_alias = inner_plan.get("Alias", "")
+            conditions.append((inner_plan["Index Cond"], table_alias))
+            return conditions
+        
+        # Case 2: Inner side is Memoize/Materialize/similar intermediate node
+        node_type = inner_plan.get("Node Type", "")
+        if node_type in ["Memoize", "Materialize", "CTE Scan", "Subquery Scan"]:
+            # Look one level deeper
+            if "Plans" in inner_plan and len(inner_plan["Plans"]) > 0:
+                child = inner_plan["Plans"][0]
+                if "Index Cond" in child:
+                    table_alias = child.get("Alias", "")
+                    conditions.append((child["Index Cond"], table_alias))
+        
+        return conditions
+
+    def _extract_index_cond_recursive(self, node):
+        """Recursively extract Index Cond from current node and all descendant nodes.
+        
+        Returns:
+            List of tuples: (condition_text, table_alias)
+        """
+        conditions = []
+        
+        # Extract from current node
+        if "Index Cond" in node:
+            # Index Scanノードの場合、テーブルエイリアスも取得
+            table_alias = node.get("Alias", "")
+            conditions.append((node["Index Cond"], table_alias))
+        
+        # Recursively process child nodes
+        if "Plans" in node:
+            for child in node["Plans"]:
+                child_conds = self._extract_index_cond_recursive(child)
+                conditions.extend(child_conds)
+        
+        return conditions
+
+    def parse_join_condition(self, condition_text: str, condition_type: str, table_alias: str = None) -> list[JoinCondition]:
+        """Parse JOIN condition text into structured format (Chapter 2).
+
+        Extracts table.column comparisons from condition strings.
+        
+        Examples:
+            "(t.id = ci.movie_id)" -> JoinCondition(...)
+            "(mc.company_type_id = ct.id)" -> JoinCondition(...)
+            "(movie_id = mc.movie_id)" -> JoinCondition(...) # Index Cond format
+
+        Args:
+            condition_text: Raw condition text from EXPLAIN
+            condition_type: Type of condition (Hash Cond, Merge Cond, etc.)
+            table_alias: Table alias for Index Cond (when left table is missing)
+
+        Returns:
+            List of JoinCondition objects
+        """
+        conditions = []
+        
+        # Pattern 1: (alias1.column1 operator alias2.column2) - standard format
+        pattern1 = r'\((\w+)\.(\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
+        matches1 = re.finditer(pattern1, condition_text)
+        
+        for match in matches1:
+            left_table = match.group(1)
+            left_column = match.group(2)
+            operator = match.group(3)
+            right_table = match.group(4)
+            right_column = match.group(5)
+            
+            # Normalize <> to !=
+            if operator == "<>":
+                operator = "!="
+            
+            conditions.append(JoinCondition(
+                left_table=left_table,
+                left_column=left_column,
+                operator=operator,
+                right_table=right_table,
+                right_column=right_column,
+                condition_type=condition_type,
+                original_text=match.group(0)
+            ))
+        
+        # Pattern 2: (column operator alias.column) - Index Cond format without left table
+        # This pattern is used when Index Scan references the indexed table's column
+        if not conditions:
+            pattern2 = r'\((\w+)\s*(=|<|>|<=|>=|!=|<>)\s*(\w+)\.(\w+)\)'
+            matches2 = re.finditer(pattern2, condition_text)
+            
+            for match in matches2:
+                left_column = match.group(1)
+                operator = match.group(2)
+                right_table = match.group(3)
+                right_column = match.group(4)
+                
+                # Normalize <> to !=
+                if operator == "<>":
+                    operator = "!="
+                
+                # Use the provided table_alias for left table (from Index Scan node)
+                left_table = table_alias if table_alias else ""
+                
+                conditions.append(JoinCondition(
+                    left_table=left_table,
+                    left_column=left_column,
+                    operator=operator,
+                    right_table=right_table,
+                    right_column=right_column,
+                    condition_type=condition_type,
+                    original_text=match.group(0)
+                ))
+        
+        return conditions
+        
+        return conditions
+
     def convert_node(
         self,
         node: dict[str, Any],
@@ -136,17 +308,37 @@ class QueryParser:
                 children.append(converted_child)
                 new_order = order_1
 
+            # Extract JOIN conditions (Chapter 2 enhancement)
+            join_conditions = self.extract_join_conditions(node)
+            
+            # Get JOIN type (default to Inner)
+            join_type = node.get("Join Type", "Inner")
+
             # Determine filter condition key based on operator type
             if node["Node Type"] == "Hash Join":
                 filter_name = "Hash Cond"
             elif node["Node Type"] == "Merge Join":
                 filter_name = "Merge Cond"
             elif node["Node Type"] == "Nested Loop":
-                filter_name = "Join Filter"
+                if "Join Filter" in node:
+                    filter_name = "Join Filter"
+                else:
+                    # Check if any child has Index Cond
+                    filter_name = "Filter"  # Default
+                    for child in node["Plans"]:
+                        if "Index Cond" in child:
+                            filter_name = "Index Cond"
+                            break
             else:
                 filter_name = "Filter"
 
             filter_condition = node.get(filter_name, "")
+            
+            # Collect additional filters (not JOIN conditions)
+            additional_filters = []
+            for filter_key in ["Filter", "Join Filter"]:
+                if filter_key in node and filter_key != filter_name:
+                    additional_filters.append(node[filter_key])
 
             # Cost calculation logic
             # Prevent MVs with no filter condition
@@ -169,13 +361,18 @@ class QueryParser:
             if width == 0:
                 width = 1
 
+            # Enhanced subquery structure (Chapter 2)
             subquery_list.append(
                 {
                     "type": "non_leaf",
                     "operator": node["Node Type"],
+                    "join_type": join_type,  # New field
+                    "join_conditions": join_conditions,  # New field
+                    "additional_filters": additional_filters,  # New field
                     "filter": filter_condition,
                     "cost": cost * frequency,
                     "size": node.get("Plan Rows", 0) * width,
+                    "rows": node.get("Plan Rows", 0),  # New field
                     "width": width,
                     "children": children,
                 }
@@ -185,13 +382,10 @@ class QueryParser:
 
         else:  # Leaf node
             # Determine filter condition
-            if "Index Cond" in node and "Filter" in node:
-                filter_condition = f"{node['Index Cond']} AND {node['Filter']}"
-                cost = node["Total Cost"]
-            elif "Index Cond" in node:
-                filter_condition = node["Index Cond"]
-                cost = node["Total Cost"]
-            elif "Filter" in node:
+            # Note: Index Condは結合条件なのでリーフMV生成時は使わない
+            # 親ノードのextract_join_conditions()で抽出される
+            if "Filter" in node:
+                # Filterのみを使用（Index Condは除外）
                 filter_condition = node["Filter"]
                 cost = node["Total Cost"]
             else:
@@ -428,9 +622,18 @@ class QueryParser:
         """
         workloads_dir = self.settings.benchmark.workloads_dir
         get_ceb = self.settings.benchmark.type == "ceb"
+        query_selection_mode = self.settings.benchmark.query_selection_mode
 
-        # Get query files with frequencies
-        files, file_freq = get_red_queries(path, workloads_dir, get_ceb)
+        # Get query files with frequencies based on selection mode
+        if query_selection_mode == "all_job":
+            # Use all JOB queries from the directory
+            print(f"Query selection mode: all_job (using all JOB queries)")
+            files, file_freq = get_all_job_queries(path)
+        else:
+            # Use RedBench workload-based selection (default)
+            print(f"Query selection mode: redbench (using workload-based queries)")
+            files, file_freq = get_red_queries(path, workloads_dir, get_ceb)
+        
         files = sorted(files, key=natural_sort_key)
 
         q_num_len = len(files)
@@ -440,6 +643,7 @@ class QueryParser:
             query = []
             deeplist = []
             orderlist = []
+            result = None  # Initialize result to handle empty query case
 
             # Process each query file
             for i in range(q_num_len):
@@ -464,7 +668,10 @@ class QueryParser:
                         child_to_parent[item] = []
                     child_to_parent[item].append(value)
 
-            print(f"Root node ID: {result}")
+            if result is not None:
+                print(f"Root node ID: {result}")
+            else:
+                print("Warning: No queries were processed")
 
             # Build node lists and mappings
             node_list = list(self.qm.leaf_nodes_map.values()) + list(

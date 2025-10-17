@@ -43,6 +43,47 @@ class BenchmarkConfig:
     workloads_dir: str = "Output/RED_WORKLOADS"
     queries_dir: str = "dataset/RED_JSON"
     sql_dir: str = "dataset/RED_SQL"
+    query_selection_mode: str = "redbench"  # 'redbench' or 'all_job'
+
+
+@dataclass
+class ExecutionPhasesConfig:
+    """Execution phases configuration."""
+    
+    query_parsing: bool = True
+    optimization: bool = True
+    sql_generation: bool = True
+    mv_creation: bool = True
+    query_rewriting: bool = True
+    benchmark: bool = True
+    
+    # Optional: start_from and end_at for range-based control
+    start_from: Optional[str] = None  # Phase name to start from
+    end_at: Optional[str] = None      # Phase name to end at
+    
+    def should_run_phase(self, phase_name: str) -> bool:
+        """Check if a phase should be run based on configuration.
+        
+        Args:
+            phase_name: Name of the phase ('query_parsing', 'optimization', 'sql_generation', etc.)
+            
+        Returns:
+            True if the phase should be executed.
+        """
+        # If start_from/end_at are specified, use range-based logic
+        if self.start_from or self.end_at:
+            phases_order = ['query_parsing', 'optimization', 'sql_generation', 'mv_creation', 'query_rewriting', 'benchmark']
+            try:
+                phase_idx = phases_order.index(phase_name)
+                start_idx = phases_order.index(self.start_from) if self.start_from else 0
+                end_idx = phases_order.index(self.end_at) if self.end_at else len(phases_order) - 1
+                return start_idx <= phase_idx <= end_idx
+            except ValueError:
+                # Invalid phase name, fall back to individual flags
+                pass
+        
+        # Use individual phase flags
+        return getattr(self, phase_name, True)
 
 
 @dataclass
@@ -83,13 +124,30 @@ class Settings:
         database: Optional[DatabaseConfig] = None,
         optimization: Optional[OptimizationConfig] = None,
         benchmark: Optional[BenchmarkConfig] = None,
+        execution: Optional[ExecutionPhasesConfig] = None,
         query: Optional[QueryConfig] = None,
         paths: Optional[PathsConfig] = None,
         logging: Optional[LoggingConfig] = None,
+        auto_load: bool = True,
     ):
+        if auto_load and all(x is None for x in [database, optimization, benchmark, execution, query, paths, logging]):
+            # Auto-load from YAML if no configs provided
+            config_path = os.environ.get('CONFIG_PATH', 'config/default.yaml')
+            if os.path.exists(config_path):
+                loaded = Settings.from_yaml(config_path)
+                self.database = loaded.database
+                self.optimization = loaded.optimization
+                self.benchmark = loaded.benchmark
+                self.execution = loaded.execution
+                self.query = loaded.query
+                self.paths = loaded.paths
+                self.logging = loaded.logging
+                return
+        
         self.database = database or DatabaseConfig()
         self.optimization = optimization or OptimizationConfig()
         self.benchmark = benchmark or BenchmarkConfig()
+        self.execution = execution or ExecutionPhasesConfig()
         self.query = query or QueryConfig()
         self.paths = paths or PathsConfig()
         self.logging = logging or LoggingConfig()
@@ -123,6 +181,24 @@ class Settings:
         database = DatabaseConfig(**config.get('database', {}))
         optimization = OptimizationConfig(**config.get('optimization', {}))
         benchmark = BenchmarkConfig(**config.get('benchmark', {}))
+        
+        # Handle execution phases config
+        execution_config = config.get('execution', {})
+        # Handle nested 'phases' key if present
+        if 'phases' in execution_config:
+            phases = execution_config['phases']
+            execution_config = {
+                'query_parsing': phases.get('query_parsing', True),
+                'optimization': phases.get('optimization', True),
+                'sql_generation': phases.get('sql_generation', True),
+                'mv_creation': phases.get('mv_creation', True),
+                'query_rewriting': phases.get('query_rewriting', True),
+                'benchmark': phases.get('benchmark', True),
+                'start_from': execution_config.get('start_from'),
+                'end_at': execution_config.get('end_at'),
+            }
+        execution = ExecutionPhasesConfig(**execution_config)
+        
         query = QueryConfig(**config.get('query', {}))
         paths = PathsConfig(**config.get('paths', {}))
         logging_cfg = LoggingConfig(**config.get('logging', {}))
@@ -131,9 +207,11 @@ class Settings:
             database=database,
             optimization=optimization,
             benchmark=benchmark,
+            execution=execution,
             query=query,
             paths=paths,
             logging=logging_cfg,
+            auto_load=False,  # Don't auto-load again to avoid recursion
         )
     
     @staticmethod
@@ -185,6 +263,7 @@ class Settings:
             'database': self.database.__dict__,
             'optimization': self.optimization.__dict__,
             'benchmark': self.benchmark.__dict__,
+            'execution': self.execution.__dict__,
             'query': self.query.__dict__,
             'paths': self.paths.__dict__,
             'logging': self.logging.__dict__,
