@@ -6,7 +6,7 @@ from src.core.query_parser import QueryParser
 from src.core.query_manager import QueryManager
 
 # Load the problematic query
-with open("Output/parsed/8b.json") as f:
+with open("Output/parsed/17c.json") as f:
     data = json.load(f)
 
 # Create parser and manager

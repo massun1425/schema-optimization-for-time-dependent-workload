@@ -85,7 +85,7 @@ def parse_args():
         "--algorithms",
         nargs="+",
         choices=["none", "normal", "bigsubs", "utility", "utility_capacity", "frequency"],
-        default=["normal"],
+        default=["none", "normal", "bigsubs", "utility", "utility_capacity", "frequency"],
         help="Optimization algorithms to run",
     )
 
@@ -236,10 +236,14 @@ def run_ilp_optimization(
     phase_times = {}
 
     if ilp_type == "none":
-        logger.info("Running with 'none' algorithm (no optimization)")
-        elapsed = time.time() - start_time
-        logger.info(f"\n✓ Completed {ilp_type} in {elapsed:.2f} seconds")
-        return
+        logger.info("Running with 'none' algorithm (no materialized views - baseline benchmark)")
+        # For 'none' algorithm, we still need to run query parsing and benchmark phases
+        # but skip optimization, SQL generation, MV creation, and query rewriting
+        settings.execution.optimization = False
+        settings.execution.sql_generation = False
+        settings.execution.mv_creation = False
+        settings.execution.query_rewriting = True  # Run to copy original queries
+        settings.execution.benchmark = True
 
     try:
         from src.rewrite.query_rewriter import QueryRewriter
@@ -269,6 +273,27 @@ def run_ilp_optimization(
                 import pickle
                 with open(pickle_path, 'wb') as f:
                     pickle.dump(qp, f)
+            
+            # Export annotated query files with node_id (always run in query_parsing phase)
+            logger.info("Exporting annotated query files with node_id...")
+            from src.core.parse_exporter import ParseExporter
+            from src.utils.legacy import get_red_queries, get_all_job_queries
+            
+            # Get query files list (same logic as in query_parse)
+            workloads_dir = settings.benchmark.workloads_dir
+            get_ceb = settings.benchmark.type == "ceb"
+            query_selection_mode = settings.benchmark.query_selection_mode
+            query_path = settings.benchmark.queries_dir
+            
+            if query_selection_mode == "all_job":
+                files, _ = get_all_job_queries(query_path)
+            else:
+                files, _ = get_red_queries(query_path, workloads_dir, get_ceb)
+            
+            parsed_output_dir = Path(output_dir) / "parsed"
+            exporter = ParseExporter(qp.qm)
+            exporter.annotate_query_files(files, parsed_output_dir)
+            logger.info(f"✓ Annotated {len(files)} query files saved to {parsed_output_dir}")
         else:
             logger.info("[1/6] Skipping query parsing (loading from cache)")
             pickle_path = Path(output_dir) / "qp_class.pkl"
@@ -342,20 +367,31 @@ def run_ilp_optimization(
             optimization_dir = algorithm_dir / "optimization"
             result_json_path = optimization_dir / "result.json"
             
-            if not result_json_path.exists():
+            if ilp_type == "none":
+                # For 'none' algorithm, create empty result (no MVs selected)
+                from src.core.models import OptimizationResult
+                result = OptimizationResult(
+                    algorithm="none",
+                    selected_views=[],
+                    total_utility=0.0,
+                    total_storage=0,
+                    execution_time=0.0
+                )
+                logger.info("Using empty optimization result (no materialized views)")
+            elif not result_json_path.exists():
                 logger.error(f"Optimization result not found: {result_json_path}")
                 logger.error("Please run Phase 2 (optimization) first, or check the algorithm name.")
                 return
-            
-            logger.info(f"Loading optimization result from {result_json_path}")
-            
-            # Load OptimizationResult using the new load_from_json method
-            from src.core.models import OptimizationResult
-            
-            result = OptimizationResult.load_from_json(str(result_json_path))
-            logger.info(f"Loaded {len(result.selected_views)} materialized views")
-            logger.info(f"Total utility: {result.total_utility:,.2f}")
-            logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
+            else:
+                logger.info(f"Loading optimization result from {result_json_path}")
+                
+                # Load OptimizationResult using the new load_from_json method
+                from src.core.models import OptimizationResult
+                
+                result = OptimizationResult.load_from_json(str(result_json_path))
+                logger.info(f"Loaded {len(result.selected_views)} materialized views")
+                logger.info(f"Total utility: {result.total_utility:,.2f}")
+                logger.info(f"Total storage: {result.total_storage / (1024*1024):.2f} MB")
 
         
         # [3/6] MV作成SQL生成
@@ -590,8 +626,15 @@ def run_ilp_optimization(
                     WHERE schemaname = 'public'
                 """)
                 
+                mv_list = cursor.fetchall()
+                total_mvs = len(mv_list)
+                logger.info(f"Found {total_mvs} materialized views to analyze...")
+                
                 mv_count = 0
-                for schema, mv_name in cursor.fetchall():
+                for idx, (schema, mv_name) in enumerate(mv_list, 1):
+                    # 進捗を定期的に表示（10%ごと、または10件ごと）
+                    if total_mvs > 20 and idx % max(1, total_mvs // 10) == 0:
+                        logger.info(f"  Analyzing MVs... {idx}/{total_mvs} ({idx*100//total_mvs}%)")
                     cursor.execute(f"ANALYZE {schema}.{mv_name}")
                     mv_count += 1
                 

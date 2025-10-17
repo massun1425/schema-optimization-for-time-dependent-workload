@@ -109,8 +109,86 @@ class UtilityCapacityOptimizer(BaseILPOptimizer):
 
         return cand_i, cand_j
 
+    def neighbor_search(self, z_j: list[int]) -> list[int]:
+        """Perform neighborhood search to expand candidates.
+
+        Adds parent nodes (upward) and child nodes (downward) of currently
+        selected MVs to the candidate set.
+
+        Args:
+            z_j: Current MV selection
+
+        Returns:
+            Updated MV selection with neighbors added
+        """
+        new_list_j = []
+
+        for i in range(len(z_j)):
+            if z_j[i] == 1:
+                node_id = self.node_list[i]
+
+                # Upward search: add parent nodes
+                uplist = []
+                for query_id, position in self.qm.subquery_positions[node_id]:
+                    parent_pos = self._find_parent(query_id, position)
+                    if parent_pos is not None:
+                        uplist.append(parent_pos)
+
+                for query_id, position in uplist:
+                    if (query_id, position) in self.position_node_id:
+                        parent_node_id = self.position_node_id[(query_id, position)]
+                        j = self.node_list.index(parent_node_id)
+                        if j not in new_list_j:
+                            new_list_j.append(j)
+
+                # Downward search: add child nodes (for non-leaf nodes)
+                if node_id.startswith("non_leaf_"):
+                    if node_id in self.qm.non_leaf_nodes_map_r:
+                        for child_node_id in self.qm.non_leaf_nodes_map_r[node_id]:
+                            j = self.node_list.index(child_node_id)
+                            if j not in new_list_j:
+                                new_list_j.append(j)
+
+        # Add neighbors to current selection
+        for j in new_list_j:
+            z_j[j] = 1
+
+        return z_j
+
+    def _find_parent(self, query_id: int, position: int) -> tuple[int, int] | None:
+        """Find parent position in query tree.
+
+        Args:
+            query_id: Query index
+            position: Current position in query
+
+        Returns:
+            (query_id, parent_position) or None if at root
+        """
+        if not self.deeplist or query_id >= len(self.deeplist):
+            return None
+
+        depth_list = self.deeplist[query_id]
+        if position >= len(depth_list) or depth_list[position] == 0:
+            # At root
+            return None
+
+        # Search backward for parent (depth - 1)
+        target_depth = depth_list[position] - 1
+        for i in range(1, position + 1):
+            if position - i >= 0 and depth_list[position - i] == target_depth:
+                return (query_id, position - i)
+
+        return None
+
     def optimize(self, **kwargs) -> OptimizationResult:
-        """Execute the utility-capacity ILP optimization.
+        """Execute the utility-capacity ILP optimization with neighborhood search.
+
+        This implements the original algorithm with iterative improvement:
+        1. Initialize with greedy heuristic
+        2. Perform neighborhood search
+        3. Solve ILP
+        4. Repeat until no improvement
 
         Returns:
             OptimizationResult containing selected MVs and metrics
@@ -118,19 +196,52 @@ class UtilityCapacityOptimizer(BaseILPOptimizer):
         start_time = time.time()
 
         # Initialize with greedy heuristic
-        cand_i, cand_j = self.initialize_candidates()
+        z_j = self.initialize_greedy()
+        U_pre = 0
+        iter_count = 0
+        max_iterations = 100  # Safety limit to prevent infinite loops
+        
+        # Initialize variables to store best solution
+        y_ij = None
+        U_cur = 0
 
-        # Build ILP model
-        y, z = self.build_ilp_model(cand_i, cand_j)
+        # Iterative improvement loop
+        while iter_count < max_iterations:
+            # Expand candidates with neighborhood search
+            z_j = self.neighbor_search(z_j)
 
-        # Add constraints
-        self.add_common_constraints(y, z, cand_i, cand_j)
+            # Build M: beneficial subqueries for each query
+            M = []
+            for i in range(len(self.q_s_list)):
+                M_i = []
+                M_i_ = []
+                for j in range(len(z_j)):
+                    if self.u_ij[i][j] > 0:
+                        M_i.append(j)
+                    if z_j[j] > 0:
+                        M_i_.append(j)
+                k = list(set(M_i) & set(M_i_))
+                M.append(k)
 
-        # Set objective
-        self.set_objective(y, z, cand_i, cand_j)
+            # Identify candidate queries and subqueries
+            cand_i = [i for i in range(len(M)) if len(M[i]) != 0]
+            cand_j = [j for j in range(len(z_j)) if z_j[j] == 1]
 
-        # Solve
-        y_ij, z_j, obj_val = self.solve_ilp(y, z)
+            # Build and solve ILP model with candidates
+            y, z = self.build_ilp_model_with_candidates(cand_i, cand_j)
+            self.add_constraints_with_candidates(y, z, cand_i, cand_j)
+            self.set_objective_with_candidates(y, z, cand_i, cand_j)
+            y_ij, z_j_temp, U_cur = self.solve_ilp_with_candidates(y, z, cand_i, cand_j)
+
+            # Check convergence
+            if U_pre >= U_cur:
+                # Use previous solution
+                break
+
+            # Update for next iteration
+            U_pre = U_cur
+            z_j = z_j_temp
+            iter_count += 1
 
         execution_time = time.time() - start_time
 
@@ -143,12 +254,13 @@ class UtilityCapacityOptimizer(BaseILPOptimizer):
         result = self.create_result(
             y_ij=y_ij,
             z_j=z_j,
-            obj_val=obj_val,
+            obj_val=U_cur,
             execution_time=execution_time,
             storage_used=B_cur,
             materialized_count=len(mat_list),
             materialized_nodes=mat_node_names,
             initialization="utility_capacity_greedy",
+            iterations=iter_count,
         )
 
         return result
