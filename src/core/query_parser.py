@@ -895,13 +895,6 @@ class QueryParser:
             self.X = X
             self.U_max = U_max
             self.query = query
-            
-            # Export annotated query files with node_id
-            from .parse_exporter import ParseExporter
-            parsed_output_dir = Path("Output/parsed")
-            exporter = ParseExporter(self.qm)
-            exporter.annotate_query_files(files, parsed_output_dir)
-            print(f"Annotated query files saved to {parsed_output_dir}")
 
         except json.JSONDecodeError as e:
             print(f"Error reading {files[i] if i < len(files) else 'unknown file'}: {e}")

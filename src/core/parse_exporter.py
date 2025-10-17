@@ -5,6 +5,7 @@ with the node_id assigned during parsing.
 """
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,6 @@ class ParseExporter:
             qm: QueryManager instance containing parsed node information
         """
         self.qm = qm
-        # Build a mapping from query position to node_id
-        self.position_to_node: dict[tuple[int, int], str] = {}
-        for node_id, positions in self.qm.subquery_positions.items():
-            for pos in positions:
-                query_id, position = pos
-                self.position_to_node[(query_id, position)] = node_id
     
     def annotate_query_files(
         self,
@@ -44,17 +39,25 @@ class ParseExporter:
             output_dir: Directory where annotated files will be saved
         """
         output_path = Path(output_dir)
+
+        # If there are no query files to process, do not modify the output
+        # directory. This prevents accidental deletion of previously
+        # annotated plans when the workload selection returns an empty list.
+        if not query_files:
+            print("No query files provided to annotate. Skipping export.")
+            return
+
+        # Refresh the output directory so previously annotated plans
+        # from earlier runs do not linger with outdated node_id values.
+        if output_path.exists():
+            shutil.rmtree(output_path)
+
         output_path.mkdir(parents=True, exist_ok=True)
-        
-        position_counter = [0]  # Mutable counter for DFS traversal
         
         for query_idx, query_file in enumerate(query_files):
             try:
                 with open(query_file, 'r', encoding='utf-8') as f:
                     query_data = json.load(f)
-                
-                # Reset position counter for each query
-                position_counter[0] = 0
                 
                 # Handle both array format [{...}] and single object format {...}
                 if isinstance(query_data, list):
@@ -65,8 +68,7 @@ class ParseExporter:
                             item_copy = item.copy()
                             item_copy['Plan'] = self._annotate_plan_node(
                                 item['Plan'],
-                                query_idx,
-                                position_counter
+                                query_idx
                             )
                             annotated_list.append(item_copy)
                         else:
@@ -78,15 +80,13 @@ class ParseExporter:
                         annotated_data = query_data.copy()
                         annotated_data['Plan'] = self._annotate_plan_node(
                             query_data['Plan'],
-                            query_idx,
-                            position_counter
+                            query_idx
                         )
                     else:
                         # Direct plan node
                         annotated_data = self._annotate_plan_node(
                             query_data,
-                            query_idx,
-                            position_counter
+                            query_idx
                         )
                 
                 # Save annotated plan
@@ -103,15 +103,17 @@ class ParseExporter:
     def _annotate_plan_node(
         self,
         node: Any,
-        query_idx: int,
-        position_counter: list[int]
+        query_idx: int
     ) -> Any:
-        """Recursively annotate a plan node with node_id using DFS.
+        """Recursively annotate a plan node with node_id by reconstructing the node structure.
+        
+        This method creates a temporary node structure identical to what query_parser.py creates,
+        then calls QueryManager to get the actual node_id. This ensures consistency between
+        the JSON output and the internal node_id assignment.
         
         Args:
             node: Plan node (dict or other type)
             query_idx: Query index
-            position_counter: Mutable counter for position tracking
             
         Returns:
             Annotated node
@@ -119,13 +121,8 @@ class ParseExporter:
         if not isinstance(node, dict):
             return node
         
-        # Get current position and increment counter
-        current_position = position_counter[0]
-        position_counter[0] += 1
-        
-        # Check if this position has a node_id
-        key = (query_idx, current_position)
-        node_id = self.position_to_node.get(key)
+        # Get node_id by reconstructing the node structure and querying QueryManager
+        node_id = self._get_node_id_from_plan(node, query_idx)
         
         # Create ordered dict with node_id first (if exists), then other fields, Plans last
         from collections import OrderedDict
@@ -140,11 +137,70 @@ class ParseExporter:
             if k != 'Plans':
                 annotated[k] = v
         
-        # Recursively process Plans (child nodes) in DFS order and add them last
+        # Recursively process Plans (child nodes) and add them last
         if 'Plans' in node and isinstance(node['Plans'], list):
             annotated['Plans'] = [
-                self._annotate_plan_node(child, query_idx, position_counter)
+                self._annotate_plan_node(child, query_idx)
                 for child in node['Plans']
             ]
         
         return annotated
+    
+    def _get_node_id_from_plan(self, node: dict[str, Any], query_idx: int) -> str | None:
+        """Get node_id by matching the node structure with QueryManager's records.
+        
+        Args:
+            node: PostgreSQL EXPLAIN plan node
+            query_idx: Query index
+            
+        Returns:
+            Node ID if found, None otherwise
+        """
+        # Check if this is a leaf node (has Relation Name but no child Plans)
+        # Note: Some nodes like Bitmap Heap Scan have both Relation Name and Plans
+        has_relation = 'Relation Name' in node
+        has_plans = 'Plans' in node and len(node['Plans']) > 0
+        node_type = node.get('Node Type', '')
+        
+        # Leaf nodes: have Relation Name and either no Plans or are Bitmap Heap Scan
+        if has_relation and (not has_plans or node_type == 'Bitmap Heap Scan'):
+            # This is a leaf node
+            operator = node_type
+            table = node.get('Relation Name', '')
+            alias = node.get('Alias', '')
+            
+            # Determine filter condition (same logic as in query_parser.py)
+            # Note: Index Cond is NOT used for leaf node identification (it's a join condition)
+            if 'Filter' in node:
+                filter_condition = node['Filter']
+            else:
+                filter_condition = ""
+            
+            # Look up in leaf_nodes_map
+            key = (operator, table, alias, filter_condition)
+            node_id = self.qm.leaf_nodes_map.get(key)
+            
+            return node_id
+        
+        # This is a non-leaf node
+        elif has_plans:
+            # Recursively get child node IDs
+            child_node_ids = []
+            for child in node['Plans']:
+                child_id = self._get_node_id_from_plan(child, query_idx)
+                if child_id:
+                    child_node_ids.append(child_id)
+            
+            if not child_node_ids:
+                return None
+            
+            # Look up in non_leaf_nodes_map using sorted children
+            key = tuple(sorted(child_node_ids))
+            node_id = self.qm.non_leaf_nodes_map.get(key)
+            
+            return node_id
+        
+        # Special case: Bitmap Index Scan nodes don't have Relation Name
+        # but are still leaf nodes - they should be handled by their parent Bitmap Heap Scan
+        # So we return None here to skip annotation
+        return None
