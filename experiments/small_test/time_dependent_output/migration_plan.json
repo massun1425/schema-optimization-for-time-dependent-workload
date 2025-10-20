@@ -1,0 +1,19 @@
+{
+  "morning -> evening": {
+    "common_mvs": [
+      "non_leaf_12",
+      "leaf_9"
+    ],
+    "generate_leaf_nodes": [
+      "leaf_4"
+    ],
+    "generate_non_leaf_nodes_0": [
+      "non_leaf_5"
+    ],
+    "generate_non_leaf_nodes_with_mv": {},
+    "migration_plans_sql": {
+      "leaf_4": "CREATE MATERIALIZED VIEW mv_leaf_4_evening AS\nSELECT o.order_id, o.user_id, o.product_id, o.quantity, o.order_date, o.total_amount\nFROM orders AS o\nWHERE (order_date >= (CURRENT_DATE - '90 days'::interval))\n;",
+      "non_leaf_5": "CREATE MATERIALIZED VIEW mv_non_leaf_5_evening AS\nSELECT o.order_id,\n    o.user_id,\n    o.product_id,\n    o.quantity,\n    o.order_date,\n    o.total_amount,\n    p.product_id AS p_product_id,\n    p.name,\n    p.category,\n    p.price,\n    p.stock\nFROM orders AS o , products AS p\nWHERE o.product_id = p.product_id AND (o.order_date >= (CURRENT_DATE - '60 days'::interval));"
+    }
+  }
+}

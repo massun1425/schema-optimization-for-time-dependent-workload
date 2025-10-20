@@ -338,6 +338,11 @@ class SmallExperiment:
             "num_leaf_nodes": len(self.qp.qm.leaf_nodes_map),
             "num_non_leaf_nodes": len(self.qp.qm.non_leaf_nodes_map),
             "total_nodes": self.qp.s_num,
+            # 追加情報
+            "node_list": self.qp.node_list,
+            "u_ij_shape": [len(self.qp.u_ij), len(self.qp.u_ij[0]) if self.qp.u_ij else 0],  # 行列サイズ
+            "b_j_length": len(self.qp.b_j),
+            "m_cost_length": len(self.qp.m_cost),
         }
         summary_path = self.parsed_dir / "parse_summary.json"
         with open(summary_path, 'w', encoding='utf-8') as f:
