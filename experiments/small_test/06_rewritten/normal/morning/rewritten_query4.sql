@@ -1,17 +1,14 @@
--- No MVs selected for this query
--- Using original tables
+-- ================================================
+-- Query rewritten using Advanced Rewrite Engine
+-- ================================================
+-- Selected MVs: 1
+-- Match Type: partial
+-- MV Used: mv_leaf_7
+-- Matched Tables: o
+-- Coverage Score: 20.0%
+-- ================================================
 
--- クエリ4: 時間帯別の注文分析
--- (日付フィルタと集計のバリエーション)
-
-SELECT 
-    EXTRACT(MONTH FROM o.order_date) as order_month,
-    COUNT(o.order_id) as order_count,
-    SUM(o.total_amount) as total_sales,
-    AVG(o.total_amount) as avg_order_value,
-    MAX(o.total_amount) as max_order_value
-FROM orders o
-WHERE o.order_date >= CURRENT_DATE - INTERVAL '120 days'
-  AND o.total_amount >= 100
-GROUP BY order_month
-ORDER BY order_month DESC;
+SELECT EXTRACT(MONTH
+FROM leaf_7 COUNT COUNT SUM SUM AVG AVG MAX MAX
+WHERE leaf_7.order_date >= CURRENT_DATE - INTERVAL '120 days'
+  AND leaf_7.total_amount >= 100;

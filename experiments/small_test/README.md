@@ -42,10 +42,12 @@ experiments/small_test/
 ├── logs/                             # ログファイル
 ├── config.yaml                       # 実験設定
 ├── run_experiment.py                 # メイン実行スクリプト
+├── mv_creator.py                     # MV作成モジュール（新規追加）
 ├── query_rewriter.py                 # クエリ書き換えクラス
 ├── mv_generator_wrapper.py           # MV生成ラッパー
 ├── frequency_weighted_parser.py      # 頻度重み付けパーサー
 ├── time_dependent_parser.py          # 時刻依存型パーサー
+├── migration_planner.py              # マイグレーションプランナー（開発中）
 ├── README.md                         # この手順書
 ├── INTEGRATED_USAGE.md               # 統合スクリプトの詳細な使い方
 └── FREQUENCY_WEIGHTING.md            # 頻度重み付けの説明
@@ -461,15 +463,21 @@ WHERE (price >= '300'::numeric);
 
 ### ステップ5: MV作成（時刻依存型）
 
-各タイムステップのMVをデータベースに作成します。
+**🔄 重要な変更: 単一タイムステップのみ実体化**
+
+時刻依存型モードでは、一度に**1つのタイムステップのMVのみ**をデータベースに作成します。
+これにより、時間帯に応じてMVを切り替え、ストレージを効率的に使用します。
+
+#### 5-1. morning のMVを作成
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
 ```
 
 **実行内容:**
-- 各タイムステップのSQLファイルをpsqlで実行
-- データベースに全タイムステップのMVを作成
+- 既存の全MVを削除（DROP MATERIALIZED VIEW IF EXISTS）
+- `05_mv_sql/normal/morning/create_mvs.sql` をpsqlで実行
+- データベースにmorning用のMVのみを作成
 
 **確認:**
 ```bash
@@ -482,16 +490,52 @@ psql -U postgres -d mv_small_test -c "\dm+"
  Schema |        Name         | Type    | Size  
 --------+---------------------+---------+-------
  public | mv_leaf_1_morning   | matview | 16 kB
- public | mv_leaf_4_evening   | matview | 16 kB
- public | mv_leaf_9_evening   | matview | 16 kB
  public | mv_leaf_9_morning   | matview | 16 kB
+ public | mv_non_leaf_12_morning | matview | 24 kB
 ```
 
-**⚠️ 既知の問題:**
-- **non_leafノードのMVは作成されません**
-- 原因: 最適化アルゴリズムが生成するSQL（`SELECT o.*, u.*, p.*`）で列名が重複
-- PostgreSQLでは複数テーブルの`*`で同じ列名があるとエラー
-- 影響: leafノードのMVのみが作成される（多くのケースでは十分な効果）
+#### 5-2. evening のMVに切り替え
+
+```bash
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id evening
+```
+
+**実行内容:**
+- **morning の全MVを削除**
+- `05_mv_sql/normal/evening/create_mvs.sql` をpsqlで実行
+- データベースにevening用のMVのみを作成
+
+**確認:**
+```bash
+psql -U postgres -d mv_small_test -c "\dm+"
+```
+
+**出力例:**
+```
+              List of relations
+ Schema |        Name         | Type    | Size  
+--------+---------------------+---------+-------
+ public | mv_leaf_4_evening   | matview | 16 kB
+ public | mv_leaf_9_evening   | matview | 16 kB
+ public | mv_non_leaf_5_evening | matview | 24 kB
+```
+
+**ポイント:**
+- ✅ **一度に1つのタイムステップのMVのみが存在**
+- ✅ 時間帯に応じて `--time-id` を変えて実行
+- ✅ 既存MVは自動削除されるため、手動削除は不要
+- ✅ ストレージを効率的に使用
+
+**利用可能なタイムステップを確認:**
+```bash
+# --time-id を指定せずに実行すると利用可能なタイムステップが表示される
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5
+```
+
+**⚠️ 注意事項:**
+- `--time-id` オプションは**必須**です
+- 無効なタイムステップIDを指定するとエラーになります
+- MV切り替え時は、対応するタイムステップのクエリ書き換え結果を使用してください
 
 ---
 
@@ -593,11 +637,24 @@ python experiments/small_test/run_experiment.py --mode time-dependent --phase 3 
 # ステップ4: MV生成SQL作成
 python experiments/small_test/run_experiment.py --mode time-dependent --phase 4
 
-# ステップ5: MV作成
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5
+# ステップ5: MV作成（タイムステップ指定必須）
+# morning のMVを作成
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
 
 # ステップ6: クエリ書き換え
 python experiments/small_test/run_experiment.py --mode time-dependent --phase 6
+```
+
+**時間帯切り替えの例:**
+```bash
+# 朝の時間帯: morning用MVを作成してクエリ実行
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
+psql -U postgres -d mv_small_test -f experiments/small_test/06_rewritten/normal/morning/rewritten_query1.sql
+
+# 夕方の時間帯: evening用MVに切り替えてクエリ実行
+python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id evening
+psql -U postgres -d mv_small_test -f experiments/small_test/06_rewritten/normal/evening/rewritten_query1.sql
+```
 ```
 
 ---
@@ -655,7 +712,27 @@ ORDER BY matviewname;"
 
 ## ⚠️ 既知の問題と制限事項
 
-### 1. non_leafノードのMV作成エラー
+### 1. 時刻依存型モードのMV実体化戦略
+
+**現在の仕様:**
+- 一度に**1つのタイムステップのMVのみ**をデータベースに実体化
+- タイムステップ切り替え時に既存MVを削除して新しいMVを作成
+- `--time-id` オプションでタイムステップを指定
+
+**利点:**
+- ✅ ストレージを効率的に使用
+- ✅ 時間帯に応じたMV切り替えが可能
+- ✅ 実運用での動的MV管理に近い動作
+
+**注意点:**
+- ⚠️ MVの切り替えには再作成コストが発生
+- ⚠️ 同時に複数タイムステップのMVは使用できない
+
+**将来の拡張:**
+- マイグレーションプランに基づく効率的なMV切り替え（`migration_planner.py`で開発中）
+- 共通MVの保持による切り替えコスト削減
+
+### 2. non_leafノードのMV作成エラー
 
 **問題:**
 - non_leafノード（複数テーブルのJOIN）のMVがデータベースに作成されない
@@ -673,7 +750,7 @@ ORDER BY matviewname;"
 - 現時点ではleafノードのMVを使用した実験を継続
 - 根本的な修正には最適化アルゴリズムのSQL生成部分の改修が必要
 
-### 2. 時刻依存型モードのタイムステップID
+### 3. 時刻依存型モードのタイムステップID
 
 **現在の仕様:**
 - タイムステップIDは`frequency_time_dependent.json`で指定した値（例: `morning`, `evening`）がそのままMV名に使用される
@@ -794,6 +871,22 @@ python experiments/small_test/run_experiment.py \
   --algorithm normal
 ```
 
+### エラー: 時刻依存型モードで `--time-id を指定してください`
+
+**解決策:**
+```bash
+# phase 5 では --time-id が必須
+python experiments/small_test/run_experiment.py \
+  --mode time-dependent \
+  --phase 5 \
+  --time-id morning
+
+# 利用可能なタイムステップを確認
+python experiments/small_test/run_experiment.py \
+  --mode time-dependent \
+  --phase 5
+```
+
 ### エラー: `frequency_time_dependent.json が見つかりません`
 
 **解決策:**
@@ -809,6 +902,67 @@ python experiments/small_test/run_experiment.py \
 - **INTEGRATED_USAGE.md**: 統合された`run_experiment.py`の詳細な使い方
 - **FREQUENCY_WEIGHTING.md**: 頻度重み付け機能の説明
 - **時刻依存型最適化の論理**: タイムステップごとに異なる頻度でMV選択を最適化
+
+## 🔧 主要モジュールの説明
+
+### `mv_creator.py` - MV作成モジュール（新規追加）
+
+時刻依存型モードで単一タイムステップのMVのみを実体化するためのモジュール。
+
+**主要クラス:**
+- `MVCreator`: MV作成処理を管理
+
+**主要メソッド:**
+- `create_mvs_for_single_timestep(algorithm, time_id, drop_existing=True)`: 
+  - 指定されたタイムステップのMVを作成
+  - 既存MVを削除してから新しいMVを作成
+  - 戻り値: 成功したかどうか（bool）
+
+- `create_migration_mvs(algorithm, from_time_id, to_time_id, migration_plan_file)`:
+  - マイグレーションプランに基づいてMVを作成（開発中）
+  - DROP/CREATEを効率的に実行
+  
+- `get_available_timesteps(algorithm)`:
+  - 利用可能なタイムステップのリストを取得
+  - 戻り値: タイムステップIDのリスト
+
+**使用例:**
+```python
+from experiments.small_test.mv_creator import MVCreator
+from config.settings import Settings
+
+# 初期化
+settings = Settings.from_yaml("experiments/small_test/config.yaml")
+mv_creator = MVCreator(
+    settings=settings,
+    mv_sql_dir=Path("experiments/small_test/05_mv_sql"),
+    output_dir=Path("experiments/small_test/time_dependent_output")
+)
+
+# 利用可能なタイムステップを確認
+timesteps = mv_creator.get_available_timesteps("normal")
+print(f"利用可能: {timesteps}")  # ['morning', 'evening']
+
+# morning のMVを作成
+success = mv_creator.create_mvs_for_single_timestep(
+    algorithm="normal",
+    time_id="morning",
+    drop_existing=True
+)
+
+# evening に切り替え
+success = mv_creator.create_mvs_for_single_timestep(
+    algorithm="normal",
+    time_id="evening",
+    drop_existing=True
+)
+```
+
+**特徴:**
+- ✅ 既存MVの自動削除
+- ✅ 作成されたMVの一覧表示
+- ✅ エラーハンドリングとログ出力
+- ✅ モジュール化により再利用可能
 
 ---
 

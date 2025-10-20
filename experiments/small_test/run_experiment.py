@@ -856,12 +856,16 @@ class SmallExperiment:
         
         return True
     
-    def phase5_create_mvs(self):
-        """フェーズ5: MV作成（実際にDBに作成）（通常モード・時刻依存型モード対応）"""
+    def phase5_create_mvs(self, time_id: str = None):
+        """フェーズ5: MV作成（実際にDBに作成）（通常モード・時刻依存型モード対応）
+        
+        Args:
+            time_id: 作成するタイムステップID（時刻依存型モードで必須）
+        """
         self.print_header("MV作成（データベース）", 5)
         
         if self.mode == "time-dependent":
-            return self._phase5_time_dependent_create_mvs()
+            return self._phase5_time_dependent_create_mvs(time_id)
         else:
             return self._phase5_normal_create_mvs()
     
@@ -911,85 +915,78 @@ class SmallExperiment:
         
         return True
     
-    def _phase5_time_dependent_create_mvs(self):
-        """時刻依存型モードのMV作成"""
-        # メタデータを読み込み
-        metadata_file = self.output_dir / "time_metadata.json"
-        if not metadata_file.exists():
-            print(f"  ✗ エラー: {metadata_file} が見つかりません")
-            return False
+    def _phase5_time_dependent_create_mvs(self, time_id: str = None):
+        """時刻依存型モードのMV作成（単一タイムステップのみ）
         
-        with open(metadata_file, 'r', encoding='utf-8') as f:
-            metadata = json.load(f)
+        Args:
+            time_id: 作成するタイムステップID
+        """
+        from experiments.small_test.mv_creator import MVCreator
         
-        time_ids = metadata['time_ids']
+        # MVCreatorを初期化
+        mv_creator = MVCreator(
+            settings=self.settings,
+            mv_sql_dir=self.mv_sql_dir,
+            output_dir=self.output_dir
+        )
         
         # 使用するアルゴリズムを取得
         algorithms = []
         try:
-            # 属性アクセスを試みる
             if hasattr(self.settings.optimization.algorithms, 'normal'):
                 if self.settings.optimization.algorithms.normal:
                     algorithms.append("normal")
                 if self.settings.optimization.algorithms.bigsubs:
                     algorithms.append("bigsubs")
             else:
-                # 辞書アクセスにフォールバック
                 if self.settings.optimization.algorithms.get('normal', False):
                     algorithms.append("normal")
                 if self.settings.optimization.algorithms.get('bigsubs', False):
                     algorithms.append("bigsubs")
         except (AttributeError, TypeError):
-            # デフォルトで両方使用
             algorithms = ["normal", "bigsubs"]
         
         if not algorithms:
             print("  ✗ エラー: 実行するアルゴリズムが設定されていません")
             return False
         
-        total_created = 0
+        # アルゴリズムを選択（最初のもの、または設定から）
+        algo = algorithms[0]
         
-        for algo in algorithms:
-            self.print_info(f"\n--- {algo.upper()} のMVを作成 ---")
+        # タイムステップが指定されていない場合、利用可能なものを表示
+        if time_id is None:
+            available = mv_creator.get_available_timesteps(algo)
+            if not available:
+                print(f"  ✗ 利用可能なタイムステップが見つかりません")
+                return False
             
-            for time_id in time_ids:
-                sql_file = self.mv_sql_dir / algo / time_id / "create_mvs.sql"
-                
-                if not sql_file.exists():
-                    print(f"  ⚠ [{time_id}] SQLファイルが見つかりません: {sql_file}")
-                    continue
-                
-                print(f"  [{time_id}] MVを作成中...")
-                
-                try:
-                    result = subprocess.run(
-                        ["psql", "-U", "postgres", "-f", str(sql_file)],
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                        encoding='utf-8',
-                        errors='replace',
-                        env={**subprocess.os.environ, 'PGPASSWORD': ''}
-                    )
-                    
-                    # 作成されたMV数をカウント（CREATE MATERIALIZED VIEWの行数）
-                    mv_count = result.stdout.count("CREATE MATERIALIZED VIEW")
-                    total_created += mv_count
-                    
-                    self.print_success(f"  [{time_id}] {mv_count}個のMV作成完了")
-                    
-                except subprocess.CalledProcessError as e:
-                    print(f"  ✗ [{time_id}] エラー: {e}")
-                    if e.stderr:
-                        print(f"    stderr: {e.stderr}")
-                    continue
+            print(f"  利用可能なタイムステップ: {', '.join(available)}")
+            print(f"  使用例: --phase 5 --time-id {available[0]}")
+            return False
         
-        # 作成されたMVを確認
-        self._list_created_mvs()
+        # メタデータを確認
+        metadata_file = self.output_dir / "time_metadata.json"
+        if metadata_file.exists():
+            with open(metadata_file, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            
+            time_ids = metadata['time_ids']
+            if time_id not in time_ids:
+                print(f"  ✗ 無効なタイムステップID: {time_id}")
+                print(f"  利用可能: {', '.join(time_ids)}")
+                return False
         
-        self.print_success(f"合計 {total_created}個のMVを作成")
+        # 単一タイムステップのMVを作成
+        success = mv_creator.create_mvs_for_single_timestep(
+            algorithm=algo,
+            time_id=time_id,
+            drop_existing=True  # 既存MVを削除
+        )
         
-        return True
+        if success:
+            self.print_success(f"{algo} - {time_id} のMV作成完了")
+        
+        return success
     
     def _list_created_mvs(self):
         """作成されたMVの一覧を表示"""
@@ -1316,6 +1313,12 @@ def main():
         help='使用するアルゴリズム (時刻依存型モードのphase 3で必須)'
     )
     parser.add_argument(
+        '--time-id',
+        type=str,
+        default=None,
+        help='タイムステップID (時刻依存型モードのphase 5で必須、例: morning, evening)'
+    )
+    parser.add_argument(
         '--config',
         type=str,
         default='experiments/small_test/config.yaml',
@@ -1337,7 +1340,7 @@ def main():
             print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 2")
             print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 3 --algorithm normal")
             print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 4")
-            print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 5")
+            print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning")
             print("  python experiments/small_test/run_experiment.py --mode time-dependent --phase 6")
             sys.exit(1)
         
@@ -1348,7 +1351,7 @@ def main():
         elif args.phase == '4':
             success = exp.phase4_generate_mv_sql()
         elif args.phase == '5':
-            success = exp.phase5_create_mvs()
+            success = exp.phase5_create_mvs(time_id=args.time_id)
         elif args.phase == '6':
             success = exp.phase6_rewrite_queries()
         else:

@@ -1,7 +1,7 @@
 -- ================================================
 -- Query rewritten using Advanced Rewrite Engine
 -- ================================================
--- Selected MVs: 2
+-- Selected MVs: 1
 -- Match Type: full
 -- MV Used: mv_non_leaf_12
 -- Matched Tables: o, p, u

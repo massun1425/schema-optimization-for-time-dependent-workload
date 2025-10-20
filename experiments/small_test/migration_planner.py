@@ -30,6 +30,7 @@ class Migration_Plan:
 
         #読み込んだデータを保持する属性
         self.qp: FrequencyWeightedParser | None = None
+        self.qp_dict: Dict[str, FrequencyWeightedParser] = {}  # 各時刻のQueryParserを保存
         self.summary: Dict[str, Any] | None = None
         # 各時刻のMVを保存
         self.mvs: list | None = None
@@ -40,6 +41,9 @@ class Migration_Plan:
             self.load_pickle()
         if self.summary_file and self.summary_file.exists():
             self.load_summary()
+            # summaryから各時刻のQueryParserを読み込む
+            if self.summary:
+                self.load_all_parsers()
 
     def load_pickle(self) -> None:
 
@@ -59,6 +63,27 @@ class Migration_Plan:
         except Exception as e:
             print(f"JSONファイルの読み込みに失敗しました: {e}")
             self.summary = None
+    
+    def load_all_parsers(self) -> None:
+        """summaryから全ての時刻のQueryParserを読み込む"""
+        if not self.summary:
+            return
+        
+        time_ids = self.get_time_id(self.summary)
+        output_dir = Path("experiments/small_test/time_dependent_output")
+        
+        for time_id in time_ids:
+            parser_file = output_dir / f"qp_{time_id}.pkl"
+            if parser_file.exists():
+                try:
+                    with open(parser_file, 'rb') as f:
+                        qp = pickle.load(f)
+                    self.qp_dict[time_id] = qp
+                    print(f"  {time_id} のQueryParserを読み込みました: {parser_file}")
+                except Exception as e:
+                    print(f"  {time_id} のQueryParserの読み込みに失敗: {e}")
+            else:
+                print(f"  警告: {parser_file} が見つかりません")
     
     # ファイルから時刻を取得
     def get_time_id(self, data: list):
@@ -95,7 +120,13 @@ class Migration_Plan:
 
     def generate_mv_sql_with_existing(self, node_id: str, existing_mvs: list[str], time_id: str) -> str | None:
         """既存のMVを利用して新しいMVのSQLを作成"""
-        if not self.qp or not hasattr(self.qp, 'qm'):
+        # 指定された時刻のQueryParserを使用
+        if time_id not in self.qp_dict:
+            print(f"  エラー: {time_id} のQueryParserが見つかりません")
+            return None
+        
+        target_qp = self.qp_dict[time_id]
+        if not hasattr(target_qp, 'qm'):
             return None
         
         try:
@@ -104,28 +135,122 @@ class Migration_Plan:
 
             # EnhancedMVGeneratorを初期化
             mv_generator = EnhancedMVGenerator(
-                query_manager = self.qp.qm,
+                query_manager = target_qp.qm,
                 schema_provider = schema_provider,
                 selected_mvs = set(existing_mvs) #ここで既存MVを指定
             )
 
             create_sql = mv_generator.generate_mv_sql(node_id)
-            """
-            ここで正しくSQLが作成されているかは確認が必要
-            """
-
-             # タイムステップ用のMV名に置き換え
-            mv_name = f"mv_{node_id}_{time_id}"
             
-            # MV名を置き換え
-            import re
-            pattern = r'CREATE MATERIALIZED VIEW\s+(\w+)\s+AS'
-            modified_sql = re.sub(pattern, f'CREATE MATERIALIZED VIEW {mv_name} AS', create_sql)
+            if not create_sql:
+                print(f"SQL生成失敗: {node_id}")
+                return None
+            
+            print(f"  [INFO] {node_id} のSQL生成完了")
+            print(f"  [INFO] 再利用するMV: {existing_mvs if existing_mvs else 'なし'}")
+            
+            # 既存MVをFROM句で参照するように置き換え
+            # EnhancedMVGeneratorが子ノードをMVとして参照していない場合の対処
+            if existing_mvs:
+                
+                # 各子ノードのテーブル名をMV名に置き換え
+                for child_node_id in existing_mvs:
+                    
+                    # 全てのQueryParserから子ノードの情報を検索　これにより書き換えが正しく行われた
+                    found = False
+                    for qp_time_id, qp in self.qp_dict.items():
+                        # leaf_nodeの場合
+                        if child_node_id in qp.qm.leaf_nodes_map_r:
+                            operator, table_name, alias, filter_cond = qp.qm.leaf_nodes_map_r[child_node_id]
+                            mv_name = child_node_id  # mv_プレフィックスなし
+                            found = True
+                            
+                            print(f"    [DEBUG] {qp_time_id} でleaf発見: table_name={table_name}, alias={alias}")
+                            
+                            # FROM句でテーブル名をMV名に置き換え
+                            # 例: "FROM orders AS o" -> "FROM leaf_1 AS o"
+                            import re
+                            # パターン1: FROM table_name AS alias
+                            pattern1 = rf'\bFROM\s+{table_name}\s+AS\s+{alias}\b'
+                            before_sql = create_sql
+                            create_sql = re.sub(pattern1, rf'FROM {mv_name} AS {alias}', create_sql)
+                            if before_sql != create_sql:
+                                print(f"    [DEBUG] パターン1でマッチ: '{pattern1}'")
+                            
+                            # パターン2: , table_name AS alias (JOIN内)
+                            pattern2 = rf',\s+{table_name}\s+AS\s+{alias}\b'
+                            before_sql = create_sql
+                            create_sql = re.sub(pattern2, rf', {mv_name} AS {alias}', create_sql)
+                            if before_sql != create_sql:
+                                print(f"    [DEBUG] パターン2でマッチ: '{pattern2}'")
+                            
+                            print(f"  → {child_node_id} ({table_name}) を {mv_name} に置き換え")
+                            break
+                        
+                        
+                        # non_leaf_nodeの場合　この場合はまだ試せていない　
+                        # 本来は別のモジュールで作りたい　MVgeneratorに組み込む等
+                        
+                        elif child_node_id in qp.qm.non_leaf_nodes_info:
+                            non_leaf_info = qp.qm.non_leaf_nodes_info[child_node_id]
+                            mv_name = child_node_id  # mv_プレフィックスなし
+                            found = True
+                            
+                            print(f"    [DEBUG] {qp_time_id} でnon_leaf発見: {child_node_id}, children={non_leaf_info.children}")
+                            
+                            # non_leaf_nodeの全ての子ノードを取得
+                            child_nodes = non_leaf_info.children
+                            
+                            # 子ノードに含まれる全てのテーブルを特定
+                            # 再帰的に子ノードのテーブルを収集
+                            def get_all_tables(node_id: str, qp) -> list[tuple[str, str]]:
+                                """ノードIDから全てのテーブル(table_name, alias)を再帰的に取得"""
+                                tables = []
+                                if node_id in qp.qm.leaf_nodes_map_r:
+                                    operator, table_name, alias, filter_cond = qp.qm.leaf_nodes_map_r[node_id]
+                                    tables.append((table_name, alias))
+                                elif node_id in qp.qm.non_leaf_nodes_info:
+                                    info = qp.qm.non_leaf_nodes_info[node_id]
+                                    for child in info.children:
+                                        tables.extend(get_all_tables(child, qp))
+                                return tables
+                            
+                            all_tables = get_all_tables(child_node_id, qp)
+                            print(f"    [DEBUG] non_leaf_nodeに含まれるテーブル: {all_tables}")
+                            
+                            # これらのテーブルが結合されている部分を、MVへの参照に置き換える
+                            # 複雑な置き換えが必要なため、ここでは簡易的な実装
+                            # TODO: より高度な置き換えロジックを実装
+                            
+                            # 最初のテーブルをMVに置き換え、残りのテーブルを削除する戦略
+                            if all_tables:
+                                first_table, first_alias = all_tables[0]
+                                import re
+                                
+                                # 最初のテーブルをMVに置き換え
+                                pattern1 = rf'\bFROM\s+{first_table}\s+AS\s+{first_alias}\b'
+                                create_sql = re.sub(pattern1, rf'FROM {mv_name} AS {first_alias}', create_sql)
+                                
+                                # 残りのテーブルとそのJOIN条件を削除
+                                for table_name, alias in all_tables[1:]:
+                                    # ", table AS alias" パターンを削除
+                                    pattern = rf',\s+{table_name}\s+AS\s+{alias}\b'
+                                    create_sql = re.sub(pattern, '', create_sql)
+                                
+                                print(f"  → {child_node_id} を {mv_name} に置き換え (含まれるテーブル: {len(all_tables)}個)")
+                            
+                            break
+                    
+                    if not found:
+                        print(f"    [DEBUG] {child_node_id} は全てのQueryParserで見つかりませんでした")
+            
+            print(f"  [DEBUG] 最終SQL (最初の200文字): {create_sql[:200]}")
+            return create_sql
 
-            return modified_sql # 他のパターンでも試すべき
-        
         except Exception as e:
             print(f"SQL生成失敗: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 
@@ -202,13 +327,23 @@ class Migration_Plan:
                     else:
                         print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
 
+            # DROP SQL を生成（before_mvs の中で after_mvs に含まれないもの）　これは実行のタイミングが分からない
+            mvs_to_drop = [mv for mv in before_mvs if mv not in after_mvs]
+            drop_sqls = {}
+            for mv in mvs_to_drop:
+                drop_sqls[mv] = f"DROP MATERIALIZED VIEW IF EXISTS {mv};"  # mv_プレフィックスなし
+            
+            print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] DROP対象のMV: {mvs_to_drop}")
+            
             # 辞書形式で保存
             migration_data[f"{self.time_ids[i]} -> {self.time_ids[i+1]}"] = {
                 "common_mvs": common_mvs,
                 "generate_leaf_nodes": leaf_nodes,
                 "generate_non_leaf_nodes_0": non_leaf_nodes,
                 "generate_non_leaf_nodes_with_mv": non_leaf_nodes_with_mv,
-                "migration_plans_sql": mv_sqls
+                "migration_plans_sql": mv_sqls,
+                "drop_mvs": mvs_to_drop,
+                "drop_sqls": drop_sqls
             }
         # JSONファイルに保存
         output_file = Path("experiments/small_test/time_dependent_output/migration_plan.json")

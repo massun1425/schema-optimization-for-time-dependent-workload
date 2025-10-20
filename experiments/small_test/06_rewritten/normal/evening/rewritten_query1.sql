@@ -1,15 +1,18 @@
--- No MVs selected for this query
--- Using original tables
+-- ================================================
+-- Query rewritten using Advanced Rewrite Engine
+-- ================================================
+-- Selected MVs: 1
+-- Match Type: full
+-- MV Used: mv_leaf_1
+-- Matched Tables: u
+-- Coverage Score: 100.0%
+-- ================================================
 
--- クエリ1: 都市別のユーザー集計とフィルタリング
--- (リーフMVと単純集計のテスト)
-
-SELECT 
-    u.city,
+SELECT leaf_1.city,
     COUNT(*) as user_count,
-    AVG(u.age) as avg_age,
-    COUNT(DISTINCT u.user_id) as distinct_users
-FROM users u
-WHERE u.age >= 25
-GROUP BY u.city
+    AVG(leaf_1.age) as avg_age,
+    COUNT(DISTINCT leaf_1.user_id) as distinct_users
+FROM leaf_1
+WHERE leaf_1.age >= 25
+GROUP BY leaf_1.city
 ORDER BY user_count DESC;
