@@ -130,8 +130,8 @@ def parse_args():
     parser.add_argument(
         "--storage-limit", 
         type=int, 
-        default=50 * 1024 * 1024,  # 50MB
-        help="Storage limit for materialized views in bytes (default: 50MB)"
+        default=None,  # Will use config file value if not specified
+        help="Storage limit for materialized views in bytes (overrides config file)"
     )
     
     parser.add_argument(
@@ -326,6 +326,8 @@ def run_ilp_optimization(
                 "X": qp.X,
                 "q_s_list": qp.q_s_list,
                 "settings": settings,
+                "position_node_id": qp.position_node_id,
+                "deeplist": qp.deeplist,
             }
             
             # BigSubs固有のパラメータを追加
@@ -759,12 +761,15 @@ def main():
             settings.execution.benchmark = False
             logger.warning("--skip-benchmark is deprecated. Use --phases or execution.phases in config YAML.")
 
+    # Use storage_limit from command line if specified, otherwise use config
+    storage_limit = args.storage_limit if args.storage_limit is not None else settings.optimization.storage_limit_bytes
+
     logger.info("=" * 60)
     logger.info("MV Query Optimization Experiment")
     logger.info("=" * 60)
     logger.info(f"Algorithms: {', '.join(args.algorithms)}")
     logger.info(f"Output: {args.output}")
-    logger.info(f"Storage Limit: {args.storage_limit / (1024*1024):.2f} MB")
+    logger.info(f"Storage Limit: {storage_limit / (1024*1024):.2f} MB")
     
     # Display execution phases
     phases_status = []
@@ -786,7 +791,7 @@ def main():
                 ilp_type=ilp_type,
                 output_dir=args.output,
                 settings=settings,
-                storage_limit=args.storage_limit,
+                storage_limit=storage_limit,
                 verbose=args.verbose,
             )
         except Exception as e:
