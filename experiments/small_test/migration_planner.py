@@ -253,6 +253,29 @@ class Migration_Plan:
             traceback.print_exc()
             return None
 
+    def _generate_sql_file(self, timestep_key: str, drop_sqls: dict, create_sqls: dict):
+        """マイグレーションSQLファイルを生成"""
+        sql_file = Path(f"experiments/small_test/time_dependent_output/{timestep_key.replace(' -> ', '_to_')}.sql")
+        
+        with open(sql_file, 'w', encoding='utf-8') as f:
+            f.write(f"-- {timestep_key} のマイグレーション SQL\n")
+            f.write("-- =====================================================\n\n")
+        
+            # CREATE SQL
+            if create_sqls:
+                f.write("-- CREATE MATERIALIZED VIEW\n")
+                for create_sql in create_sqls.values():
+                    f.write(f"{create_sql}\n\n")
+
+             # DROP SQL
+            if drop_sqls:
+                f.write("-- DROP MATERIALIZED VIEW\n")
+                for drop_sql in drop_sqls.values():
+                    f.write(f"{drop_sql}\n")
+                f.write("\n")
+            
+        
+        print(f"SQLファイルを生成しました: {sql_file}")
 
 
     def get_migration_plan(self):
@@ -351,10 +374,16 @@ class Migration_Plan:
             json.dump(migration_data, f, indent=2, ensure_ascii=False)
         print(f"マイグレーションプランを{output_file}に保存しました")
 
+            # SQL ファイルを生成
+        self._generate_sql_file(f"{self.time_ids[i]} -> {self.time_ids[i+1]}", drop_sqls, mv_sqls)
+
 """
 todo :
-他のパターンも試す
+他のパターンも試す->もっとクエリ増やしてもいいかも
 jsonで書き出す=>完了
+コストの計算もいれたい->EXPLAIN
+SQL生成クエリの書き換えと同じ方法でしてみる
+MVではなくTABLEにするうかも？ このままでは1パターン
 """
 
             

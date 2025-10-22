@@ -68,16 +68,17 @@ experiments/small_test/
 
 ### 実行モード
 
-`run_experiment.py` は2つのモードをサポートしています:
+実験スクリプトは2つのモードに分かれています:
 
-1. **通常モード (`--mode normal` / デフォルト)**
+1. **通常モード** (`run_experiment_normal.py`)
    - 単一の頻度設定でMV最適化を実行
    - 全クエリで共通のMVセットを使用
+   - 使用アルゴリズム: **normal のみ**
    
-2. **時刻依存型モード (`--mode time-dependent`)**
-   - 複数のタイムステップ（例: 朝、昼、夜）で異なる頻度設定
+2. **時刻依存型モード** (`run_experiment_time_dependent.py`)
+   - 複数のタイムステップ（例: 朝、夜）で異なる頻度設定
    - タイムステップごとに異なるMVセットを作成・使用
-   - MV名にタイムステップID（例: `_morning`, `_evening`）を付加
+   - 使用アルゴリズム: **normal のみ**
 
 ---
 
@@ -87,13 +88,15 @@ experiments/small_test/
 
 | フェーズ | 名称 | 通常モード | 時刻依存型モード | 説明 |
 |---------|------|-----------|-----------------|------|
-| 0 | データベースセットアップ | ✅ | ✅ | テーブルとデータを作成 |
-| 1 | EXPLAIN JSON生成 | ✅ | ✅ | クエリ実行プランを取得 |
+| 0 | データベースセットアップ | ✅ | N/A | テーブルとデータを作成 |
+| 1 | EXPLAIN JSON生成 | ✅ | N/A | クエリ実行プランを取得 |
 | 2 | クエリパース | ✅ | ✅ | 実行プランを内部表現に変換 |
-| 3 | ILP最適化 | ✅ | ✅ | MVを選択（アルゴリズム指定必須） |
+| 3 | ILP最適化 | ✅ | ✅ | MVを選択（normalアルゴリズム） |
 | 4 | MV生成SQL作成 | ✅ | ✅ | CREATE文を生成 |
 | 5 | MV作成 | ✅ | ✅ | データベースにMVを作成 |
 | 6 | クエリ書き換え | ✅ | ✅ | MVを使用するようクエリを変換 |
+
+**注意:** フェーズ0とフェーズ1は通常モードでのみ実行可能です。時刻依存型モードはフェーズ2から開始します。
 
 ---
 
@@ -104,7 +107,7 @@ experiments/small_test/
 テーブルとサンプルデータを作成します。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 0
+python experiments/small_test/run_experiment_normal.py --phase 0
 ```
 
 **実行内容:**
@@ -125,7 +128,7 @@ psql -U postgres -d mv_small_test -c "SELECT COUNT(*) FROM orders;"
 各クエリの実行プランをJSON形式で取得します。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 1
+python experiments/small_test/run_experiment_normal.py --phase 1
 ```
 
 **実行内容:**
@@ -145,40 +148,40 @@ dir experiments\small_test\02_json
 PostgreSQLの実行プランを内部表現に変換します。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 2
+python experiments/small_test/run_experiment_normal.py --phase 2
 ```
 
 **実行内容:**
-- `QueryParser` でJSONをパース
+- `FrequencyWeightedParser` でJSONをパース
 - リーフノード・非リーフノードを抽出
 - コスト・サイズ・依存関係を計算
 - 頻度重み付けを適用（`frequency.json` を使用）
-- 結果を `03_parsed/` に保存
+- 結果を `qp_class.pkl` と `03_parsed/` に保存
 
 **確認:**
 ```bash
 type experiments\small_test\qp_class.pkl  # パース結果（pickle形式）
+type experiments\small_test\03_parsed\parse_summary.json
 ```
 
 ---
 
 ### ステップ4: ILP最適化
 
-整数線形計画法でMVを選択します。
+整数線形計画法でMVを選択します（normalアルゴリズムのみ）。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 3
+python experiments/small_test/run_experiment_normal.py --phase 3
 ```
 
 **実行内容:**
-- config.yamlで指定されたアルゴリズム（Normal/BigSubs）でILP実行
+- normalアルゴリズムでILP実行
 - ストレージ制限内で最大効用のMVを選択
-- 結果を `04_optimized/*/` に保存
+- 結果を `04_optimized/normal/` に保存
 
 **確認:**
 ```bash
-type experiments\small_test\04_optimized\normal\mv_selections.json
-type experiments\small_test\04_optimized\bigsubs\mv_selections.json
+type experiments\small_test\04_optimized\normal\result.json
 ```
 
 ---
@@ -188,28 +191,17 @@ type experiments\small_test\04_optimized\bigsubs\mv_selections.json
 選択されたMVのCREATE文を生成します。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 4
+python experiments/small_test/run_experiment_normal.py --phase 4
 ```
 
 **実行内容:**
 - 最適化結果から選択されたMVを読み込み
 - 各MVのCREATE MATERIALIZED VIEW文を生成
-- `05_mv_sql/*/create_mvs.sql` に保存
+- `05_mv_sql/normal/create_mvs.sql` に保存
 
 **確認:**
 ```bash
 type experiments\small_test\05_mv_sql\normal\create_mvs.sql
-```
-
-**出力例:**
-```sql
-\c mv_small_test
-
--- ノード: leaf_1
-CREATE MATERIALIZED VIEW mv_leaf_1 AS
-SELECT u.*
-FROM users AS u
-WHERE (age >= 25);
 ```
 
 ---
@@ -219,11 +211,11 @@ WHERE (age >= 25);
 実際にPostgreSQLにMVを作成します。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 5
+python experiments/small_test/run_experiment_normal.py --phase 5
 ```
 
 **実行内容:**
-- `05_mv_sql/*/create_mvs.sql` をpsqlで実行
+- `05_mv_sql/normal/create_mvs.sql` をpsqlで実行
 - データベースにMVを作成
 
 **確認:**
@@ -236,8 +228,8 @@ psql -U postgres -d mv_small_test -c "\dm+"
               List of relations
  Schema |      Name       | Type    | Size  
 --------+-----------------+---------+-------
- public | mv_leaf_1       | matview | 16 kB
- public | mv_leaf_9       | matview | 16 kB
+ public | leaf_1          | matview | 16 kB
+ public | leaf_9          | matview | 16 kB
 ```
 
 ---
@@ -247,13 +239,13 @@ psql -U postgres -d mv_small_test -c "\dm+"
 選択されたMVを使用するようにクエリを書き換えます。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 6
+python experiments/small_test/run_experiment_normal.py --phase 6
 ```
 
 **実行内容:**
 - 最適化結果から各クエリで使用するMVを読み込み
 - テーブル参照をMV参照に置き換え
-- 書き換え結果を `06_rewritten/*/` に保存
+- 書き換え結果を `06_rewritten/normal/` に保存
 
 **確認:**
 ```bash
@@ -267,13 +259,13 @@ type experiments\small_test\06_rewritten\normal\rewritten_query1.sql
 -- ================================================
 -- Selected MVs: 1
 -- Replacements:
---   • FROM users → FROM mv_leaf_1
+--   • FROM users → FROM leaf_1
 -- ================================================
 
 SELECT 
     u.city,
     COUNT(*) as user_count
-FROM mv_leaf_1 u
+FROM leaf_1 u
 WHERE u.age >= 25
 GROUP BY u.city
 ORDER BY user_count DESC;
@@ -290,9 +282,21 @@ psql -U postgres -d mv_small_test -c "\timing on" -f experiments/small_test/06_r
 
 ---
 
+### 全フェーズ一括実行
+
+全フェーズを順番に実行します。
+
+```bash
+python experiments/small_test/run_experiment_normal.py --phase all
+```
+
+---
+
 ## ⏰ 時刻依存型モードの実行手順
 
 時刻依存型モードでは、時間帯ごとに異なる頻度でクエリが実行されることを想定し、タイムステップごとに最適なMVセットを選択します。
+
+**注意:** フェーズ0とフェーズ1は通常モードで事前に実行しておく必要があります。
 
 ### 準備: 頻度設定ファイル
 
@@ -333,21 +337,22 @@ psql -U postgres -d mv_small_test -c "\timing on" -f experiments/small_test/06_r
 
 ### ステップ0-1: データベースセットアップ・EXPLAIN JSON生成
 
-通常モードと同じです。
+**重要:** 時刻依存型モードではフェーズ0とフェーズ1を実行できません。
+事前に通常モードでこれらのフェーズを実行してください。
 
 ```bash
-python experiments/small_test/run_experiment.py --phase 0
-python experiments/small_test/run_experiment.py --phase 1
+python experiments/small_test/run_experiment_normal.py --phase 0
+python experiments/small_test/run_experiment_normal.py --phase 1
 ```
 
 ---
 
 ### ステップ2: 時刻依存型クエリパース
 
-各タイムステップの頻度設定でパースを実行します。
+タイムステップごとにクエリを解析し、MV候補を生成します。
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 2
+python experiments/small_test/run_experiment_time_dependent.py --phase 2
 ```
 
 **実行内容:**
@@ -366,19 +371,17 @@ dir experiments\small_test\time_dependent_output
 
 ### ステップ3: 時刻依存型ILP最適化
 
-各タイムステップで独立にMV選択を実行します。
+各タイムステップで独立にMV選択を実行します（normalアルゴリズムのみ使用）。
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 3 --algorithm normal
+python experiments/small_test/run_experiment_time_dependent.py --phase 3
 ```
-
-**重要:** `--algorithm` オプションは**必須**です（normal, bigsubs, frequencyから選択）。
 
 **実行内容:**
 - 各タイムステップのパース結果を読み込み
-- タイムステップごとに独立してILP実行
-- 結果を `time_dependent_output/<algo>_<time_id>_result.json` に保存
-- 全タイムステップの比較サマリーを `time_dependent_output/<algo>_summary.json` に保存
+- タイムステップごとに独立してnormalアルゴリズムでILP実行
+- 結果を `time_dependent_output/normal_<time_id>_result.json` に保存
+- 全タイムステップの比較サマリーを `time_dependent_output/normal_summary.json` に保存
 
 **確認:**
 ```bash
@@ -422,13 +425,13 @@ type experiments\small_test\time_dependent_output\normal_evening_result.json
 各タイムステップ用のMV作成SQLを生成します。
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 4
+python experiments/small_test/run_experiment_time_dependent.py --phase 4
 ```
 
 **実行内容:**
 - 各タイムステップの最適化結果から選択されたMVを読み込み
-- タイムステップID付きのMV名（例: `mv_leaf_1_morning`）でCREATE文を生成
-- 結果を `05_mv_sql/<algo>/<time_id>/create_mvs.sql` に保存
+- タイムステップID付きのMV名（例: `leaf_1_morning`）でCREATE文を生成
+- 結果を `05_mv_sql/normal/<time_id>/create_mvs.sql` に保存
 
 **確認:**
 ```bash
@@ -445,13 +448,13 @@ type experiments\small_test\05_mv_sql\normal\evening\create_mvs.sql
 \c mv_small_test
 
 -- ノード: leaf_1 (morning)
-CREATE MATERIALIZED VIEW mv_leaf_1_morning AS
+CREATE MATERIALIZED VIEW leaf_1_morning AS
 SELECT u.*
 FROM users AS u
 WHERE (age >= 25);
 
 -- ノード: leaf_9 (morning)
-CREATE MATERIALIZED VIEW mv_leaf_9_morning AS
+CREATE MATERIALIZED VIEW leaf_9_morning AS
 SELECT p.*
 FROM products AS p
 WHERE (price >= '300'::numeric);
@@ -471,7 +474,7 @@ WHERE (price >= '300'::numeric);
 #### 5-1. morning のMVを作成
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id morning
 ```
 
 **実行内容:**
@@ -494,10 +497,17 @@ psql -U postgres -d mv_small_test -c "\dm+"
  public | mv_non_leaf_12_morning | matview | 24 kB
 ```
 
+ Schema |        Name         | Type    | Size  
+--------+---------------------+---------+-------
+ public | leaf_1_morning      | matview | 16 kB
+ public | leaf_9_morning      | matview | 16 kB
+ public | non_leaf_12_morning | matview | 24 kB
+```
+
 #### 5-2. evening のMVに切り替え
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id evening
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id evening
 ```
 
 **実行内容:**
@@ -515,9 +525,9 @@ psql -U postgres -d mv_small_test -c "\dm+"
               List of relations
  Schema |        Name         | Type    | Size  
 --------+---------------------+---------+-------
- public | mv_leaf_4_evening   | matview | 16 kB
- public | mv_leaf_9_evening   | matview | 16 kB
- public | mv_non_leaf_5_evening | matview | 24 kB
+ public | leaf_4_evening      | matview | 16 kB
+ public | leaf_9_evening      | matview | 16 kB
+ public | non_leaf_5_evening  | matview | 24 kB
 ```
 
 **ポイント:**
@@ -529,7 +539,7 @@ psql -U postgres -d mv_small_test -c "\dm+"
 **利用可能なタイムステップを確認:**
 ```bash
 # --time-id を指定せずに実行すると利用可能なタイムステップが表示される
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5
+python experiments/small_test/run_experiment_time_dependent.py --phase 5
 ```
 
 **⚠️ 注意事項:**
@@ -544,13 +554,13 @@ python experiments/small_test/run_experiment.py --mode time-dependent --phase 5
 各タイムステップ用にクエリを書き換えます。
 
 ```bash
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 6
+python experiments/small_test/run_experiment_time_dependent.py --phase 6
 ```
 
 **実行内容:**
 - 各タイムステップの最適化結果から使用するMVを読み込み
-- タイムステップごとに適切なMV名（例: `mv_leaf_1_morning`）で置換
-- 書き換え結果を `06_rewritten/<algo>/<time_id>/` に保存
+- タイムステップごとに適切なMV名（例: `leaf_1_morning`）で置換
+- 書き換え結果を `06_rewritten/normal/<time_id>/` に保存
 
 **確認:**
 ```bash
@@ -568,13 +578,13 @@ type experiments\small_test\06_rewritten\normal\evening\rewritten_query1.sql
 -- ================================================
 -- Selected MVs: 1
 -- Replacements:
---   • FROM users → FROM mv_leaf_1_morning
+--   • FROM users → FROM leaf_1_morning
 -- ================================================
 
 SELECT 
     u.city,
     COUNT(*) as user_count
-FROM mv_leaf_1_morning u
+FROM leaf_1_morning u
 WHERE u.age >= 25
 GROUP BY u.city
 ORDER BY user_count DESC;
@@ -609,52 +619,54 @@ psql -U postgres -d mv_small_test -c "\timing on" -f experiments/small_test/06_r
 
 ---
 
+### 全フェーズ実行
+
+時刻依存型モードの全フェーズを順番に実行します（タイムステップ指定が必要なフェーズ5は個別実行が必要）。
+
+```bash
+# フェーズ2-4と6を一括実行
+python experiments/small_test/run_experiment_time_dependent.py --phase all
+
+# その後、必要なタイムステップのMVを作成（個別実行）
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id morning
+```
+
+---
+
 ## 🎯 一括実行
 
 ### 通常モード（全フェーズ）
 
 ```bash
-python experiments/small_test/run_experiment.py --phase all
+python experiments/small_test/run_experiment_normal.py --phase all
 ```
 
 フェーズ0〜6を順番に実行します。
 
 ### 時刻依存型モード（段階的実行）
 
-時刻依存型モードは`--phase all`をサポートしていません。段階的に実行してください。
-
 ```bash
-# ステップ1: 初期設定（通常モードと共通）
-python experiments/small_test/run_experiment.py --phase 0
-python experiments/small_test/run_experiment.py --phase 1
+# ステップ1: 初期設定（通常モードで実行）
+python experiments/small_test/run_experiment_normal.py --phase 0
+python experiments/small_test/run_experiment_normal.py --phase 1
 
-# ステップ2: 時刻依存型パース
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 2
-
-# ステップ3: 時刻依存型最適化（アルゴリズム指定必須）
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 3 --algorithm normal
-
-# ステップ4: MV生成SQL作成
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 4
+# ステップ2-4, 6: 時刻依存型処理
+python experiments/small_test/run_experiment_time_dependent.py --phase all
 
 # ステップ5: MV作成（タイムステップ指定必須）
 # morning のMVを作成
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
-
-# ステップ6: クエリ書き換え
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 6
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id morning
 ```
 
 **時間帯切り替えの例:**
 ```bash
 # 朝の時間帯: morning用MVを作成してクエリ実行
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id morning
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id morning
 psql -U postgres -d mv_small_test -f experiments/small_test/06_rewritten/normal/morning/rewritten_query1.sql
 
 # 夕方の時間帯: evening用MVに切り替えてクエリ実行
-python experiments/small_test/run_experiment.py --mode time-dependent --phase 5 --time-id evening
+python experiments/small_test/run_experiment_time_dependent.py --phase 5 --time-id evening
 psql -U postgres -d mv_small_test -f experiments/small_test/06_rewritten/normal/evening/rewritten_query1.sql
-```
 ```
 
 ---
@@ -672,7 +684,6 @@ psql -U postgres -d mv_small_test -f experiments/small_test/06_rewritten/normal/
 **最適化結果:**
 ```bash
 type experiments\small_test\04_optimized\normal\mv_selections.json
-type experiments\small_test\04_optimized\bigsubs\mv_selections.json
 ```
 
 **MV一覧:**
