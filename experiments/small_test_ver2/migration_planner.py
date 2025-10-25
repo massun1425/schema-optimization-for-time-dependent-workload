@@ -215,7 +215,8 @@ class Migration_Plan:
             mv_sqls = {}
 
             for leaf in leaf_nodes:
-                mv_sql = self.generate_mv_sql_with_existing(leaf, list(before_mvs), self.time_ids[i+1])
+                # leaf_nodesは新規生成なので、既存MVは使用しない（空リスト）
+                mv_sql = self.generate_mv_sql_with_existing(leaf, [], self.time_ids[i+1])
                 if mv_sql:
                     print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {leaf} の生成SQL: {mv_sql}")
                     mv_sqls[leaf] = mv_sql

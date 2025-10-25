@@ -16,6 +16,7 @@ import logging
 from experiments.small_test_ver2.enhanced_mv_generator import EnhancedMVGenerator
 from experiments.small_test_ver2.small_test_schema_provider import SmallTestSchemaProvider
 from experiments.small_test_ver2.query_rewriter import QueryRewriter
+from experiments.small_test_ver2.comma_join_rewriter import CommaJoinRewriter
 
 
 logger = logging.getLogger(__name__)
@@ -129,19 +130,22 @@ class MVSQLGenerator:
             return None
         
         try:
-            # 1. 元のMV定義クエリを生成（既存MVなしで）
+            # 1. EnhancedMVGeneratorで元のMV定義を生成（既存MVなしで純粋なクエリを生成）
             schema_provider = SmallTestSchemaProvider()
+            
             mv_generator = EnhancedMVGenerator(
                 query_manager=target_qp.qm,
                 schema_provider=schema_provider,
-                selected_mvs=set()  # 既存MVを使わずに生成
+                selected_mvs=set()  # 既存MVなしで生成（後でCommaJoinRewriterで書き換える）
             )
             
             original_sql = mv_generator.generate_mv_sql(node_id)
             
             if not original_sql:
-                print(f"  エラー: {node_id} の元SQL生成失敗")
+                print(f"  エラー: {node_id} のMV SQL生成失敗")
                 return None
+            
+            print(f"  [INFO] EnhancedMVGeneratorでSQL生成完了")
             
             # CREATE MATERIALIZED VIEW ... AS 部分を削除して元クエリを取得
             base_query = self._extract_query_from_create(original_sql)
@@ -152,33 +156,44 @@ class MVSQLGenerator:
             
             print(f"  [INFO] 元クエリ抽出完了: {base_query[:100]}...")
             
-            # 2. QueryRewriterで書き換え（既存MVを利用）
-            # QueryRewriterは mv_selections を dict[str, list[str]] 形式で期待
-            mv_selections_dict = {node_id: existing_mvs}
-            rewriter = QueryRewriter(
-                qm=target_qp.qm,
-                mv_selections=mv_selections_dict
-            )
-            
-            # 既存MVを使用可能なMVとして設定
-            mv_mappings = self._build_mv_mappings(existing_mvs, target_qp)
-            
-            if mv_mappings:
-                print(f"  [INFO] MV書き換えマッピング: {len(mv_mappings)} 件")
-                rewritten_query = self._rewrite_query_with_mvs(
-                    base_query, 
-                    mv_mappings, 
-                    rewriter,
-                    target_qp
+            # 2. 既存MVがある場合、CommaJoinRewriterで書き換え
+            if existing_mvs:
+                print(f"  [INFO] CommaJoinRewriterで既存MV利用に書き換え")
+                
+                # CommaJoinRewriterを初期化
+                comma_rewriter = CommaJoinRewriter(
+                    query_manager=target_qp.qm,
+                    schema_provider=schema_provider
                 )
+                
+                # 既存MVがカバーするテーブルエイリアスを特定
+                mv_covers = self._determine_mv_coverage(existing_mvs, target_qp, base_query)
+                
+                if mv_covers:
+                    print(f"  [INFO] 既存MVがカバーするテーブル: {mv_covers}")
+                    
+                    # 各既存MVに対して書き換えを試行
+                    rewritten_query = base_query
+                    for mv_id in existing_mvs:
+                        mv_tables = self._get_mv_covered_aliases(mv_id, target_qp, rewritten_query)
+                        if mv_tables:
+                            print(f"  [INFO] {mv_id} で書き換え試行: {mv_tables}")
+                            rewritten_query = comma_rewriter.rewrite_with_mv(
+                                rewritten_query, 
+                                mv_id, 
+                                mv_tables
+                            )
+                else:
+                    print(f"  [INFO] MVカバレッジ判定失敗、元クエリを使用")
+                    rewritten_query = base_query
             else:
-                print(f"  [INFO] MVマッピングなし、元クエリを使用")
+                print(f"  [INFO] 既存MVなし、元クエリを使用")
                 rewritten_query = base_query
             
             # 3. CREATE MATERIALIZED VIEW文に変換
             create_sql = f"CREATE MATERIALIZED VIEW {node_id} AS\n{rewritten_query};"
             
-            print(f"  [INFO] {node_id} のSQL生成完了（Rewriter使用）")
+            print(f"  [INFO] {node_id} のSQL生成完了（EnhancedMVGenerator + CommaJoinRewriter）")
             print(f"  [INFO] 再利用するMV: {existing_mvs if existing_mvs else 'なし'}")
             print(f"  [DEBUG] 最終SQL (最初の200文字): {create_sql[:200]}")
             
@@ -263,6 +278,81 @@ class MVSQLGenerator:
                 }
         
         return None
+    
+    def _determine_mv_coverage(
+        self, 
+        existing_mvs: list[str], 
+        target_qp, 
+        query: str
+    ) -> dict[str, set]:
+        """各MVがカバーするテーブルエイリアスを判定
+        
+        Args:
+            existing_mvs: 既存MVのリスト
+            target_qp: QueryParser instance
+            query: クエリ文字列
+            
+        Returns:
+            {mv_id: set(aliases)} の辞書
+        """
+        mv_coverage = {}
+        
+        for mv_id in existing_mvs:
+            aliases = self._get_mv_covered_aliases(mv_id, target_qp, query)
+            if aliases:
+                mv_coverage[mv_id] = aliases
+        
+        return mv_coverage
+    
+    def _get_mv_covered_aliases(
+        self, 
+        mv_id: str, 
+        target_qp, 
+        query: str
+    ) -> Optional[set]:
+        """MVがカバーするテーブルエイリアスを取得
+        
+        Args:
+            mv_id: MVのノードID
+            target_qp: QueryParser instance
+            query: クエリ文字列
+            
+        Returns:
+            カバーするエイリアスのset、または None
+        """
+        try:
+            # MVのテーブル情報を取得
+            mv_info = self._get_mv_tables_info(mv_id, target_qp)
+            if not mv_info:
+                return None
+            
+            mv_aliases = set(mv_info['aliases'])
+            
+            # クエリからテーブルエイリアスを抽出して検証
+            # CommaJoinRewriterのparse_queryを使用
+            from experiments.small_test_ver2.comma_join_rewriter import CommaJoinRewriter
+            from experiments.small_test_ver2.small_test_schema_provider import SmallTestSchemaProvider
+            
+            schema_provider = SmallTestSchemaProvider()
+            rewriter = CommaJoinRewriter(target_qp.qm, schema_provider)
+            
+            # クエリをパースして使用されているテーブルを確認
+            parsed = rewriter.parse_query(query)
+            if not parsed:
+                return None
+            
+            query_aliases = set()
+            for table_info in parsed['tables']:
+                query_aliases.add(table_info.alias)
+            
+            # MVのエイリアスがクエリに含まれているかチェック
+            covered = mv_aliases & query_aliases
+            
+            return covered if covered else None
+            
+        except Exception as e:
+            print(f"  [WARN] MVカバレッジ判定エラー ({mv_id}): {e}")
+            return None
     
     def _rewrite_query_with_mvs(
         self, 
