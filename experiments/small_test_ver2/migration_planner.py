@@ -181,6 +181,48 @@ class Migration_Plan:
         
         print(f"SQLファイルを生成しました: {sql_file}")
 
+    def _filter_outermost_nodes(self, candidate_nodes: list[str]) -> list[str]:
+        """包含関係にあるノードの中で、最も外側（親）のノードのみを返す
+        
+        Args:
+            candidate_nodes: 候補ノードのリスト
+            
+        Returns:
+            最も外側のノードのみを含むリスト
+            
+        例:
+            候補: ["leaf_15", "non_leaf_25", "non_leaf_26"]
+            non_leaf_26 の子孫: ["leaf_14", "non_leaf_25"]
+            non_leaf_25 の子孫: ["leaf_15"]
+            
+            結果: ["non_leaf_26"]
+            理由: leaf_15 と non_leaf_25 は non_leaf_26 に含まれるため除外
+        """
+        if not self.qp or not hasattr(self.qp, 'qm'):
+            return candidate_nodes
+        
+        # 各候補ノードの子孫ノードを取得
+        descendants_map = {}
+        for node in candidate_nodes:
+            descendants_map[node] = set(self.get_all_child_nodes(node))
+        
+        # 他のノードに含まれていないノード（最も外側）のみを抽出
+        outermost_nodes = []
+        
+        for node in candidate_nodes:
+            is_contained = False
+            
+            # このノードが他のノードの子孫に含まれているかチェック
+            for other_node in candidate_nodes:
+                if node != other_node and node in descendants_map[other_node]:
+                    is_contained = True
+                    break
+            
+            # 他のノードに含まれていない場合のみ追加
+            if not is_contained:
+                outermost_nodes.append(node)
+        
+        return outermost_nodes
 
     def get_migration_plan(self):
 
@@ -235,6 +277,43 @@ class Migration_Plan:
                 print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}の全ての子ノード: {all_children_dict[node]}")
                 # 各non_leaf_nodeについて、その子ノードの中にbefore_mvsに含まれているものがあるかを確認
                 common_children = list(before_mvs.intersection(set(all_children_dict[node])))
+
+                # ★ 包含関係にあるノードの中で最も外側のノードのみを選択 ★
+                if common_children:
+                    filtered_children = self._filter_outermost_nodes(common_children)
+                    print(f"  [DEBUG] 元の候補: {common_children}")
+                    print(f"  [DEBUG] フィルタ後: {filtered_children}")
+                    
+                    if filtered_children:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}は{filtered_children}を利用する")
+                        non_leaf_nodes_with_mv[node] = filtered_children
+                        
+                        # 新しい MV の SQL を生成
+                        mv_sql_non = self.generate_mv_sql_with_existing(node, filtered_children, self.time_ids[i+1])
+                        if mv_sql_non:
+                            print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} の生成SQL作成")
+                            mv_sqls[node] = mv_sql_non
+                        else:
+                            print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
+                    else:
+                        # フィルタ後に候補がなくなった場合は新規生成 このパターンはなさそうだけど、、
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}はフィルタ後に候補なし、新規生成")
+                        mv_sql_non_new = self.generate_mv_sql_with_existing(node, [], self.time_ids[i+1])
+                        if mv_sql_non_new:
+                            print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} の新規生成SQL作成")
+                            mv_sqls[node] = mv_sql_non_new
+                        else:
+                            print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
+                else:
+                    print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}は新規に配置が必要")
+                    # 新規の場合も SQL 生成可能（existing_mvs を空で）
+                    mv_sql_non_new = self.generate_mv_sql_with_existing(node, [], self.time_ids[i+1])
+                    if mv_sql_non_new:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} の新規生成SQL作成")
+                        mv_sqls[node] = mv_sql_non_new
+                    else:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
+                """
                 if common_children:
                     print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}は{common_children}を利用する")
                     non_leaf_nodes_with_mv[node] = common_children
@@ -254,7 +333,7 @@ class Migration_Plan:
                         mv_sqls[node] = mv_sql_non_new # SQLを保存
                     else:
                         print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
-
+                """
             # DROP SQL を生成（before_mvs の中で after_mvs に含まれないもの）　これは実行のタイミングが分からない
             mvs_to_drop = [mv for mv in before_mvs if mv not in after_mvs]
             drop_sqls = {}
