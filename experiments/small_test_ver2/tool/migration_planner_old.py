@@ -21,11 +21,13 @@ class Migration_Plan:
             self,
             settings: Settings | None = None,
             parser_file: str | None = None,
-            summary_file: str | None = None
+            summary_file: str | None = None,
+            generation_mode: str = "enhanced"  # "enhanced", "rewriter", "subtree" から選択
     ): 
         self.settings = settings
         self.parser_file = Path(parser_file) if parser_file else None
         self.summary_file = Path(summary_file) if summary_file else None
+        self.generation_mode = generation_mode  # MV生成方式の選択
 
         #読み込んだデータを保持する属性
         self.qp: FrequencyWeightedParser | None = None
@@ -119,20 +121,41 @@ class Migration_Plan:
                 children = self.qp.qm.non_leaf_nodes_info[current].children
                 all_children.extend(children)
                 stack.extend(children)
-        # setで重複を排除してソート済みリストで返す
-        return sorted(set(all_children))
+        # setで重複を排除して返す
+        return list(set(all_children))
 
     def generate_mv_sql_with_existing(self, node_id: str, existing_mvs: list[str], time_id: str) -> str | None:
-        """既存のMVを利用して新しいMVのSQLを作成（generate_mv_sql_with_rewriterを使用）"""
+        """既存のMVを利用して新しいMVのSQLを作成（mv_sql_generatorに委譲）"""
         if self.mv_sql_generator is None:
             print(f"  エラー: MVSQLGeneratorが初期化されていません")
             return None
         
-        return self.mv_sql_generator.generate_mv_sql_with_rewriter(
-            node_id, 
-            existing_mvs, 
-            time_id
-        )
+        # generation_modeに基づいて使用するメソッドを切り替え
+        if self.generation_mode == "rewriter":
+            # ☆結局うまくつかえていない、フラットになるからかな？
+            print(f"  [INFO] クエリ書き換え機能（Rewriter）を使用してSQL生成")
+            return self.mv_sql_generator.generate_mv_sql_with_rewriter(
+                node_id, 
+                existing_mvs, 
+                time_id
+            )
+        elif self.generation_mode == "subtree":
+        # 辺にネストが多くなりrewiteが機能していない
+            print(f"  [INFO] サブツリー復元機能（SubtreeRestorer）を使用してSQL生成")
+            return self.mv_sql_generator.generate_mv_sql_with_subtree_restore(
+                node_id,
+                existing_mvs,
+                time_id,
+                preserve_join_structure=True  # デフォルトでJOIN構造を保持
+            )
+        else:  # "enhanced" or default
+        # ふらっと展開ではあるがまし、non_leafを再活用するパターンで上手くいかなそう、、
+            print(f"  [INFO] EnhancedMVGeneratorを使用してSQL生成")
+            return self.mv_sql_generator.generate_mv_sql_with_existing(
+                node_id, 
+                existing_mvs, 
+                time_id
+            )
 
     def _generate_sql_file(self, timestep_key: str, drop_sqls: dict, create_sqls: dict):
         """マイグレーションSQLファイルを生成"""
@@ -145,14 +168,14 @@ class Migration_Plan:
             # CREATE SQL
             if create_sqls:
                 f.write("-- CREATE MATERIALIZED VIEW\n")
-                for node_id in sorted(create_sqls.keys()):
-                    f.write(f"{create_sqls[node_id]}\n\n")
+                for create_sql in create_sqls.values():
+                    f.write(f"{create_sql}\n\n")
 
              # DROP SQL
             if drop_sqls:
                 f.write("-- DROP MATERIALIZED VIEW\n")
-                for mv_id in sorted(drop_sqls.keys()):
-                    f.write(f"{drop_sqls[mv_id]}\n")
+                for drop_sql in drop_sqls.values():
+                    f.write(f"{drop_sql}\n")
                 f.write("\n")
             
         
@@ -199,7 +222,7 @@ class Migration_Plan:
             if not is_contained:
                 outermost_nodes.append(node)
         
-        return sorted(outermost_nodes)
+        return outermost_nodes
 
     def get_migration_plan(self):
 
@@ -218,16 +241,16 @@ class Migration_Plan:
         for i in range(len(self.time_ids)-1):
             before_mvs = set(self.mvs[i])
             after_mvs = set(self.mvs[i+1])
-            common_mvs = sorted(before_mvs.intersection(after_mvs))
+            common_mvs = list(before_mvs.intersection(after_mvs))
             print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] 共通MV: {common_mvs}")
 
             # 共通なMVをなくす
-            unique_after_mvs = sorted([mv for mv in after_mvs if mv not in common_mvs])
+            unique_after_mvs = [mv for mv in after_mvs if mv not in common_mvs]
 
             # leaf_node だけ取り出す
             if unique_after_mvs is None:
                 return           
-            leaf_nodes = sorted([mv for mv in unique_after_mvs if mv.startswith("leaf_")])
+            leaf_nodes = [mv for mv in unique_after_mvs if mv.startswith("leaf_")]
             print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] ユニークなleaf_node: {leaf_nodes}")
 
             # leaf_nodeの生成SQLを作成、辞書に保存
@@ -243,7 +266,7 @@ class Migration_Plan:
                     print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {leaf} のSQL生成失敗")
 
             # non_leaf_nodeを取り出す
-            non_leaf_nodes = sorted([mv for mv in unique_after_mvs if mv.startswith("non_leaf_")])
+            non_leaf_nodes = [mv for mv in unique_after_mvs if mv.startswith("non_leaf_")]
 
             # 利用できるMVのあるnon_leaf_nodeを格納
             non_leaf_nodes_with_mv = {}
@@ -253,7 +276,7 @@ class Migration_Plan:
                 all_children_dict[node] = self.get_all_child_nodes(node)
                 print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}の全ての子ノード: {all_children_dict[node]}")
                 # 各non_leaf_nodeについて、その子ノードの中にbefore_mvsに含まれているものがあるかを確認
-                common_children = sorted(before_mvs.intersection(set(all_children_dict[node])))
+                common_children = list(before_mvs.intersection(set(all_children_dict[node])))
 
                 # ★ 包含関係にあるノードの中で最も外側のノードのみを選択 ★
                 if common_children:
@@ -290,9 +313,29 @@ class Migration_Plan:
                         mv_sqls[node] = mv_sql_non_new
                     else:
                         print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
-            
-            # DROP SQL を生成（before_mvs の中で after_mvs に含まれないもの）
-            mvs_to_drop = sorted([mv for mv in before_mvs if mv not in after_mvs])
+                """
+                if common_children:
+                    print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}は{common_children}を利用する")
+                    non_leaf_nodes_with_mv[node] = common_children
+                    # 新しい MV の SQL を生成　このパターン未確認
+                    mv_sql_non = self.generate_mv_sql_with_existing(node, common_children, self.time_ids[i+1])
+                    if mv_sql_non:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} の生成SQL作成")
+                        mv_sqls[node] = mv_sql_non # SQLを保存
+                    else:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
+                else:
+                    print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node}は新規に配置が必要")
+                    # 新規の場合も SQL 生成可能（existing_mvs を空で）
+                    mv_sql_non_new = self.generate_mv_sql_with_existing(node, [], self.time_ids[i+1])
+                    if mv_sql_non_new:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} の新規生成SQL作成")
+                        mv_sqls[node] = mv_sql_non_new # SQLを保存
+                    else:
+                        print(f"[{self.time_ids[i]} -> {self.time_ids[i+1]}] {node} のSQL生成失敗")
+                """
+            # DROP SQL を生成（before_mvs の中で after_mvs に含まれないもの）　これは実行のタイミングが分からない
+            mvs_to_drop = [mv for mv in before_mvs if mv not in after_mvs]
             drop_sqls = {}
             for mv in mvs_to_drop:
                 drop_sqls[mv] = f"DROP MATERIALIZED VIEW IF EXISTS {mv};"  # mv_プレフィックスなし
@@ -338,10 +381,36 @@ if __name__ == "__main__":
     parser_file = "experiments/small_test_ver2/time_dependent_output/qp_morning.pkl"  # pickle ファイル(子ノード情報用)
     summary_file = "experiments/small_test_ver2/time_dependent_output/normal_summary.json"  # JSON ファイル
     
+    # コマンドライン引数でMV生成方式を制御
+    import sys
+    generation_mode = "enhanced"  # デフォルト
+    
+    if '--rewriter' in sys.argv:
+        generation_mode = "rewriter"
+    elif '--subtree' in sys.argv:
+        generation_mode = "subtree"
+    
+    # 選択された方式を表示
+    mode_names = {
+        "enhanced": "EnhancedMVGenerator（フラット展開方式）",
+        "rewriter": "QueryRewriter（クエリ書き換え方式）",
+        "subtree": "SubtreeRestorer（サブツリー復元方式 + カラム推論）"
+    }
+    
+    print("=" * 60)
+    print(f"MV生成方式: {mode_names.get(generation_mode, generation_mode)}")
+    print("=" * 60)
+    print(f"使用方法:")
+    print(f"  python migration_planner.py          # EnhancedMVGenerator")
+    print(f"  python migration_planner.py --rewriter   # QueryRewriter")
+    print(f"  python migration_planner.py --subtree    # SubtreeRestorer")
+    print("=" * 60)
+    
     # Migration_Plan のインスタンス作成
     plan = Migration_Plan(
         parser_file=parser_file, 
-        summary_file=summary_file
+        summary_file=summary_file,
+        generation_mode=generation_mode
     )
 
     if plan.summary:

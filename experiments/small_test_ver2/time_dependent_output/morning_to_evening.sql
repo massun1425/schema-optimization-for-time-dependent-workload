@@ -23,24 +23,24 @@ FROM leaf_11, orders AS o
 WHERE o.product_id = leaf_11.product_id AND (o.total_amount >= '1000'::numeric);
 
 CREATE MATERIALIZED VIEW non_leaf_28 AS
-SELECT non_leaf_26.order_id,
-    non_leaf_26.user_id,
-    non_leaf_26.product_id,
-    non_leaf_26.quantity,
-    non_leaf_26.order_date,
-    non_leaf_26.total_amount,
-    non_leaf_26.product_id AS p_product_id,
-    non_leaf_26.name,
-    non_leaf_26.category,
-    non_leaf_26.price,
-    non_leaf_26.stock,
+SELECT o.order_id,
+    o.user_id,
+    o.product_id,
+    o.quantity,
+    o.order_date,
+    o.total_amount,
+    leaf_15.product_id AS p_product_id,
+    leaf_15.name,
+    leaf_15.category,
+    leaf_15.price,
+    leaf_15.stock,
     u.user_id AS u_user_id,
     u.name AS u_name,
     u.age,
     u.city,
     u.registered_date
-FROM non_leaf_26, users AS u
-WHERE non_leaf_26.user_id = u.user_id;
+FROM leaf_15, orders AS o, users AS u
+WHERE o.user_id = u.user_id AND o.product_id = leaf_15.product_id AND (o.order_date >= '2024-01-01'::date);
 
 CREATE MATERIALIZED VIEW non_leaf_5 AS
 SELECT leaf_3.order_id,
@@ -58,10 +58,9 @@ FROM leaf_3, products AS p
 WHERE leaf_3.product_id = p.product_id;
 
 -- DROP MATERIALIZED VIEW
-DROP MATERIALIZED VIEW IF EXISTS leaf_3;
 DROP MATERIALIZED VIEW IF EXISTS leaf_1;
-DROP MATERIALIZED VIEW IF EXISTS leaf_15;
 DROP MATERIALIZED VIEW IF EXISTS leaf_11;
+DROP MATERIALIZED VIEW IF EXISTS leaf_15;
+DROP MATERIALIZED VIEW IF EXISTS leaf_3;
 DROP MATERIALIZED VIEW IF EXISTS non_leaf_23;
-DROP MATERIALIZED VIEW IF EXISTS non_leaf_26;
 
