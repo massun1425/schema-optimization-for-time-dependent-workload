@@ -201,21 +201,16 @@ class Migration_Plan:
         
         return sorted(outermost_nodes)
 
-    def get_migration_plan(self):
+    def get_migration_plan(
+            self,
+            target_mv: str,
+            mv_set
+            ):
 
         migration_data = {} # マイグレーションプランを保存
-
-        # 各時刻のMVを格納
-        for time_id in self.get_time_id(self.summary):
-            if self.time_ids is None:
-                self.time_ids = []
-            if self.mvs is None:
-                self.mvs = []
-            self.time_ids.append(time_id)
-            self.mvs.append(self.get_selected_mvs(self.summary, time_id))
         
         #前の時刻と同じMVがあるか探す
-        for i in range(len(self.time_ids)-1):
+        
             before_mvs = set(self.mvs[i])
             after_mvs = set(self.mvs[i+1])
             common_mvs = sorted(before_mvs.intersection(after_mvs))

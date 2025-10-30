@@ -30,22 +30,8 @@
     "migration_plans_sql": {
       "leaf_7": "CREATE MATERIALIZED VIEW leaf_7 AS\nSELECT p.product_id, p.name, p.category, p.price, p.stock\nFROM products AS p\nWHERE (price >= '500'::numeric);",
       "non_leaf_16": "CREATE MATERIALIZED VIEW non_leaf_16 AS\nSELECT o.order_id,\n    o.user_id,\n    o.product_id,\n    o.quantity,\n    o.order_date,\n    o.total_amount,\n    leaf_11.product_id AS p_product_id,\n    leaf_11.name,\n    leaf_11.category,\n    leaf_11.price,\n    leaf_11.stock\nFROM leaf_11, orders AS o\nWHERE o.product_id = leaf_11.product_id AND (o.total_amount >= '1000'::numeric);",
-      "non_leaf_28": "CREATE MATERIALIZED VIEW non_leaf_28 AS\nSELECT o.order_id,\n    o.user_id,\n    o.product_id,\n    o.quantity,\n    o.order_date,\n    o.total_amount,\n    leaf_15.product_id AS p_product_id,\n    leaf_15.name,\n    leaf_15.category,\n    leaf_15.price,\n    leaf_15.stock,\n    u.user_id AS u_user_id,\n    u.name AS u_name,\n    u.age,\n    u.city,\n    u.registered_date\nFROM leaf_15, orders AS o, users AS u\nWHERE o.user_id = u.user_id AND o.product_id = leaf_15.product_id AND (o.order_date >= '2024-01-01'::date);",
+      "non_leaf_28": "CREATE MATERIALIZED VIEW non_leaf_28 AS\nSELECT o.order_id,\n    o.user_id,\n    o.product_id,\n    o.quantity,\n    o.order_date,\n    o.total_amount,\n    leaf_15.product_id AS p_product_id,\n    leaf_15.name,\n    leaf_15.category,\n    leaf_15.price,\n    leaf_15.stock,\n    u.user_id AS u_user_id,\n    u.name AS u_name,\n    u.age,\n    u.city,\n    u.registered_date\nFROM leaf_15, orders AS o, users AS u\nWHERE o.product_id = leaf_15.product_id AND o.user_id = u.user_id AND (o.order_date >= '2024-01-01'::date);",
       "non_leaf_5": "CREATE MATERIALIZED VIEW non_leaf_5 AS\nSELECT leaf_3.order_id,\n    leaf_3.user_id,\n    leaf_3.product_id,\n    leaf_3.quantity,\n    leaf_3.order_date,\n    leaf_3.total_amount,\n    p.product_id AS p_product_id,\n    p.name,\n    p.category,\n    p.price,\n    p.stock\nFROM leaf_3, products AS p\nWHERE leaf_3.product_id = p.product_id;"
-    },
-    "drop_mvs": [
-      "leaf_1",
-      "leaf_11",
-      "leaf_15",
-      "leaf_3",
-      "non_leaf_23"
-    ],
-    "drop_sqls": {
-      "leaf_1": "DROP MATERIALIZED VIEW IF EXISTS leaf_1;",
-      "leaf_11": "DROP MATERIALIZED VIEW IF EXISTS leaf_11;",
-      "leaf_15": "DROP MATERIALIZED VIEW IF EXISTS leaf_15;",
-      "leaf_3": "DROP MATERIALIZED VIEW IF EXISTS leaf_3;",
-      "non_leaf_23": "DROP MATERIALIZED VIEW IF EXISTS non_leaf_23;"
     }
   }
 }

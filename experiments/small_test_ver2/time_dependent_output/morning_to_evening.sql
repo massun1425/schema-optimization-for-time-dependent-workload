@@ -40,7 +40,7 @@ SELECT o.order_id,
     u.city,
     u.registered_date
 FROM leaf_15, orders AS o, users AS u
-WHERE o.user_id = u.user_id AND o.product_id = leaf_15.product_id AND (o.order_date >= '2024-01-01'::date);
+WHERE o.product_id = leaf_15.product_id AND o.user_id = u.user_id AND (o.order_date >= '2024-01-01'::date);
 
 CREATE MATERIALIZED VIEW non_leaf_5 AS
 SELECT leaf_3.order_id,
@@ -56,11 +56,4 @@ SELECT leaf_3.order_id,
     p.stock
 FROM leaf_3, products AS p
 WHERE leaf_3.product_id = p.product_id;
-
--- DROP MATERIALIZED VIEW
-DROP MATERIALIZED VIEW IF EXISTS leaf_1;
-DROP MATERIALIZED VIEW IF EXISTS leaf_11;
-DROP MATERIALIZED VIEW IF EXISTS leaf_15;
-DROP MATERIALIZED VIEW IF EXISTS leaf_3;
-DROP MATERIALIZED VIEW IF EXISTS non_leaf_23;
 
