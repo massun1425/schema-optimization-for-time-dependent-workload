@@ -35,6 +35,9 @@ class FrequencyOptimizer(BaseILPOptimizer):
 
         Selects MVs in order of usage frequency until storage budget
         is exhausted. MVs used by more queries are prioritized.
+        
+        Note: Does not enforce subsumption constraints here - they will be
+        enforced by the ILP solver in the optimization phase.
 
         Returns:
             Binary list indicating initial MV selection
@@ -104,6 +107,9 @@ class FrequencyOptimizer(BaseILPOptimizer):
 
         Adds parent nodes (upward) and child nodes (downward) of currently
         selected MVs to the candidate set.
+        
+        Note: Does not enforce subsumption constraints here - they will be
+        enforced by the ILP solver in the optimization phase.
 
         Args:
             z_j: Current MV selection
@@ -225,25 +231,35 @@ class FrequencyOptimizer(BaseILPOptimizer):
 
             # Check convergence
             if U_pre >= U_cur:
-                # Use previous solution
+                # Current solution is not better, stop iterating
+                # Keep the previous (better) solution in y_ij and z_j
                 break
 
-            # Update for next iteration
+            # Current solution is better, accept it
             U_pre = U_cur
             z_j = z_j_temp
             iter_count += 1
 
         execution_time = time.time() - start_time
 
-        # Calculate metrics
-        B_cur = self.calculate_storage_used(z_j)
-        mat_list = [j for j in range(len(z_j)) if z_j[j] == 1]
+        # Extract final z_j from y_ij (the actual ILP solution)
+        # Note: Do not use the z_j variable here, as it may contain neighbor_search candidates
+        # that were not validated by the ILP solver
+        final_z_j = [0] * len(self.b_j)
+        for j in range(len(self.b_j)):
+            # A node is materialized if it's used by any query in the ILP solution
+            if any(y_ij[i][j] == 1 for i in range(len(y_ij))):
+                final_z_j[j] = 1
+
+        # Calculate metrics using the ILP solution
+        B_cur = self.calculate_storage_used(final_z_j)
+        mat_list = [j for j in range(len(final_z_j)) if final_z_j[j] == 1]
         mat_node_names = self.make_nodename_from_id(mat_list)
 
         # Create result
         result = self.create_result(
             y_ij=y_ij,
-            z_j=z_j,
+            z_j=final_z_j,
             obj_val=U_cur,
             execution_time=execution_time,
             storage_used=B_cur,
