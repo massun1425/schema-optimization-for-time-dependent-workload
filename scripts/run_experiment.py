@@ -183,6 +183,19 @@ def cleanup_mv_files() -> None:
         
         with db.get_connection() as conn:
             with conn.cursor() as cur:
+                # 先に他のアクティブな接続を終了
+                logger.info("Terminating active connections...")
+                cur.execute("""
+                    SELECT pg_terminate_backend(pid)
+                    FROM pg_stat_activity
+                    WHERE datname = 'imdbload'
+                      AND pid != pg_backend_pid()
+                      AND state != 'idle'
+                """)
+                terminated = cur.fetchall()
+                if terminated:
+                    logger.info(f"Terminated {len(terminated)} active connections")
+                
                 # 既存のMVを削除
                 cur.execute("""
                     SELECT matviewname FROM pg_matviews 
@@ -326,9 +339,14 @@ def run_ilp_optimization(
                 "X": qp.X,
                 "q_s_list": qp.q_s_list,
                 "settings": settings,
-                "position_node_id": qp.position_node_id,
-                "deeplist": qp.deeplist,
             }
+            
+            # 近傍探索を使うアルゴリズムの場合、追加パラメータを渡す
+            if ilp_type in ["frequency", "utility", "utility_capacity"]:
+                optimizer_params.update({
+                    "position_node_id": qp.position_node_id,
+                    "deeplist": qp.deeplist,
+                })
             
             # BigSubs固有のパラメータを追加
             if ilp_type == "bigsubs":

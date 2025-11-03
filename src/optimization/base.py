@@ -202,28 +202,60 @@ class BaseILPOptimizer(ABC):
             k = list(set(M_i) & set(M_i_))
             M.append(k)
 
-        # Overlapping subexpression constraints - only for candidates
+        # Overlapping subexpression constraints
+        # For each query i and each beneficial subquery j in M[i],
+        # prevent using j together with any of its descendants
         t = 0
         for i in range(len(cand_i)):
             for j in M[i]:
-                # Build candidate X matrix for this j
-                cand_x_j = {}
-                for u_idx, u in enumerate(cand_j):
-                    cand_x_j[u_idx] = self.X[cand_j[j]][u]
+                # Get original node index for j
+                orig_j = cand_j[j]
                 
-                # Constraint: y[i,j] + sum(y[i,u] * X[j][u]) / |cand_j| <= 1
-                self.model.addConstr(
-                    y[i, j]
-                    + gp.quicksum(y[i, u] * cand_x_j[u] for u in M[i])
-                    / len(cand_j)
-                    <= 1,
-                    name=f"overlap_{t}",
-                )
+                # Find all descendants of orig_j among candidates
+                # and create subsumption constraint
+                descendant_indices = []
+                for u in range(len(cand_j)):
+                    orig_u = cand_j[u]
+                    if self.X[orig_j][orig_u] == 1:
+                        descendant_indices.append(u)
+                
+                # Only add constraint if there are descendants
+                if descendant_indices:
+                    # Constraint: if y[i,j]=1, then sum of y[i,u] for descendants must be 0
+                    # Formulated as: y[i,j] + sum(y[i,u] for u in descendants) / |cand_j| <= 1
+                    # The division by |cand_j| is a normalization factor from the original code
+                    self.model.addConstr(
+                        y[i, j]
+                        + gp.quicksum(y[i, u] for u in descendant_indices)
+                        / len(cand_j)
+                        <= 1,
+                        name=f"subsumption_{t}",
+                    )
                 
                 # y[i,j] can only be 1 if z[j]=1
                 self.model.addConstr(y[i, j] <= z[j], name=f"materialize_{t}")
                 t += 1
 
+        # Global subsumption constraints on z variables
+        # Prevent materializing both a node and its descendants
+        # This ensures subsumption is enforced across all queries
+        
+        constraint_count = 0
+        for j in range(len(cand_j)):
+            orig_j = cand_j[j]
+            
+            # Find descendants of orig_j among candidates
+            for u in range(len(cand_j)):
+                if u != j:
+                    orig_u = cand_j[u]
+                    if self.X[orig_j][orig_u] == 1:
+                        # Add pairwise constraint: cannot materialize both parent and child
+                        self.model.addConstr(
+                            z[j] + z[u] <= 1,
+                            name=f"global_subsumption_{j}_{u}",
+                        )
+                        constraint_count += 1
+        
         # Storage budget constraint - use original indices
         self.model.addConstr(
             gp.quicksum(self.b_j[cand_j[j]] * z[j] for j in range(len(cand_j)))
@@ -330,6 +362,23 @@ class BaseILPOptimizer(ABC):
             raise RuntimeError("Model not built. Call build_ilp_model_with_candidates first.")
 
         self.model.optimize()
+
+        # Debug: Check if leaf_1 and non_leaf_2 are both selected
+        leaf_1_idx = None
+        non_leaf_2_idx = None
+        for j in range(len(cand_j)):
+            orig_j = cand_j[j]
+            node_name = self.node_list[orig_j] if orig_j < len(self.node_list) else f"node_{orig_j}"
+            if node_name == "leaf_1":
+                leaf_1_idx = j
+            elif node_name == "non_leaf_2":
+                non_leaf_2_idx = j
+        
+        if leaf_1_idx is not None and non_leaf_2_idx is not None:
+            z_leaf_1 = int(z[leaf_1_idx].X)
+            z_non_leaf_2 = int(z[non_leaf_2_idx].X)
+            if z_leaf_1 + z_non_leaf_2 > 1:
+                print(f"WARNING: Constraint violated! Both leaf_1 and non_leaf_2 are selected")
 
         # Initialize solution arrays in full index space
         ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
