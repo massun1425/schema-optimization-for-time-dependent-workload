@@ -336,13 +336,14 @@ class CommaJoinRewriter:
         
         return filters
     
-    def rewrite_with_mv(self, sql: str, mv_id: str, mv_covers: set[str]) -> str:
-        """Rewrite query using a Materialized View.
+    
+    def rewrite_with_multiple_mvs(self, sql: str, mv_dict: dict[str, set[str]]) -> str:
+        """Rewrite query using multiple Materialized Views.
         
         Args:
             sql: Original SQL query
-            mv_id: MV identifier (e.g., 'leaf_1', 'non_leaf_5')
-            mv_covers: Set of table aliases covered by the MV
+            mv_dict: Dictionary mapping MV ID to set of covered table aliases
+                     e.g., {'leaf_1': {'u'}, 'leaf_2': {'u_1'}}
             
         Returns:
             Rewritten SQL query
@@ -352,15 +353,23 @@ class CommaJoinRewriter:
             logger.error("Failed to parse query for rewriting")
             return sql
         
-        # Check if MV covers all tables (full replacement)
+        # Build alias -> mv_id mapping
+        mv_replacements = {}
+        for mv_id, covered_aliases in mv_dict.items():
+            for alias in covered_aliases:
+                mv_replacements[alias] = mv_id
+        
+        covered_aliases = set(mv_replacements.keys())
         all_aliases = {t.alias for t in parsed['tables']}
         
-        if mv_covers == all_aliases:
-            # Full replacement
+        # Check if all tables are covered (full replacement)
+        if covered_aliases == all_aliases and len(mv_dict) == 1:
+            # Full replacement with single MV
+            mv_id = list(mv_dict.keys())[0]
             return self._rewrite_full_replacement(parsed, mv_id)
         else:
-            # Partial replacement
-            return self._rewrite_partial_replacement(parsed, mv_id, mv_covers)
+            # Partial or multiple MV replacement
+            return self._rewrite_partial_replacement_multi(parsed, mv_replacements)
     
     def _rewrite_full_replacement(self, parsed: dict, mv_id: str) -> str:
         """Rewrite query with full MV replacement.
@@ -405,35 +414,37 @@ class CommaJoinRewriter:
         logger.info(f"Full replacement with {mv_id}")
         return rewritten
     
-    def _rewrite_partial_replacement(self, parsed: dict, mv_id: str, 
-                                    mv_covers: set[str]) -> str:
-        """Rewrite query with partial MV replacement.
+    
+    def _rewrite_partial_replacement_multi(self, parsed: dict, 
+                                          mv_replacements: dict[str, str]) -> str:
+        """Rewrite query with partial replacement using multiple MVs.
         
         Args:
             parsed: Parsed query components
-            mv_id: MV identifier
-            mv_covers: Set of table aliases covered by MV
+            mv_replacements: Dictionary mapping table alias to MV ID
+                           e.g., {'u': 'leaf_1', 'u_1': 'leaf_2'}
             
         Returns:
             Rewritten SQL
         """
         select_clause = parsed['select_clause']
+        covered_aliases = set(mv_replacements.keys())
         
-        # Replace covered table aliases with MV alias
-        for table in parsed['tables']:
-            if table.alias in mv_covers:
-                select_clause = re.sub(
-                    rf'\b{table.alias}\.',
-                    f'{mv_id}.',
-                    select_clause
-                )
+        # Replace covered table aliases with MV aliases in SELECT clause
+        for alias, mv_id in mv_replacements.items():
+            select_clause = re.sub(
+                rf'\b{alias}\.',
+                f'{mv_id}.',
+                select_clause
+            )
         
-        # Build FROM clause
-        from_parts = [mv_id]
+        # Build FROM clause: all used MVs + uncovered tables
+        used_mvs = set(mv_replacements.values())
+        from_parts = list(used_mvs)  # All MVs being used
         
         # Add uncovered tables
         for table in parsed['tables']:
-            if table.alias not in mv_covers:
+            if table.alias not in covered_aliases:
                 from_parts.append(f"{table.table_name} AS {table.alias}")
         
         from_clause = ", ".join(from_parts)
@@ -443,36 +454,68 @@ class CommaJoinRewriter:
         
         # Add JOIN conditions
         for join in parsed['joins']:
-            left_in_mv = join.left_alias in mv_covers
-            right_in_mv = join.right_alias in mv_covers
+            left_covered = join.left_alias in covered_aliases
+            right_covered = join.right_alias in covered_aliases
             
-            if left_in_mv and right_in_mv:
-                # Both in MV, skip (already joined)
-                continue
-            elif left_in_mv or right_in_mv:
-                # One in MV, rewrite condition
+            if left_covered and right_covered:
+                # Both sides covered by MVs
+                left_mv = mv_replacements[join.left_alias]
+                right_mv = mv_replacements[join.right_alias]
+                
+                if left_mv == right_mv:
+                    # Same MV covers both → JOIN already done in MV, skip
+                    continue
+                else:
+                    # Different MVs → rewrite condition with MV IDs
+                    condition = join.condition
+                    condition = re.sub(rf'\b{join.left_alias}\.', f'{left_mv}.', condition)
+                    condition = re.sub(rf'\b{join.right_alias}\.', f'{right_mv}.', condition)
+                    where_parts.append(condition)
+            elif left_covered or right_covered:
+                # One side covered → rewrite condition
                 condition = join.condition
-                for alias in mv_covers:
-                    condition = re.sub(rf'\b{alias}\.', f'{mv_id}.', condition)
+                if left_covered:
+                    left_mv = mv_replacements[join.left_alias]
+                    condition = re.sub(rf'\b{join.left_alias}\.', f'{left_mv}.', condition)
+                if right_covered:
+                    right_mv = mv_replacements[join.right_alias]
+                    condition = re.sub(rf'\b{join.right_alias}\.', f'{right_mv}.', condition)
                 where_parts.append(condition)
             else:
-                # Neither in MV, keep as-is
+                # Neither covered → keep as-is
                 where_parts.append(join.condition)
         
-        # Add filter conditions (only for tables NOT in MV)
+        # Add filter conditions
         for filter_cond in parsed['filters']:
             # Check if this filter refers to any covered table
-            filter_refers_to_mv = False
-            for alias in mv_covers:
-                if re.search(rf'\b{alias}\.', filter_cond):
-                    filter_refers_to_mv = True
-                    break
+            refers_to_covered = False
+            refers_only_to_covered = True
+            rewritten_filter = filter_cond
             
-            # Only add filter if it doesn't refer to MV-covered tables
-            if not filter_refers_to_mv:
-                where_parts.append(filter_cond)
-            else:
+            for alias in covered_aliases:
+                if re.search(rf'\b{alias}\.', filter_cond):
+                    refers_to_covered = True
+                    # Rewrite filter with MV ID
+                    mv_id = mv_replacements[alias]
+                    rewritten_filter = re.sub(rf'\b{alias}\.', f'{mv_id}.', rewritten_filter)
+            
+            # Check if filter also refers to non-covered tables
+            for table in parsed['tables']:
+                if table.alias not in covered_aliases:
+                    if re.search(rf'\b{table.alias}\.', filter_cond):
+                        refers_only_to_covered = False
+                        break
+            
+            if refers_to_covered and refers_only_to_covered:
+                # Filter refers ONLY to MV-covered tables → skip (already in MV)
                 logger.debug(f"Skipping filter (already in MV): {filter_cond}")
+                continue
+            elif refers_to_covered:
+                # Filter refers to both covered and uncovered tables → keep with rewrite
+                where_parts.append(rewritten_filter)
+            else:
+                # Filter doesn't refer to covered tables → keep as-is
+                where_parts.append(filter_cond)
         
         # Build rewritten SQL
         rewritten = f"SELECT {select_clause}\nFROM {from_clause}"
@@ -482,14 +525,21 @@ class CommaJoinRewriter:
             rewritten += f"\nWHERE {where_clause}"
         
         if parsed['group_by']:
-            rewritten += f"\nGROUP BY {parsed['group_by']}"
+            group_by = parsed['group_by']
+            for alias, mv_id in mv_replacements.items():
+                group_by = re.sub(rf'\b{alias}\.', f'{mv_id}.', group_by)
+            rewritten += f"\nGROUP BY {group_by}"
         
         if parsed['order_by']:
-            rewritten += f"\nORDER BY {parsed['order_by']}"
+            order_by = parsed['order_by']
+            for alias, mv_id in mv_replacements.items():
+                order_by = re.sub(rf'\b{alias}\.', f'{mv_id}.', order_by)
+            rewritten += f"\nORDER BY {order_by}"
         
         # rewritten += ";" これはgenerateのタイミングで追加
         
-        logger.info(f"Partial replacement with {mv_id}, covers: {mv_covers}")
+        used_mv_list = list(used_mvs)
+        logger.info(f"Partial replacement with MVs: {used_mv_list}, covers: {covered_aliases}")
         return rewritten
 
 

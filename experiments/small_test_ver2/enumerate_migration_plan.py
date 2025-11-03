@@ -14,8 +14,8 @@ from config.settings import Settings
 from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
 from experiments.small_test_ver2.simple_mv_sql_generator import SimpleMVSQLGenerator
 
-class GetMigrationCosts:
-    """MVのEXPLAINコストを取得"""
+class GetMigrationPlans:
+    """MVのマイグレーションプランを取得"""
     def __init__(
             self,
             settings: Settings | None = None,
@@ -221,7 +221,7 @@ if __name__ == "__main__":
     # settings = Settings()
     parser_file = Path(__file__).parent / "time_dependent_output" / "qp_morning.pkl"
 
-    migrator = GetMigrationCosts(
+    migrator = GetMigrationPlans(
         parser_file = str(parser_file)
     )
 

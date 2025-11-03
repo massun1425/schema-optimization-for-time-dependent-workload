@@ -88,19 +88,24 @@ class SimpleMVSQLGenerator:
                     schema_provider=schema_provider
                 )
                 
-                # 各既存MVに対して書き換えを試行
-                rewritten_query = base_query
+                # 各既存MVのカバー範囲を判定
+                mv_dict = {}  # mv_id -> set of covered aliases
                 for mv_id in existing_mvs:
-                    mv_tables = self._get_mv_covered_aliases(mv_id, rewritten_query)
+                    mv_tables = self._get_mv_covered_aliases(mv_id, base_query)
                     if mv_tables:
-                        print(f"  [INFO] {mv_id} で書き換え: {mv_tables}")
-                        rewritten_query = comma_rewriter.rewrite_with_mv(
-                            rewritten_query, 
-                            mv_id, 
-                            mv_tables
-                        )
+                        print(f"  [INFO] {mv_id} がカバー: {mv_tables}")
+                        mv_dict[mv_id] = mv_tables
                     else:
                         print(f"  [INFO] {mv_id} はクエリをカバーしない")
+                
+                # 複数MVで書き換え
+                if mv_dict:
+                    rewritten_query = comma_rewriter.rewrite_with_multiple_mvs(
+                        base_query, 
+                        mv_dict
+                    )
+                else:
+                    rewritten_query = base_query
             else:
                 print(f"  [INFO] 既存MVなし、元クエリを使用")
                 rewritten_query = base_query
