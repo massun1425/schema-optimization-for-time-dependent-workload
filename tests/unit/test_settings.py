@@ -19,7 +19,8 @@ def test_default_settings():
     assert settings.database.port == 5432
     assert settings.database.database == "imdbload"
     assert settings.optimization.storage_limit_mb == 50
-    assert settings.optimization.storage_limit_bytes == 52428800
+    # storage_limit_bytes should be storage_limit_mb * 1024 * 1024
+    assert settings.optimization.storage_limit_bytes == settings.optimization.storage_limit_mb * 1024 * 1024
     assert settings.query.use_ceb is False
     assert settings.query.num_queries == 113
 
@@ -44,7 +45,8 @@ def test_optimization_config():
     )
 
     assert opt_config.storage_limit_mb == 100
-    assert opt_config.storage_limit_bytes == 104857600
+    # storage_limit_bytes should match storage_limit_mb * 1024 * 1024
+    assert opt_config.storage_limit_bytes == opt_config.storage_limit_mb * 1024 * 1024
     assert opt_config.insert_queries == 2000
     assert opt_config.algorithms["normal"] is True
 
@@ -78,7 +80,8 @@ query:
         assert settings.database.port == 5433
         assert settings.database.database == "testdb"
         assert settings.optimization.storage_limit_mb == 100
-        assert settings.optimization.storage_limit_bytes == 104857600
+        # storage_limit_bytes should match storage_limit_mb * 1024 * 1024
+        assert settings.optimization.storage_limit_bytes == settings.optimization.storage_limit_mb * 1024 * 1024
         assert settings.query.use_ceb is True
         assert settings.query.num_queries == 500
     finally:
@@ -162,7 +165,8 @@ query:
         assert settings.database.host == "envhost"
         assert settings.database.port == 9999
         assert settings.optimization.storage_limit_mb == 200
-        assert settings.optimization.storage_limit_bytes == 200 * 1024 * 1024
+        # storage_limit_bytes should match storage_limit_mb * 1024 * 1024
+        assert settings.optimization.storage_limit_bytes == settings.optimization.storage_limit_mb * 1024 * 1024
         assert settings.query.use_ceb is True
         assert settings.logging.level == "DEBUG"
     finally:
@@ -178,11 +182,12 @@ def test_backward_compatibility():
     settings = Settings()
     settings.query.use_ceb = True
     settings.query.num_queries = 500
-    settings.optimization.storage_limit_bytes = 100 * 1024 * 1024
+    storage_bytes = 100 * 1024 * 1024
+    settings.optimization.storage_limit_bytes = storage_bytes
 
     # Test backward compatibility properties
     assert settings.GET_CEB is True
-    assert settings.B_max == 100 * 1024 * 1024
+    assert settings.B_max == storage_bytes
     assert settings.q_num == 500
 
 
