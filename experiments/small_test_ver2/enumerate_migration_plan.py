@@ -219,7 +219,7 @@ if __name__ == "__main__":
     #from config.settings import Settings
 
     # settings = Settings()
-    parser_file = Path(__file__).parent / "time_dependent_output" / "qp_morning.pkl"
+    parser_file = Path(__file__).parent / "time_dependent_output" / "qp_class.pkl"
 
     migrator = GetMigrationPlans(
         parser_file = str(parser_file)

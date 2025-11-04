@@ -1,4 +1,4 @@
-"""頻度重み付けQueryParserラッパー
+"""頻度重み付けQueryParserラッパー もう使わなそう
 
 src/core/query_parser.py を変更せずに、
 experiments/small_test 専用の頻度重み付け機能を提供します。

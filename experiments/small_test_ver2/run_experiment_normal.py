@@ -58,8 +58,9 @@ class NormalModeExperiment:
         self.optimized_dir = self.exp_dir / "04_optimized"
         self.mv_sql_dir = self.exp_dir / "05_mv_sql"
         self.rewritten_dir = self.exp_dir / "06_rewritten"
-        
-        self.pickle_path = self.exp_dir / "qp_class.pkl"
+
+        self.pickle_path = self.exp_dir / "time_dependent_output" / "qp_class.pkl"
+
         self.qp: Optional[QueryParser] = None
         self.result = None
     
@@ -180,21 +181,21 @@ class NormalModeExperiment:
         return True
     
     def phase2_parse_queries(self):
-        """フェーズ2: クエリパース（頻度重み付け）"""
+        """フェーズ2: クエリパース（頻度重み付けを行わないように変更済み）"""
         self.print_header("クエリパース", 2)
         
-        from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
+        # from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
         
-        self.print_info("FrequencyWeightedParser を初期化")
+        # self.print_info("FrequencyWeightedParser を初期化")
         
-        frequency_file = self.queries_dir / "frequency.json"
+        # frequency_file = self.queries_dir / "frequency.json"
         
-        if frequency_file.exists():
-            self.print_info(f"頻度情報ファイル: {frequency_file}")
-            self.qp = FrequencyWeightedParser(self.settings, str(frequency_file))
-        else:
-            self.print_info("頻度情報ファイルが見つかりません。通常のパーサーを使用")
-            self.qp = QueryParser(self.settings)
+        # if frequency_file.exists():
+           # self.print_info(f"頻度情報ファイル: {frequency_file}")
+           # self.qp = FrequencyWeightedParser(self.settings, str(frequency_file))
+    
+        # self.print_info("頻度情報ファイルが見つかりません。通常のパーサーを使用")
+        self.qp = QueryParser(self.settings)
         
         self.print_info("クエリをパース中...")
         try:
@@ -210,9 +211,9 @@ class NormalModeExperiment:
             
             insert_query = self.settings.optimization.insert_queries
             
-            if isinstance(self.qp, FrequencyWeightedParser):
-                self.qp.apply_frequency_weights(files)
-                self.qp.calculate_maintenance_costs(insert_query)
+            #if isinstance(self.qp, FrequencyWeightedParser):
+             #   self.qp.apply_frequency_weights(files)
+              #  self.qp.calculate_maintenance_costs(insert_query)
             
             self.print_success(f"{len(self.qp.query)}個のクエリをパース完了")
             self.print_info(f"  リーフノード数: {len(self.qp.qm.leaf_nodes_map)}")

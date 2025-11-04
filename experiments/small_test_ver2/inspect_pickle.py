@@ -145,8 +145,8 @@ def main():
         output_path = sys.argv[2] if len(sys.argv) > 2 else None
     else:
         # デフォルトパス
-        pickle_path = "experiments/small_test_ver2/time_dependent_output/qp_morning.pkl"
-        output_path = None
+        pickle_path = "experiments/small_test_ver2/time_dependent_output/qp_class.pkl"
+        output_path = "experiments/small_test_ver2/time_dependent_output/qp_class.json"
     
     inspect_query_parser(pickle_path, output_path)
     
