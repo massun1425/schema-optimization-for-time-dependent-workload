@@ -128,7 +128,7 @@ class GetMigrationPlans:
             target_mv: str
     ):
         mv_sqls = {}
-        mv_sqls[str(target_mv)] = target_mv # マイグレーションなし
+        mv_sqls[str([target_mv])] = target_mv # マイグレーションなし
         mv_sql = self.generate_mv_sql_with_existing(target_mv, [])
         if mv_sql:
             mv_sqls["[]"] = mv_sql

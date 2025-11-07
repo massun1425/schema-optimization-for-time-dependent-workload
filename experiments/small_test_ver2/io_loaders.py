@@ -1,0 +1,211 @@
+"""I/O loaders for time-dependent optimization.
+
+This module provides utilities to load JSON/pickle data required for
+time-dependent materialized view optimization with migration costs.
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import logging
+import os
+from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
+
+
+def load_qp_inputs(base_dir: str) -> dict:
+    """
+    Load optimization inputs from qp_class.json.
+
+    Args:
+        base_dir: Base directory (e.g., experiments/small_test_ver2)
+
+    Returns:
+        Dictionary with keys:
+            - s_num: Number of subqueries
+            - node_list: List of node IDs
+            - b_j: List of storage sizes for each MV candidate
+            - u_ij: 2D list of utility (benefit) for query i using MV j
+            - X: 2D list (J×J) of inclusion relationships
+            - B_max: Storage budget
+    """
+    # Priority: time_dependent_output/qp_class.json (9 queries)
+    json_path_td = os.path.join(base_dir, "time_dependent_output", "qp_class.json")
+    json_path_root = os.path.join(base_dir, "qp_class.json")
+    
+    if os.path.exists(json_path_td):
+        json_path = json_path_td
+        logger.info(f"Loading qp_class.json from time_dependent_output (priority)")
+    elif os.path.exists(json_path_root):
+        json_path = json_path_root
+        logger.info(f"Loading qp_class.json from root (fallback)")
+    else:
+        raise FileNotFoundError(f"qp_class.json not found in {base_dir} or time_dependent_output")
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    # Extract data from JSON (data is already a dict)
+    # Skip metadata keys that start with underscore
+    data = {k: v for k, v in data.items() if not k.startswith("_")}
+
+    # Fallback for missing fields
+    node_list = data.get("node_list") or []
+    J = len(node_list)
+    I = len(data.get("u_ij") or []) or len(data.get("q_s_list") or [])
+
+    data.setdefault("s_num", J)
+    data.setdefault("b_j", data.get("b_j") or [1] * J)
+    data.setdefault("u_ij", data.get("u_ij") or [[0.0] * J for _ in range(I or 1)])
+    # X: inclusion matrix (J×J)
+    data.setdefault("X", data.get("X") or [[0] * J for _ in range(J)])
+    # B_max: storage budget (default 30% of total)
+    if "B_max" not in data:
+        b = data.get("b_j", [1] * J)
+        data["B_max"] = float(sum(b) * 0.3)
+
+    return {
+        "s_num": int(data.get("s_num", J)),
+        "node_list": node_list,
+        "b_j": list(map(float, data.get("b_j", [1] * J))),
+        "u_ij": data.get("u_ij"),
+        "X": data.get("X"),
+        "B_max": float(data.get("B_max", sum(data.get("b_j", [1] * J)) * 0.3)),
+    }
+
+
+def load_timesteps_and_frequencies(base_dir: str) -> Tuple[List[str], Dict[str, List[float]]]:
+    """
+    Extract timesteps and query frequencies from frequency_time_dependent.json.
+
+    Args:
+        base_dir: Base directory (e.g., experiments/small_test_ver2)
+
+    Returns:
+        Tuple of (timestep_names, frequency_dict)
+        - timestep_names: List of timestep IDs (e.g., ["morning", "evening"])
+        - frequency_dict: Dict mapping timestep ID to list of query frequencies
+    """
+    freq_path = os.path.join(base_dir, "01_queries", "frequency_time_dependent.json")
+    if not os.path.exists(freq_path):
+        logger.warning(f"frequency_time_dependent.json not found, using defaults")
+        return ["t0", "t1"], {"t0": [1.0], "t1": [1.0]}
+
+    with open(freq_path, "r", encoding="utf-8") as f:
+        freq_data = json.load(f)
+
+    timestep_data = freq_data.get("timesteps", [])
+    if not timestep_data:
+        logger.warning("No timesteps found in frequency_time_dependent.json")
+        return ["t0", "t1"], {"t0": [1.0], "t1": [1.0]}
+
+    timesteps = []
+    frequencies = {}
+
+    for ts_entry in timestep_data:
+        time_id = ts_entry.get("time_id")
+        if not time_id:
+            continue
+
+        timesteps.append(time_id)
+        frequencies_dict = ts_entry.get("frequencies", {})
+        
+        # Sort by query filename (query1.json, query2.json, ...)
+        query_files = sorted(
+            frequencies_dict.keys(), 
+            key=lambda x: int(x.replace("query", "").replace(".json", ""))
+        )
+        freq_list = [float(frequencies_dict.get(qf, 1.0)) for qf in query_files]
+        frequencies[time_id] = freq_list
+
+    return timesteps, frequencies
+
+# 今は使っていない
+def load_query_frequency(
+    base_dir: str, timesteps: List[str], query_count: int
+) -> Dict[str, List[float]]:
+    """
+    DEPRECATED: Use load_timesteps_and_frequencies instead.
+    
+    Load query frequency for each timestep from frequency_time_dependent.json.
+
+    Args:
+        base_dir: Base directory (e.g., experiments/small_test_ver2)
+        timesteps: List of timestep names
+        query_count: Number of queries (I)
+
+    Returns:
+        Dictionary mapping timestep name to list of frequencies (length I)
+    """
+    logger.warning("load_query_frequency is deprecated, use load_timesteps_and_frequencies")
+    timesteps_loaded, frequencies = load_timesteps_and_frequencies(base_dir)
+    
+    # Ensure correct length for all timesteps
+    result = {}
+    for t in timesteps:
+        if t in frequencies:
+            freq_list = frequencies[t]
+            if len(freq_list) < query_count:
+                freq_list.extend([1.0] * (query_count - len(freq_list)))
+            elif len(freq_list) > query_count:
+                freq_list = freq_list[:query_count]
+            result[t] = freq_list
+        else:
+            result[t] = [1.0] * query_count
+    
+    return result
+
+
+def parse_migration_costs(
+    path: str, node_list: List[str]
+) -> Dict[int, List[Tuple[Tuple[int, ...], float]]]:
+    """
+    Parse migration_costs.json into recipe format.
+
+    Args:
+        path: Path to migration_costs.json
+        node_list: List of node IDs (from qp_class)
+
+    Returns:
+        Dictionary mapping j (MV index) to list of (recipe_tuple, cost)
+        where recipe_tuple is a tuple of dependency indices.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+
+    idx = {node_id: j for j, node_id in enumerate(node_list)}
+    mig: Dict[int, List[Tuple[Tuple[int, ...], float]]] = {}
+
+    for node_id, mapping in raw.items():
+        j = idx.get(node_id)
+        if j is None:
+            logger.debug(f"Node {node_id} not found in node_list, skipping")
+            continue
+
+        recipes: List[Tuple[Tuple[int, ...], float]] = []
+        for k_str, cost in mapping.items():
+            try:
+                ids = ast.literal_eval(k_str)
+                if not isinstance(ids, list):
+                    ids = []
+            except Exception:
+                ids = []
+
+            dep_indices: List[int] = []
+            for dep_node_id in ids:
+                dep_j = idx.get(dep_node_id)
+                if dep_j is not None:
+                    dep_indices.append(dep_j)
+
+            recipes.append((tuple(sorted(dep_indices)), float(cost)))
+
+        # Add fallback empty recipe (full build) if not present
+        if not any(len(r[0]) == 0 for r in recipes):
+            logger.warning(f"Node {node_id} has no full-build recipe (empty list), adding with inf cost")
+            recipes.append((tuple(), float("inf")))
+
+        mig[j] = recipes
+
+    return mig
