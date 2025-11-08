@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -32,7 +32,8 @@ class MigrationCostCalculator:
         if json_file_path:
             self.json_file_path = Path(json_file_path)
         else:
-            self.json_file_path = Path(__file__).parent / "time_dependent_output" / "migration_plan" / "migration_plans.json"
+            # parent.parent で small_test_ver2 ディレクトリに移動
+            self.json_file_path = Path(__file__).parent.parent / "time_dependent_output" / "migration_plan" / "migration_plans.json"
         
         # 出力ディレクトリのパス
         self.output_dir = self.json_file_path.parent
@@ -251,7 +252,7 @@ class MigrationCostCalculator:
 
 if __name__ == "__main__":
     # config.yamlから設定を読み込み（UTF-8で明示的に読み込み）
-    config_path = Path(__file__).parent / "config.yaml"
+    config_path = Path(__file__).parent.parent / "config.yaml"
     
     # UTF-8でYAMLを読み込む
     with open(config_path, 'r', encoding='utf-8') as f:

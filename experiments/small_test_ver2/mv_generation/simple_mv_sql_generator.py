@@ -12,9 +12,9 @@ from typing import Optional
 import re
 import logging
 
-from experiments.small_test_ver2.enhanced_mv_generator import EnhancedMVGenerator
-from experiments.small_test_ver2.small_test_schema_provider import SmallTestSchemaProvider
-from experiments.small_test_ver2.comma_join_rewriter import CommaJoinRewriter
+from experiments.small_test_ver2.mv_generation.enhanced_mv_generator import EnhancedMVGenerator
+from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
+from experiments.small_test_ver2.mv_generation.comma_join_rewriter import CommaJoinRewriter
 
 
 logger = logging.getLogger(__name__)
@@ -201,8 +201,8 @@ class SimpleMVSQLGenerator:
             
             # クエリからテーブルエイリアスを抽出して検証
             # CommaJoinRewriterのparse_queryを使用
-            from experiments.small_test_ver2.comma_join_rewriter import CommaJoinRewriter
-            from experiments.small_test_ver2.small_test_schema_provider import SmallTestSchemaProvider
+            from experiments.small_test_ver2.mv_generation.comma_join_rewriter import CommaJoinRewriter
+            from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
             
             schema_provider = SmallTestSchemaProvider()
             rewriter = CommaJoinRewriter(self.qp.qm, schema_provider)

@@ -7,12 +7,12 @@ from pathlib import Path
 from itertools import combinations
 from typing import List, Dict, Any
 
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
 from src.core.query_parser import QueryParser
-from experiments.small_test_ver2.simple_mv_sql_generator import SimpleMVSQLGenerator
+from experiments.small_test_ver2.mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
 
 class GetMigrationPlans:
     """MVのマイグレーションプランを取得"""
@@ -176,8 +176,8 @@ class GetMigrationPlans:
         if not self.sql:
             print("エラー: マイグレーションプランが生成されていません")
             return
-        # 出力dirのパス
-        output_dir = Path(__file__).parent / "time_dependent_output" / "migration_plan"
+        # 出力dirのパス (parent.parent で small_test_ver2 に移動)
+        output_dir = Path(__file__).parent.parent / "time_dependent_output" / "migration_plan"
         output_dir.mkdir(parents=True, exist_ok=True)
         # ファイルパス
         output_file = output_dir / filename
@@ -219,7 +219,7 @@ if __name__ == "__main__":
     #from config.settings import Settings
 
     # settings = Settings()
-    parser_file = Path(__file__).parent / "time_dependent_output" / "qp_class.pkl"
+    parser_file = Path(__file__).parent.parent / "time_dependent_output" / "qp_class.pkl"
 
     migrator = GetMigrationPlans(
         parser_file = str(parser_file)

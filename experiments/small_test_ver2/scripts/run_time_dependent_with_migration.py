@@ -15,14 +15,14 @@ import os
 import sys
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from io_loaders import (
+from experiments.small_test_ver2.core.io_loaders import (
     load_qp_inputs,
     load_timesteps_and_frequencies,
     parse_migration_costs,
 )
-from time_dependent_optimizer import TimeDependentOptimizer
+from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
 
 # Set up logging
 logging.basicConfig(
@@ -191,7 +191,8 @@ def analyze_migration_transitions(
 def main():
     """Main execution function."""
     # Paths
-    base_dir = os.path.dirname(__file__)
+    # Get the small_test_ver2 directory (parent of scripts/)
+    base_dir = os.path.dirname(os.path.dirname(__file__))
     output_dir = os.path.join(base_dir, "time_dependent_output")
     os.makedirs(output_dir, exist_ok=True)
 
@@ -208,7 +209,7 @@ def main():
     b_j = qp["b_j"]
     
     # Calculate storage budget (30% of total storage)
-    B_max = float(102400)
+    B_max = float(10240)
 
     logger.info(f"  - Queries: {len(u_ij)}")
     logger.info(f"  - MV candidates: {len(node_list)}")

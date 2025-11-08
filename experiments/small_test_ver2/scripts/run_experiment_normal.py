@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -340,8 +340,8 @@ class NormalModeExperiment:
                 self.result = result_data
         
         try:
-            from experiments.small_test_ver2.enhanced_mv_generator import EnhancedMVGenerator
-            from experiments.small_test_ver2.small_test_schema_provider import SmallTestSchemaProvider
+            from experiments.small_test_ver2.mv_generation.enhanced_mv_generator import EnhancedMVGenerator
+            from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
             
             selected_views = self.result.get('selected_views', []) if isinstance(self.result, dict) else self.result.selected_views
             
@@ -462,7 +462,7 @@ class NormalModeExperiment:
         """フェーズ6: クエリ書き換え"""
         self.print_header("クエリ書き換え", 6)
         
-        from experiments.small_test_ver2.query_rewriter import QueryRewriter
+        from experiments.small_test_ver2.rewrite.query_rewriter import QueryRewriter
         
         if self.qp is None:
             self.print_info("QueryParserを読み込み中...")

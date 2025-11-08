@@ -27,12 +27,14 @@
 
 ```bash
 # フェーズ0: データベースのセットアップ
-python experiments/small_test_ver2/run_experiment_normal.py --phase 0
+```bash
+# フェーズ0: データベースのセットアップ
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 0
 ```
 
 ```bash
 # フェーズ1: クエリのEXPLAIN JSON生成
-python experiments/small_test_ver2/run_experiment_normal.py --phase 1
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1
 ```
 
 **生成されるファイル**:
@@ -46,7 +48,7 @@ EXPLAIN結果を解析し、MV候補とその効用を計算します。
 
 ```bash
 # フェーズ2: クエリパース
-python experiments/small_test_ver2/run_experiment_normal.py --phase 2
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2
 ```
 
 **生成されるファイル**:
@@ -61,7 +63,7 @@ python experiments/small_test_ver2/run_experiment_normal.py --phase 2
 各MV候補について、作成に必要な依存関係とマイグレーションプラン（SQLレシピ）を列挙します。
 
 ```bash
-python experiments/small_test_ver2/enumerate_migration_plan.py
+python experiments/small_test_ver2/migration/enumerate_migration_plan.py
 ```
 
 **生成されるファイル**:
@@ -74,7 +76,7 @@ python experiments/small_test_ver2/enumerate_migration_plan.py
 各マイグレーションプランを実際に実行し、コストを測定します。
 
 ```bash
-python experiments/small_test_ver2/migration_cost_calculator.py
+python experiments/small_test_ver2/migration/migration_cost_calculator.py
 ```
 
 **生成されるファイル**:
@@ -87,7 +89,7 @@ python experiments/small_test_ver2/migration_cost_calculator.py
 タイムステップごとのクエリ頻度とマイグレーションコストを考慮して、ILP最適化を実行します。
 
 ```bash
-python experiments/small_test_ver2/run_time_dependent_with_migration.py
+python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py
 ```
 
 **生成されるファイル**:
@@ -117,30 +119,74 @@ python experiments/small_test_ver2/run_time_dependent_with_migration.py
 
 ---
 
+## ディレクトリ構造
+
+```
+experiments/small_test_ver2/
+├── core/                          # コア機能（必須）
+│   ├── time_dependent_optimizer.py    # ILP最適化クラス
+│   ├── io_loaders.py                  # データロード
+│   └── small_test_schema_provider.py  # スキーマプロバイダー
+├── migration/                     # マイグレーション関連
+│   ├── enumerate_migration_plan.py    # プラン列挙
+│   └── migration_cost_calculator.py   # コスト計算
+├── mv_generation/                 # MV生成関連
+│   ├── enhanced_mv_generator.py       # 拡張MVジェネレーター
+│   ├── simple_mv_sql_generator.py     # シンプルSQLジェネレーター
+│   └── comma_join_rewriter.py         # カンマ結合書き換え
+├── rewrite/                       # クエリ書き換え
+│   └── query_rewriter.py              # クエリリライター
+├── scripts/                       # 実行スクリプト
+│   ├── run_experiment_normal.py       # 通常実験
+│   └── run_time_dependent_with_migration.py  # 時間依存最適化
+├── utils/                         # ユーティリティ
+│   └── inspect_pickle.py              # デバッグ用
+├── 01_queries/                    # クエリ定義
+├── 02_json/                       # EXPLAIN出力
+├── 03_parsed/                     # パース結果
+├── time_dependent_output/         # 最適化出力
+├── small_docs/                    # ドキュメント
+├── 00_setup.sql
+├── insert_queries.sql
+├── config.yaml
+└── README.md
+```
+
+---
+
 ## 実行スクリプトと関連ファイル
 
 ### コアスクリプト（実行に必須）
-| ファイル名 | 役割 |
-|-----------|------|
-| `run_experiment_normal.py` | データベースセットアップ、EXPLAIN取得、クエリパース |
-| `enumerate_migration_plan.py` | マイグレーションプラン（SQL）の列挙 |
-| `migration_cost_calculator.py` | マイグレーションコストの測定 |
-| `run_time_dependent_with_migration.py` | 時間依存最適化のメイン実行スクリプト |
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `run_experiment_normal.py` | `scripts/` | データベースセットアップ、EXPLAIN取得、クエリパース |
+| `enumerate_migration_plan.py` | `migration/` | マイグレーションプラン（SQL）の列挙 |
+| `migration_cost_calculator.py` | `migration/` | マイグレーションコストの測定 |
+| `run_time_dependent_with_migration.py` | `scripts/` | 時間依存最適化のメイン実行スクリプト |
 
 ### 最適化・パースクラス
-| ファイル名 | 役割 |
-|-----------|------|
-| `time_dependent_optimizer.py` | 時間依存ILP最適化クラス（変数・制約・目的関数の定義） |
-| `io_loaders.py` | データロードユーティリティ（pickle/JSONの読み込み） |
-| `time_dependent_parser.py` | 時間依存ワークロード用のクエリパーサ |
-| `frequency_weighted_parser.py` | 頻度重み付きクエリパーサ |
-| `small_test_schema_provider.py` | スキーマ情報プロバイダー |
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `time_dependent_optimizer.py` | `core/` | 時間依存ILP最適化クラス（変数・制約・目的関数の定義） |
+| `io_loaders.py` | `core/` | データロードユーティリティ（pickle/JSONの読み込み） |
+| `small_test_schema_provider.py` | `core/` | スキーマ情報プロバイダー |
 
-### 補助スクリプト
-| ファイル名 | 役割 |
-|-----------|------|
-| `migration_planner.py` | マイグレーションプランの生成ロジック |
-| `inspect_pickle.py` | pickleファイルの内容確認用 |
+### MV生成関連
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `enhanced_mv_generator.py` | `mv_generation/` | 拡張MVジェネレーター |
+| `simple_mv_sql_generator.py` | `mv_generation/` | シンプルSQLジェネレーター |
+| `comma_join_rewriter.py` | `mv_generation/` | カンマ結合書き換え |
+
+### クエリ書き換え
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `query_rewriter.py` | `rewrite/` | クエリリライター |
+
+### ユーティリティ
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `inspect_pickle.py` | `utils/` | pickleファイルの内容確認用 |
 
 ### データベース関連
 | ファイル名 | 役割 |
@@ -224,7 +270,7 @@ python experiments/small_test_ver2/run_time_dependent_with_migration.py
 ## 実験設定のカスタマイズ
 
 ### ストレージ予算の変更
-`run_time_dependent_with_migration.py` の以下の行を編集：
+`scripts/run_time_dependent_with_migration.py` の以下の行を編集：
 ```python
 B_max = float(102400)  # バイト単位（例: 100KB）
 ```
@@ -250,16 +296,6 @@ B_max = float(102400)  # バイト単位（例: 100KB）
 - `time_dependent_output/morning_to_evening.sql`
 - `02_json/query*.json`（実行後に再生成可能）
 - `03_parsed/query*_parsed.json`（実行後に再生成可能）
-
-### 使用されない補助スクリプト
-- `run_experiment_time_dependent.py`（旧版、現在は run_time_dependent_with_migration.py を使用）
-- `comma_join_rewriter.py`（別機能）
-- `enhanced_mv_generator.py`（別機能）
-- `mv_creator.py`（別機能）
-- `mv_sql_generator.py`（別機能）
-- `simple_mv_sql_generator.py`（別機能）
-- `query_rewriter.py`（別機能）
-- `inspect_pickle.py`（デバッグ用、実行には不要）
 
 ### ドキュメント・計画ファイル
 - `small_docs/`（ドキュメントのみ、実行には不要）
