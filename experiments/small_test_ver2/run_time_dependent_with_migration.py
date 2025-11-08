@@ -206,11 +206,14 @@ def main():
     u_ij = qp["u_ij"]
     X = qp["X"]
     b_j = qp["b_j"]
-    B_max = qp["B_max"]
+    
+    # Calculate storage budget (30% of total storage)
+    B_max = float(102400)
 
     logger.info(f"  - Queries: {len(u_ij)}")
     logger.info(f"  - MV candidates: {len(node_list)}")
-    logger.info(f"  - Storage budget: {B_max:.2f}")
+    logger.info(f"  - Total storage: {sum(b_j):.2f}")
+    logger.info(f"  - Storage budget (30%): {B_max:.2f}")
 
     # 2. Load timesteps and frequencies from frequency_time_dependent.json
     logger.info("\n[2/4] Loading timesteps and frequencies from frequency_time_dependent.json...")
@@ -275,6 +278,38 @@ def main():
     # 5. Analyze and enhance results
     logger.info("\n[5/6] Analyzing migration transitions...")
     enhanced_result = analyze_migration_transitions(result, node_list, b_j, recipes, B_max)
+    
+    # Add input data to result
+    enhanced_result["input_data"] = {
+        "storage_budget": round(B_max, 2),
+        "total_storage": round(sum(b_j), 2),
+        "mv_storage_sizes": {
+            node_list[j]: round(b_j[j], 2) 
+            for j in range(len(node_list))
+        },
+        "query_frequencies": {
+            ts: {
+                f"query_{i}": round(frequencies[ts][i], 2)
+                for i in range(len(frequencies[ts]))
+            }
+            for ts in timesteps
+        },
+        "utility_matrix": {
+            f"query_{i}": {
+                node_list[j]: round(u_ij[i][j], 2)
+                for j in range(len(node_list))
+            }
+            for i in range(len(u_ij))
+        },
+        "inclusion_matrix_details": {
+            node_list[j]: {
+                node_list[u]: X[j][u]
+                for u in range(len(node_list)) if X[j][u] == 1
+            }
+            for j in range(len(node_list))
+        },
+        "inclusive_matrix":X,
+    }
     
     # 6. Save results
     logger.info("\n[6/6] Saving results...")

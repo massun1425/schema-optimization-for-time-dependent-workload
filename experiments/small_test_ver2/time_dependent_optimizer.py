@@ -120,12 +120,12 @@ class TimeDependentOptimizer:
 
         for t in range(self.T):
             # At most one MV per query
-            for i in range(self.I):
-                m.addConstr(
-                    gp.quicksum(self.y[i, j, t] for j in range(self.J)) <= 1,
-                    name=f"at_most_one_mv_{i}_{t}",
-                )
-                constraint_count += 1
+            #for i in range(self.I): # いらない
+            #    m.addConstr(
+            #        gp.quicksum(self.y[i, j, t] for j in range(self.J)) <= 1,
+            #        name=f"at_most_one_mv_{i}_{t}",
+            #    )
+            #    constraint_count += 1
 
             for i in range(self.I):
                 for j in range(self.J):
@@ -137,13 +137,13 @@ class TimeDependentOptimizer:
                     constraint_count += 1
 
                     # Inclusion/overlap exclusion
-                    incl = [u for u in range(self.J) if self.X[j][u] == 1]
-                    if incl:
-                        m.addConstr(
-                            self.y[i, j, t] + gp.quicksum(self.y[i, u, t] for u in incl) <= 1,
-                            name=f"inclusive_excl_{i}_{j}_{t}",
-                        )
-                        constraint_count += 1
+                    
+                    m.addConstr(
+                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in range(self.J) if u != j) <= 1,
+                        # / self.J <= 1 この割り算なくてもよさそう
+                        name=f"inclusive_excl_{i}_{j}_{t}",
+                    )
+                    constraint_count += 1
 
             # Storage budget constraint
             m.addConstr(
@@ -179,7 +179,11 @@ class TimeDependentOptimizer:
                         self.c[j, t] <= self.z[j, t],
                         name=f"create_ub_{j}_{t}"
                     )
-                    constraint_count += 2
+                    m.addConstr(
+                        self.c[j, t] <= 1 - self.z[j, t-1],
+                        name = f"create_not_cont_{j}_{t}"
+                    ) # 追加の制約
+                    constraint_count += 3
 
                 # Recipe selection: exactly one recipe when creating
                 recs = self.recipes.get(j, [(tuple(), 0.0)])
@@ -191,6 +195,14 @@ class TimeDependentOptimizer:
 
                 # Recipe dependency constraints
                 for k_idx, (recipe, _cost) in enumerate(recs):
+
+                    # 追加の制約 a_j_t_k <= c_j_t
+                    m.addConstr(
+                        self.a[j, t, k_idx] <= self.c[j,t],
+                        name = f"recipe_enable_{j}_{t}_{k_idx}"
+                    )
+                    constraint_count += 1
+
                     if t == 0:
                         # At t=0, only empty recipe is allowed (no dependencies available)
                         if len(recipe) > 0:

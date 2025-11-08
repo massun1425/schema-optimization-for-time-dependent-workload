@@ -10,6 +10,7 @@ import ast
 import json
 import logging
 import os
+import pickle
 from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def load_qp_inputs(base_dir: str) -> dict:
     """
-    Load optimization inputs from qp_class.json.
+    Load optimization inputs from qp_class.pkl.
 
     Args:
         base_dir: Base directory (e.g., experiments/small_test_ver2)
@@ -29,27 +30,30 @@ def load_qp_inputs(base_dir: str) -> dict:
             - b_j: List of storage sizes for each MV candidate
             - u_ij: 2D list of utility (benefit) for query i using MV j
             - X: 2D list (J×J) of inclusion relationships
-            - B_max: Storage budget
     """
-    # Priority: time_dependent_output/qp_class.json (9 queries)
-    json_path_td = os.path.join(base_dir, "time_dependent_output", "qp_class.json")
-    json_path_root = os.path.join(base_dir, "qp_class.json")
+    # Priority: time_dependent_output/qp_class.pkl (9 queries)
+    pkl_path_td = os.path.join(base_dir, "time_dependent_output", "qp_class.pkl")
+    pkl_path_root = os.path.join(base_dir, "qp_class.pkl")
     
-    if os.path.exists(json_path_td):
-        json_path = json_path_td
-        logger.info(f"Loading qp_class.json from time_dependent_output (priority)")
-    elif os.path.exists(json_path_root):
-        json_path = json_path_root
-        logger.info(f"Loading qp_class.json from root (fallback)")
+    if os.path.exists(pkl_path_td):
+        pkl_path = pkl_path_td
+        logger.info(f"Loading qp_class.pkl from time_dependent_output (priority)")
+    elif os.path.exists(pkl_path_root):
+        pkl_path = pkl_path_root
+        logger.info(f"Loading qp_class.pkl from root (fallback)")
     else:
-        raise FileNotFoundError(f"qp_class.json not found in {base_dir} or time_dependent_output")
+        raise FileNotFoundError(f"qp_class.pkl not found in {base_dir} or time_dependent_output")
 
-    with open(json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    with open(pkl_path, "rb") as pf:
+        pkl = pickle.load(pf)
     
-    # Extract data from JSON (data is already a dict)
-    # Skip metadata keys that start with underscore
-    data = {k: v for k, v in data.items() if not k.startswith("_")}
+    # Extract attributes from pickle
+    data = {}
+    for k in ("s_num", "node_list", "m_cost", "b_j", "u_ij", "X", "q_s_list"):
+        if hasattr(pkl, k):
+            data[k] = getattr(pkl, k)
+        elif isinstance(pkl, dict) and k in pkl:
+            data[k] = pkl[k]
 
     # Fallback for missing fields
     node_list = data.get("node_list") or []
@@ -61,10 +65,6 @@ def load_qp_inputs(base_dir: str) -> dict:
     data.setdefault("u_ij", data.get("u_ij") or [[0.0] * J for _ in range(I or 1)])
     # X: inclusion matrix (J×J)
     data.setdefault("X", data.get("X") or [[0] * J for _ in range(J)])
-    # B_max: storage budget (default 30% of total)
-    if "B_max" not in data:
-        b = data.get("b_j", [1] * J)
-        data["B_max"] = float(sum(b) * 0.3)
 
     return {
         "s_num": int(data.get("s_num", J)),
@@ -72,7 +72,6 @@ def load_qp_inputs(base_dir: str) -> dict:
         "b_j": list(map(float, data.get("b_j", [1] * J))),
         "u_ij": data.get("u_ij"),
         "X": data.get("X"),
-        "B_max": float(data.get("B_max", sum(data.get("b_j", [1] * J)) * 0.3)),
     }
 
 

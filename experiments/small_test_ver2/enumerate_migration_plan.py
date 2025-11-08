@@ -11,7 +11,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
-from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
+from src.core.query_parser import QueryParser
 from experiments.small_test_ver2.simple_mv_sql_generator import SimpleMVSQLGenerator
 
 class GetMigrationPlans:
@@ -25,7 +25,7 @@ class GetMigrationPlans:
         self.parser_file = Path(parser_file) if parser_file else None
 
         # 読み込んだデータを保持
-        self.qp: FrequencyWeightedParser | None = None
+        self.qp: QueryParser | None = None
 
         self.mvs: list | None = None
         self.time_ids: list | None = None
@@ -194,7 +194,7 @@ class GetMigrationPlans:
     def get_migration_sqls(self):
         """全てのノードに対してマイグレーションプランを取得"""
         if not self.qp or not hasattr(self.qp, 'qm'):
-            print("  エラー: FrequencyWeightedParserが初期化されていません")
+            print("  エラー: QueryParserが初期化されていません")
             return
         
         self.sql = {}
