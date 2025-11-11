@@ -196,12 +196,12 @@ class TimeDependentOptimizer:
                 # Recipe dependency constraints
                 for k_idx, (recipe, _cost) in enumerate(recs):
 
-                    # 追加の制約 a_j_t_k <= c_j_t
-                    m.addConstr(
-                        self.a[j, t, k_idx] <= self.c[j,t],
-                        name = f"recipe_enable_{j}_{t}_{k_idx}"
-                    )
-                    constraint_count += 1
+                    # 追加の制約 a_j_t_k <= c_j_t おそらく冗長
+                    #m.addConstr(
+                    #    self.a[j, t, k_idx] <= self.c[j,t],
+                    #    name = f"recipe_enable_{j}_{t}_{k_idx}"
+                    #)
+                    #constraint_count += 1
 
                     if t == 0:
                         # At t=0, only empty recipe is allowed (no dependencies available)

@@ -20,20 +20,17 @@ class MigrationCostCalculator:
         SQLがない場合はコストを0とする。
     """
 
-    def __init__(self, settings: Settings, json_file_path: str | None = None):
+    def __init__(self, settings: Settings, query_set: str = "job_like"):
         """
         Args:
             settings: config.yamlから読み込んだSettings
             json_file_path: migration_plans.jsonのパス（省略時はデフォルトパス）
         """
         self.settings = settings
+        self.query_set = query_set
         
         # JSONファイルのパス設定
-        if json_file_path:
-            self.json_file_path = Path(json_file_path)
-        else:
-            # parent.parent で small_test_ver2 ディレクトリに移動
-            self.json_file_path = Path(__file__).parent.parent / "time_dependent_output" / "migration_plan" / "migration_plans.json"
+        self.json_file_path = Path(__file__).parent.parent / "04_migration" / query_set / "migration_plans.json"
         
         # 出力ディレクトリのパス
         self.output_dir = self.json_file_path.parent
@@ -251,6 +248,18 @@ class MigrationCostCalculator:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="マイグレーションプランのコスト計算")
+    parser.add_argument(
+        "--query-set",
+        type = str,
+        default = "job_like",
+        help = "使用するクエリセットの名前 (デフォルト: job_like)"
+    )
+
+    args = parser.parse_args()
+
     # config.yamlから設定を読み込み（UTF-8で明示的に読み込み）
     config_path = Path(__file__).parent.parent / "config.yaml"
     
@@ -270,7 +279,7 @@ if __name__ == "__main__":
             temp_config.unlink()
     
     # コスト計算クラスのインスタンス化
-    calculator = MigrationCostCalculator(settings)
+    calculator = MigrationCostCalculator(settings, query_set=args.query_set)
     
     # ステップ1: すべてのMVを事前に作成
     print("\n【ステップ1】すべてのMVを作成")

@@ -21,24 +21,46 @@
 - Gurobi がインストールされており、ライセンスが有効であること
 - 必要なPythonパッケージがインストールされていること（`requirements.txt` を参照）
 
+### クエリセットの選択
+
+`01_queries/` フォルダには複数のクエリセットが用意されています：
+- `job_like/`: デフォルトのクエリセット
+- `explicit_join/`: 明示的なJOINを使用したクエリセット
+
+`--query-set` オプションでクエリセットを選択できます：
+
+```bash
+# job_likeクエリセットを使用（デフォルト）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set job_like
+
+# explicit_joinクエリセットを使用
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set explicit_join
+```
+
+各クエリセットの出力は、対応するサブディレクトリに保存されます：
+- `02_json/{query_set}/`: EXPLAIN JSON出力
+- `03_parsed/{query_set}/`: パース結果
+- `04_optimized/{query_set}/`: 最適化結果
+- `05_mv_sql/{query_set}/`: MV生成SQL
+- `06_rewritten/{query_set}/`: 書き換えクエリ
+
 ### ステップ1: データベースのセットアップとクエリ実行計画の取得
 
 まず、データベースをセットアップし、各クエリの実行計画（EXPLAIN JSON）を取得します。
 
 ```bash
 # フェーズ0: データベースのセットアップ
-```bash
-# フェーズ0: データベースのセットアップ
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 0
-```
 
-```bash
-# フェーズ1: クエリのEXPLAIN JSON生成
+# フェーズ1: クエリのEXPLAIN JSON生成（デフォルトのjob_likeクエリセット）
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1
+
+# または特定のクエリセットを指定
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set explicit_join
 ```
 
 **生成されるファイル**:
-- `02_json/query1.json` 〜 `query9.json`: 各クエリのEXPLAIN結果
+- `02_json/{query_set}/query1.json` 〜 `query9.json`: 各クエリのEXPLAIN結果
 
 ---
 
@@ -47,14 +69,16 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1
 EXPLAIN結果を解析し、MV候補とその効用を計算します。
 
 ```bash
-# フェーズ2: クエリパース
+# フェーズ2: クエリパース（デフォルトのjob_likeクエリセット）
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2
+
+# または特定のクエリセットを指定
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --query-set explicit_join
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/qp_class.pkl`: クエリパーサの出力（u_ij, X, b_j, node_list などを含む）
-- `time_dependent_output/qp_class.json`: 同上（JSON形式、ただし X は含まれない）
-- `03_parsed/query1_parsed.json` 〜 `query9_parsed.json`: 各クエリの解析結果
+- `03_parsed/{query_set}/qp_class.pkl`: クエリパーサの出力（u_ij, X, b_j, node_list などを含む）
+- `03_parsed/{query_set}/parse_summary.json`: パース結果のサマリー
 
 ---
 
@@ -63,11 +87,15 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2
 各MV候補について、作成に必要な依存関係とマイグレーションプラン（SQLレシピ）を列挙します。
 
 ```bash
+# デフォルトのjob_likeクエリセット
 python experiments/small_test_ver2/migration/enumerate_migration_plan.py
+
+# または特定のクエリセットを指定
+python experiments/small_test_ver2/migration/enumerate_migration_plan.py --query-set explicit_join
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/migration_plan/migration_plans.json`: 全MV候補のマイグレーションプラン（SQL）
+- `04_migration/{query_set}/migration_plans.json`: 全MV候補のマイグレーションプラン（SQL）
 
 ---
 
@@ -76,11 +104,15 @@ python experiments/small_test_ver2/migration/enumerate_migration_plan.py
 各マイグレーションプランを実際に実行し、コストを測定します。
 
 ```bash
+# デフォルトのjob_likeクエリセット
 python experiments/small_test_ver2/migration/migration_cost_calculator.py
+
+# または特定のクエリセットを指定
+python experiments/small_test_ver2/migration/migration_cost_calculator.py --query-set explicit_join
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/migration_plan/migration_costs.json`: 各MV候補のレシピとコスト
+- `04_migration/{query_set}/migration_costs.json`: 各MV候補のレシピとコスト
 
 ---
 
@@ -89,11 +121,15 @@ python experiments/small_test_ver2/migration/migration_cost_calculator.py
 タイムステップごとのクエリ頻度とマイグレーションコストを考慮して、ILP最適化を実行します。
 
 ```bash
+# デフォルトのjob_likeクエリセット
 python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py
+
+# または特定のクエリセットを指定
+python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set explicit_join
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/td_mv_optimization_result.json`: 最適化結果（選択されたMV、コスト、マイグレーション分析など）
+- `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 最適化結果（選択されたMV、コスト、マイグレーション分析など）
 
 ---
 
@@ -103,16 +139,17 @@ python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py
 
 ### 必須の入力データ
 1. **クエリ定義**:
-   - `01_queries/query1.sql` 〜 `query9.sql`: 最適化対象のSQLクエリ
+   - `01_queries/{query_set}/query1.sql` 〜 `query9.sql`: 最適化対象のSQLクエリ
+   - `{query_set}` は `job_like` または `explicit_join` など
 
 2. **クエリパーサの出力**:
-   - `time_dependent_output/qp_class.pkl`: MV候補の効用行列 u_ij、包含関係 X、ストレージサイズ b_j などを含む
+   - `03_parsed/{query_set}/qp_class.pkl`: MV候補の効用行列 u_ij、包含関係 X、ストレージサイズ b_j などを含む
 
 3. **クエリ頻度設定**:
-   - `01_queries/frequency_time_dependent.json`: 各タイムステップでの各クエリの実行頻度
+   - `01_queries/{query_set}/frequency_time_dependent.json`: 各タイムステップでの各クエリの実行頻度
 
 4. **マイグレーションコスト**:
-   - `time_dependent_output/migration_plan/migration_costs.json`: 各MV候補の作成レシピとコスト
+   - `04_migration/{query_set}/migration_costs.json`: 各MV候補の作成レシピとコスト
 
 ### 設定ファイル
 - `config.yaml`: 実験環境の設定（データベース接続情報など）
@@ -142,9 +179,37 @@ experiments/small_test_ver2/
 ├── utils/                         # ユーティリティ
 │   └── inspect_pickle.py              # デバッグ用
 ├── 01_queries/                    # クエリ定義
+│   ├── job_like/                      # デフォルトクエリセット
+│   ├── explicit_join/                 # 明示的JOIN使用クエリセット
+│   ├── frequency.json
+│   └── frequency_time_dependent.json
 ├── 02_json/                       # EXPLAIN出力
+│   ├── job_like/                      # job_likeクエリセットのEXPLAIN結果
+│   └── explicit_join/                 # explicit_joinクエリセットのEXPLAIN結果
 ├── 03_parsed/                     # パース結果
-├── time_dependent_output/         # 最適化出力
+│   ├── job_like/                      # job_likeクエリセットのパース結果
+│   └── explicit_join/                 # explicit_joinクエリセットのパース結果
+├── 04_optimized/                  # 最適化結果
+│   ├── job_like/
+│   └── explicit_join/
+├── 04_migration/                  # マイグレーション計画とコスト
+│   ├── job_like/
+│   │   ├── migration_plans.json
+│   │   └── migration_costs.json
+│   └── explicit_join/
+│       ├── migration_plans.json
+│       └── migration_costs.json
+├── 05_mv_sql/                     # MV生成SQL
+│   ├── job_like/
+│   └── explicit_join/
+├── 06_rewritten/                  # 書き換えクエリ
+│   ├── job_like/
+│   └── explicit_join/
+├── time_dependent_output/         # 時間依存最適化出力
+│   ├── job_like/
+│   │   └── td_mv_optimization_result.json
+│   └── explicit_join/
+│       └── td_mv_optimization_result.json
 ├── small_docs/                    # ドキュメント
 ├── 00_setup.sql
 ├── insert_queries.sql
@@ -201,17 +266,18 @@ experiments/small_test_ver2/
 最適化実行後に生成されるファイル：
 
 ### 主要な出力
-- `time_dependent_output/td_mv_optimization_result.json`: 
+- `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 
   - 最適化結果の全情報
   - 各タイムステップで選択されたMV
   - ワークロードコスト、マイグレーションコストの内訳
   - 入力データ（b_j, u_ij, X, 頻度など）
 
 ### 中間出力
-- `time_dependent_output/qp_class.pkl`: クエリパーサの出力
-- `time_dependent_output/migration_plan/migration_costs.json`: マイグレーションコスト
-- `02_json/query*.json`: EXPLAIN JSON
-- `03_parsed/query*_parsed.json`: パース結果
+- `03_parsed/{query_set}/qp_class.pkl`: クエリパーサの出力
+- `04_migration/{query_set}/migration_plans.json`: マイグレーションプラン
+- `04_migration/{query_set}/migration_costs.json`: マイグレーションコスト
+- `02_json/{query_set}/query*.json`: EXPLAIN JSON
+- `03_parsed/{query_set}/parse_summary.json`: パース結果サマリー
 
 ### 分析結果（オプション）
 - `time_dependent_output/store_result/`: 複数シナリオの結果を保存するディレクトリ
@@ -221,7 +287,7 @@ experiments/small_test_ver2/
 
 ## 結果の確認
 
-最適化結果は `time_dependent_output/td_mv_optimization_result.json` に保存されます。主要な情報は以下の通りです：
+最適化結果は `time_dependent_output/{query_set}/td_mv_optimization_result.json` に保存されます。主要な情報は以下の通りです：
 
 ```json
 {
@@ -259,11 +325,14 @@ experiments/small_test_ver2/
 
 ### pickleファイルが見つからない
 - ステップ2（クエリパース）が正常に完了していることを確認してください
-- `time_dependent_output/qp_class.pkl` が存在することを確認してください
+- `03_parsed/{query_set}/qp_class.pkl` が存在することを確認してください
+- `--query-set` オプションで正しいクエリセットを指定していることを確認してください
 
 ### マイグレーションコストが計算されない
 - データベースが起動していることを確認してください
 - ステップ3（マイグレーションプラン列挙）が完了していることを確認してください
+- `04_migration/{query_set}/migration_plans.json` が存在することを確認してください
+- 各ステップで同じ `--query-set` オプションを使用していることを確認してください
 
 ---
 
@@ -276,10 +345,16 @@ B_max = float(102400)  # バイト単位（例: 100KB）
 ```
 
 ### クエリ頻度の変更
-`01_queries/frequency_time_dependent.json` を編集して、各タイムステップでの頻度を調整します。
+`01_queries/{query_set}/frequency_time_dependent.json` を編集して、各タイムステップでの頻度を調整します。
 
 ### タイムステップの追加
-`01_queries/frequency_time_dependent.json` に新しいタイムステップを追加します。
+`01_queries/{query_set}/frequency_time_dependent.json` に新しいタイムステップを追加します。
+
+### 新しいクエリセットの追加
+1. `01_queries/` に新しいフォルダを作成（例: `new_queries/`）
+2. SQLクエリファイル（`query1.sql` 〜 `queryN.sql`）を配置
+3. `frequency_time_dependent.json` を作成
+4. すべてのステップで `--query-set new_queries` を指定して実行
 
 ---
 
@@ -288,14 +363,13 @@ B_max = float(102400)  # バイト単位（例: 100KB）
 以下のファイルは時間依存最適化の実行には不要です（削除しても実行に影響しません）：
 
 ### 実行後に生成される出力ファイル
-- `time_dependent_output/td_mv_optimization_result.json`
-- `time_dependent_output/store_result/*.json`
-- `time_dependent_output/normal_summary.json`
-- `time_dependent_output/migration_plan.json`
-- `time_dependent_output/analyze_all_mvs.sql`
-- `time_dependent_output/morning_to_evening.sql`
-- `02_json/query*.json`（実行後に再生成可能）
-- `03_parsed/query*_parsed.json`（実行後に再生成可能）
+- `time_dependent_output/{query_set}/td_mv_optimization_result.json`
+- `time_dependent_output/{query_set}/*.json`（その他の出力）
+- `04_migration/{query_set}/migration_plans.json`（実行後に再生成可能）
+- `04_migration/{query_set}/migration_costs.json`（実行後に再生成可能）
+- `02_json/{query_set}/query*.json`（実行後に再生成可能）
+- `03_parsed/{query_set}/qp_class.pkl`（実行後に再生成可能）
+- `03_parsed/{query_set}/parse_summary.json`（実行後に再生成可能）
 
 ### ドキュメント・計画ファイル
 - `small_docs/`（ドキュメントのみ、実行には不要）

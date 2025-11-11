@@ -193,7 +193,20 @@ def main():
     # Paths
     # Get the small_test_ver2 directory (parent of scripts/)
     base_dir = os.path.dirname(os.path.dirname(__file__))
-    output_dir = os.path.join(base_dir, "time_dependent_output")
+    
+    # コマンドライン引数の処理
+    import argparse
+    parser = argparse.ArgumentParser(description="Time-dependent MV optimization with migration costs")
+    parser.add_argument(
+        "--query-set",
+        type=str,
+        default="job_like",
+        help="Query set name (e.g., job_like, explicit_join)"
+    )
+    args = parser.parse_args()
+    query_set = args.query_set
+    
+    output_dir = os.path.join(base_dir, "time_dependent_output", query_set)
     os.makedirs(output_dir, exist_ok=True)
 
     logger.info("="*80)
@@ -202,7 +215,7 @@ def main():
 
     # 1. Load query parser data from qp_class.pkl
     logger.info("\n[1/4] Loading query parser data from qp_class.pkl...")
-    qp = load_qp_inputs(base_dir)
+    qp = load_qp_inputs(base_dir, query_set)
     node_list = qp["node_list"]
     u_ij = qp["u_ij"]
     X = qp["X"]
@@ -218,7 +231,7 @@ def main():
 
     # 2. Load timesteps and frequencies from frequency_time_dependent.json
     logger.info("\n[2/4] Loading timesteps and frequencies from frequency_time_dependent.json...")
-    timesteps, frequencies = load_timesteps_and_frequencies(base_dir)
+    timesteps, frequencies = load_timesteps_and_frequencies(base_dir, query_set)
     
     logger.info(f"  - Timesteps: {timesteps}")
     for ts in timesteps:
@@ -241,13 +254,7 @@ def main():
 
     # 3. Load migration costs from migration_costs.json
     logger.info("\n[3/4] Loading migration costs from migration_costs.json...")
-    mig_cost_path = os.path.join(output_dir, "migration_plan", "migration_costs.json")
-    if not os.path.exists(mig_cost_path):
-        logger.error(f"Migration costs file not found: {mig_cost_path}")
-        logger.error("Please run migration cost calculation first.")
-        return 1
-
-    recipes = parse_migration_costs(mig_cost_path, node_list)
+    recipes = parse_migration_costs(base_dir, node_list, query_set)
     logger.info(f"  - Loaded recipes for {len(recipes)} MVs")
 
     # Log sample recipes

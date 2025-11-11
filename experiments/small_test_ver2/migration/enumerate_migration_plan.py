@@ -1,3 +1,4 @@
+import argparse
 import psycopg2
 import re 
 import json
@@ -19,10 +20,13 @@ class GetMigrationPlans:
     def __init__(
             self,
             settings: Settings | None = None,
-            parser_file: str | None = None,
+            query_set: str = "job_like",
     ):
         self.settings = settings
-        self.parser_file = Path(parser_file) if parser_file else None
+        self.query_set = query_set
+
+        # 03_parsed/{queryset}/qp_class.pklから読み込み
+        self.parser_file = Path(__file__).parent.parent / "03_parsed" / self.query_set / "qp_class.pkl"
 
         # 読み込んだデータを保持
         self.qp: QueryParser | None = None
@@ -32,7 +36,6 @@ class GetMigrationPlans:
 
         self.sql: Dict[str, str] | None = None
 
-        # これはかえる必要あり
         self.mv_sql_generator: SimpleMVSQLGenerator | None = None
 
         if self.parser_file and self.parser_file.exists():
@@ -177,7 +180,7 @@ class GetMigrationPlans:
             print("エラー: マイグレーションプランが生成されていません")
             return
         # 出力dirのパス (parent.parent で small_test_ver2 に移動)
-        output_dir = Path(__file__).parent.parent / "time_dependent_output" / "migration_plan"
+        output_dir = Path(__file__).parent.parent / "04_migration" / self.query_set
         output_dir.mkdir(parents=True, exist_ok=True)
         # ファイルパス
         output_file = output_dir / filename
@@ -216,14 +219,18 @@ class GetMigrationPlans:
         self.save_migration_plans()
 
 if __name__ == "__main__":
-    #from config.settings import Settings
-
-    # settings = Settings()
-    parser_file = Path(__file__).parent.parent / "time_dependent_output" / "qp_class.pkl"
-
-    migrator = GetMigrationPlans(
-        parser_file = str(parser_file)
+    
+    parser = argparse.ArgumentParser(description="MVマイグレーションプラン列挙")
+    parser.add_argument(
+        "--query-set",
+        type=str,
+        default="job_like",
+        help="使用するクエリセットの名前 (デフォルト: job_like)"
     )
+
+    args = parser.parse_args()
+
+    migrator = GetMigrationPlans(query_set=args.query_set)
 
     migrator.get_migration_sqls()
 

@@ -31,10 +31,16 @@ from src.utils.legacy import get_all_job_queries, natural_sort_key
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, config_path: str):
-        """初期化"""
+    def __init__(self, config_path: str = "config.yaml", query_set: str = "job_like"):
+        """初期化
+        
+        Args:
+            config_path: 設定ファイルのパス
+            query_set: 使用するクエリセット名 (例: job_style, explicit_join)
+        """
         self.config_path = Path(config_path)
         self.exp_dir = self.config_path.parent
+        self.query_set = query_set  # クエリセット名を保存
         
         # UTF-8でYAMLを読み込む
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -51,18 +57,29 @@ class NormalModeExperiment:
             if temp_config.exists():
                 temp_config.unlink()
         
-        # 各ディレクトリのパス
-        self.queries_dir = self.exp_dir / "01_queries"
-        self.json_dir = self.exp_dir / "02_json"
-        self.parsed_dir = self.exp_dir / "03_parsed"
-        self.optimized_dir = self.exp_dir / "04_optimized"
-        self.mv_sql_dir = self.exp_dir / "05_mv_sql"
-        self.rewritten_dir = self.exp_dir / "06_rewritten"
+        # 各ディレクトリのパス（クエリセット別）
+        self.queries_dir = self.exp_dir / "01_queries" / self.query_set
+        self.json_dir = self.exp_dir / "02_json" / self.query_set
+        self.parsed_dir = self.exp_dir / "03_parsed" / self.query_set
+        self.optimized_dir = self.exp_dir / "04_optimized" / self.query_set
+        self.mv_sql_dir = self.exp_dir / "05_mv_sql" / self.query_set
+        self.rewritten_dir = self.exp_dir / "06_rewritten" / self.query_set
 
-        self.pickle_path = self.exp_dir / "time_dependent_output" / "qp_class.pkl"
+        # pickleファイルも03_parsedフォルダ内にクエリセット別で保存
+        self.pickle_path = self.parsed_dir / "qp_class.pkl"
 
         self.qp: Optional[QueryParser] = None
         self.result = None
+        
+        # クエリセットの存在確認
+        if not self.queries_dir.exists():
+            print(f"警告: クエリディレクトリが見つかりません: {self.queries_dir}")
+            print(f"利用可能なクエリセット:")
+            base_dir = self.exp_dir / "01_queries"
+            if base_dir.exists():
+                for d in base_dir.iterdir():
+                    if d.is_dir():
+                        print(f"  - {d.name}")
     
     def print_header(self, title: str, phase: int = 0):
         """フェーズヘッダーを表示"""
@@ -124,19 +141,25 @@ class NormalModeExperiment:
         """フェーズ1: EXPLAIN JSON 生成"""
         self.print_header("EXPLAIN JSON 生成", 1)
         
+        # クエリディレクトリの確認
+        if not self.queries_dir.exists():
+            self.print_error(f"クエリディレクトリが見つかりません: {self.queries_dir}")
+            return False
+        
         query_files = sorted(self.queries_dir.glob("*.sql"))
         
         if not query_files:
             self.print_error(f"{self.queries_dir} にクエリファイルが見つかりません")
             return False
         
+        self.print_info(f"クエリセット: {self.query_set}")
         self.print_info(f"{len(query_files)}個のクエリファイルを処理します")
         
-        job_dir = self.json_dir / "job"
-        job_dir.mkdir(parents=True, exist_ok=True)
+        # 出力ディレクトリを作成(クエリセット別)
+        self.json_dir.mkdir(parents=True, exist_ok=True)
         
         for query_file in query_files:
-            output_file = job_dir / f"{query_file.stem}.json"
+            output_file = self.json_dir / f"{query_file.stem}.json"
             
             self.print_info(f"処理中: {query_file.name}")
             
@@ -200,14 +223,50 @@ class NormalModeExperiment:
         self.print_info("クエリをパース中...")
         try:
             query_dir = str(self.json_dir)
-            files, _ = get_all_job_queries(query_dir)
-            files = sorted(files, key=natural_sort_key)
             
-            self.qp.query_parse(
-                q_num=0,
-                path=str(self.json_dir),
-                insert_query=self.settings.optimization.insert_queries
-            )
+            # JSONファイルの確認
+            json_files = list(self.json_dir.glob("*.json"))
+            self.print_info(f"検出されたJSONファイル: {len(json_files)}個")
+            if json_files:
+                self.print_info(f"  例: {json_files[0].name}")
+            
+            # モンキーパッチ: query_parser モジュール内の get_all_job_queries を置き換え
+            # この部分ややこしいから簡単にしたいけどquery_parser.pyをいじる必要がある
+            import src.core.query_parser as qp_module
+            original_get_all_job_queries = qp_module.get_all_job_queries
+            
+            def custom_get_all_job_queries(path):
+                """カスタム関数: 指定ディレクトリから直接JSONファイルを取得"""
+                query_paths = []
+                query_count = {}
+                
+                job_dir = Path(path)
+                print(f"  [DEBUG] custom_get_all_job_queries called with path: {path}")
+                print(f"  [DEBUG] Directory exists: {job_dir.exists()}")
+                
+                if not job_dir.exists():
+                    return [], {}
+                
+                for json_file in sorted(job_dir.glob("*.json")):
+                    query_path = str(json_file)
+                    query_paths.append(query_path)
+                    query_count[query_path] = 1
+                
+                print(f"  [DEBUG] Found {len(query_paths)} JSON files")
+                return query_paths, query_count
+            
+            # query_parser モジュール内の参照を置き換え
+            qp_module.get_all_job_queries = custom_get_all_job_queries
+            
+            try:
+                self.qp.query_parse(
+                    q_num=0,
+                    path=str(self.json_dir),
+                    insert_query=self.settings.optimization.insert_queries
+                )
+            finally:
+                # 元の関数に戻す
+                qp_module.get_all_job_queries = original_get_all_job_queries
             
             insert_query = self.settings.optimization.insert_queries
             
@@ -232,6 +291,9 @@ class NormalModeExperiment:
     
     def _save_parse_results(self):
         """パース結果を保存"""
+        # pickleファイル保存先のディレクトリを作成
+        self.pickle_path.parent.mkdir(parents=True, exist_ok=True)
+        
         with open(self.pickle_path, 'wb') as f:
             pickle.dump(self.qp, f)
         
@@ -546,10 +608,16 @@ def main():
         default='experiments/small_test_ver2/config.yaml',
         help='設定ファイルのパス'
     )
+    parser.add_argument(
+        '--query-set',
+        type=str,
+        default='job_like',
+        help='実行するクエリセット(job_like, explicit_join, etc.)'
+    )
     
     args = parser.parse_args()
     
-    exp = NormalModeExperiment(args.config)
+    exp = NormalModeExperiment(args.config, query_set=args.query_set)
     
     if args.phase == 'all':
         success = exp.run_all_phases()

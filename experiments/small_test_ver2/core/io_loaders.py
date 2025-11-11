@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Tuple
 logger = logging.getLogger(__name__)
 
 
-def load_qp_inputs(base_dir: str) -> dict:
+def load_qp_inputs(base_dir: str, query_set: str = "job_like") -> dict:
     """
     Load optimization inputs from qp_class.pkl.
 
@@ -32,17 +32,12 @@ def load_qp_inputs(base_dir: str) -> dict:
             - X: 2D list (J×J) of inclusion relationships
     """
     # Priority: time_dependent_output/qp_class.pkl (9 queries)
-    pkl_path_td = os.path.join(base_dir, "time_dependent_output", "qp_class.pkl")
-    pkl_path_root = os.path.join(base_dir, "qp_class.pkl")
+    pkl_path = os.path.join(base_dir, "03_parsed", query_set, "qp_class.pkl")
+
+    if not os.path.exists(pkl_path):
+        raise FileNotFoundError(f"qp_class.pkl not found in {pkl_path}")
     
-    if os.path.exists(pkl_path_td):
-        pkl_path = pkl_path_td
-        logger.info(f"Loading qp_class.pkl from time_dependent_output (priority)")
-    elif os.path.exists(pkl_path_root):
-        pkl_path = pkl_path_root
-        logger.info(f"Loading qp_class.pkl from root (fallback)")
-    else:
-        raise FileNotFoundError(f"qp_class.pkl not found in {base_dir} or time_dependent_output")
+    logger.info(f"Loading qp_class.pkl from {pkl_path}")
 
     with open(pkl_path, "rb") as pf:
         pkl = pickle.load(pf)
@@ -75,7 +70,7 @@ def load_qp_inputs(base_dir: str) -> dict:
     }
 
 
-def load_timesteps_and_frequencies(base_dir: str) -> Tuple[List[str], Dict[str, List[float]]]:
+def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -> Tuple[List[str], Dict[str, List[float]]]:
     """
     Extract timesteps and query frequencies from frequency_time_dependent.json.
 
@@ -87,9 +82,9 @@ def load_timesteps_and_frequencies(base_dir: str) -> Tuple[List[str], Dict[str, 
         - timestep_names: List of timestep IDs (e.g., ["morning", "evening"])
         - frequency_dict: Dict mapping timestep ID to list of query frequencies
     """
-    freq_path = os.path.join(base_dir, "01_queries", "frequency_time_dependent.json")
+    freq_path = os.path.join(base_dir, "01_queries", query_set, "frequency_time_dependent.json")
     if not os.path.exists(freq_path):
-        logger.warning(f"frequency_time_dependent.json not found, using defaults")
+        logger.warning(f"frequency_time_dependent.json not found in {freq_path}, using defaults")
         return ["t0", "t1"], {"t0": [1.0], "t1": [1.0]}
 
     with open(freq_path, "r", encoding="utf-8") as f:
@@ -158,19 +153,23 @@ def load_query_frequency(
 
 
 def parse_migration_costs(
-    path: str, node_list: List[str]
+    base_dir: str, node_list: List[str], query_set: str = "job_like"
 ) -> Dict[int, List[Tuple[Tuple[int, ...], float]]]:
     """
     Parse migration_costs.json into recipe format.
 
     Args:
-        path: Path to migration_costs.json
-        node_list: List of node IDs (from qp_class)
+        base_dir: Base directory (e.g., experiments/small_test_ver2)
+        node_list: List of node IDs (from qp_class.pkl) for index mapping
+        query_set: Query set name (e.g., "job_like", "explicit_join")
 
     Returns:
         Dictionary mapping j (MV index) to list of (recipe_tuple, cost)
         where recipe_tuple is a tuple of dependency indices.
     """
+
+    path = os.path.join(base_dir, "04_migration", query_set, "migration_costs.json")
+
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
 
@@ -197,6 +196,8 @@ def parse_migration_costs(
                 dep_j = idx.get(dep_node_id)
                 if dep_j is not None:
                     dep_indices.append(dep_j)
+                else:
+                    logger.debug(f"Dependency {dep_node_id} not found in node_list for {node_id}")
 
             recipes.append((tuple(sorted(dep_indices)), float(cost)))
 
