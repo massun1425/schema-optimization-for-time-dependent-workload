@@ -58,6 +58,7 @@ class QueryManager:
         # Node properties
         self.subquery_positions: dict[str, list[list[int]]] = {}
         self.subquery_costs: dict[str, float] = {}
+        self.original_subquery_costs: dict[str, float] = {}  # EXPLAIN JSONから取得した元のコスト
         self.subquery_sizes: dict[str, int] = {}
         self.relation_tables: dict[str, str] = {}
         self.subquery_widths: dict[str, int] = {}
@@ -91,6 +92,7 @@ class QueryManager:
         filter_condition: str,
         position: list[int],
         total_cost: float,
+        original_cost: float,  # EXPLAIN JSONの生のコスト
         size: int,
         width: int,
     ) -> str:
@@ -105,7 +107,8 @@ class QueryManager:
             alias: Alias used in the query
             filter_condition: Filter condition applied
             position: [query_id, position] in the query plan
-            total_cost: Cost of executing this node
+            total_cost: Cost of executing this node (adjusted for MV selection)
+            original_cost: Original cost from EXPLAIN JSON Total Cost
             size: Size of result set (rows * width)
             width: Width of result tuples in bytes
 
@@ -136,6 +139,11 @@ class QueryManager:
                 self.subquery_costs[node_id] = total_cost
         else:
             self.subquery_costs[node_id] = total_cost
+        
+        # original_subquery_costsは常にEXPLAIN JSONの生の値を保存
+        # 初回設定時のみ保存（後で最小値に更新しない）
+        if node_id not in self.original_subquery_costs:
+            self.original_subquery_costs[node_id] = original_cost
 
         # Update other properties
         self.subquery_sizes[node_id] = size
@@ -191,6 +199,9 @@ class QueryManager:
         # Update properties
         self.non_leaf_nodes_filter[node_id] = filter_condition
         self.subquery_costs[node_id] = total_cost
+        # 初回設定時のみoriginal_subquery_costsにも保存
+        if node_id not in self.original_subquery_costs:
+            self.original_subquery_costs[node_id] = total_cost
         self.subquery_sizes[node_id] = size
         self.subquery_widths[node_id] = width
 
@@ -205,6 +216,7 @@ class QueryManager:
         filters: list[str],
         position: list[int],
         total_cost: float,
+        original_cost: float,  # EXPLAIN JSONの生のコスト
         rows: int,
         width: int,
         output_columns: list | None = None,
@@ -221,7 +233,8 @@ class QueryManager:
             join_conditions: List of JOIN conditions with full details
             filters: Additional WHERE clause filters
             position: [query_id, position] in the query plan
-            total_cost: Cost of executing this node
+            total_cost: Cost of executing this node (adjusted for MV selection)
+            original_cost: Original cost from EXPLAIN JSON Total Cost
             rows: Estimated number of rows
             width: Width of result tuples in bytes
             output_columns: Optional list of output columns
@@ -281,6 +294,10 @@ class QueryManager:
         # Update properties
         self.non_leaf_nodes_filter[node_id] = " AND ".join(filters) if filters else ""
         self.subquery_costs[node_id] = total_cost
+        # original_subquery_costsは常にEXPLAIN JSONの生の値を保存
+        # 初回設定時のみ保存（後で更新しない）
+        if node_id not in self.original_subquery_costs:
+            self.original_subquery_costs[node_id] = original_cost
         self.subquery_sizes[node_id] = rows * width
         self.subquery_widths[node_id] = width
 
@@ -315,6 +332,7 @@ class QueryManager:
                 node["filter"],
                 position,
                 node["cost"],
+                node.get("original_cost", node["cost"]),  # EXPLAIN JSONの生のコスト
                 node["size"],
                 node["width"],
             )
@@ -338,6 +356,7 @@ class QueryManager:
                     filters=additional_filters,
                     position=position,
                     total_cost=node["cost"],
+                    original_cost=node.get("original_cost", node["cost"]),  # EXPLAIN JSONの生のコスト
                     rows=rows,
                     width=node["width"],
                 )

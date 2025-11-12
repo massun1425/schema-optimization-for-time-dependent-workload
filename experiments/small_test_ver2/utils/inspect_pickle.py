@@ -4,9 +4,18 @@ QueryParserのpickleファイルを読み込み、
 内部データ構造をJSONファイルとして保存します。
 """
 
+import sys
+from pathlib import Path
+
+# プロジェクトルートをsys.pathに追加(pickle.load前に必須)
+# このスクリプトの位置: experiments/small_test_ver2/utils/inspect_pickle.py
+# プロジェクトルート: 3階層上
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 import pickle
 import json
-from pathlib import Path
 from typing import Any
 
 
@@ -62,16 +71,8 @@ def inspect_query_parser(pickle_path: str, output_path: str = None) -> None:
     
     Args:
         pickle_path: pickleファイルのパス
-        output_path: 出力JSONファイルのパス（省略時は自動生成）
+        output_path: 出力JSONファイルのパス(省略時は自動生成)
     """
-    import sys
-    from pathlib import Path as PathLib
-    
-    # プロジェクトルートをsys.pathに追加
-    project_root = PathLib(__file__).parent.parent.parent
-    if str(project_root) not in sys.path:
-        sys.path.insert(0, str(project_root))
-    
     pickle_file = Path(pickle_path)
     
     if not pickle_file.exists():
@@ -137,34 +138,47 @@ def inspect_query_parser(pickle_path: str, output_path: str = None) -> None:
 
 def main():
     """メイン処理"""
-    import sys
+    import argparse
     
-    # コマンドライン引数から入力ファイルを取得
-    if len(sys.argv) > 1:
-        pickle_path = sys.argv[1]
-        output_path = sys.argv[2] if len(sys.argv) > 2 else None
-    else:
-        # デフォルトパス
-        pickle_path = "experiments/small_test_ver2/time_dependent_output/qp_class.pkl"
-        output_path = "experiments/small_test_ver2/time_dependent_output/qp_class.json"
+    # コマンドライン引数の処理
+    parser = argparse.ArgumentParser(description="QueryParserのpickleファイルをJSONに変換")
+    parser.add_argument(
+        "--query-set",
+        type=str,
+        default="job_like",
+        help="使用するクエリセットの名前 (デフォルト: job_like)"
+    )
     
-    inspect_query_parser(pickle_path, output_path)
+    args = parser.parse_args()
+    
+    # パス設定
+    base_dir = Path(__file__).parent.parent
+    pickle_path = base_dir / "03_parsed" / args.query_set / "qp_class.pkl"
+    output_path = base_dir / "03_parsed" / args.query_set / "qp_class.json"
+    
+    # ファイルが存在するかチェック
+    if not pickle_path.exists():
+        print(f"エラー: pickleファイルが見つかりません: {pickle_path}")
+        print(f"使用可能なクエリセット:")
+        parsed_dir = base_dir / "03_parsed"
+        if parsed_dir.exists():
+            for subdir in sorted(parsed_dir.iterdir()):
+                if subdir.is_dir() and (subdir / "qp_class.pkl").exists():
+                    print(f"  - {subdir.name}")
+        return
+    
+    inspect_query_parser(str(pickle_path), str(output_path))
     
     # JSONファイルが生成された場合、特定のノードを表示
-    if output_path is None:
-        json_path = Path(pickle_path).with_suffix('.json')
-    else:
-        json_path = Path(output_path)
-    
-    if json_path.exists():
+    if output_path.exists():
         print("\n" + "=" * 60)
         print("ノード情報の表示例")
         print("=" * 60)
         
         # サンプルノードを表示
-        display_node_info(str(json_path), "non_leaf_5")
+        display_node_info(str(output_path), "non_leaf_5")
         print()
-        display_node_info(str(json_path), "leaf_2")
+        display_node_info(str(output_path), "leaf_2")
 
 
 def display_node_info(json_path: str, node_id: str) -> None:

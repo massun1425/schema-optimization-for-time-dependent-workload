@@ -131,7 +131,7 @@ class GetMigrationPlans:
             target_mv: str
     ):
         mv_sqls = {}
-        mv_sqls[str([target_mv])] = target_mv # マイグレーションなし
+        mv_sqls[str([target_mv])] = "NON_MIGRATE" # マイグレーションなし
         mv_sql = self.generate_mv_sql_with_existing(target_mv, [])
         if mv_sql:
             mv_sqls["[]"] = mv_sql
@@ -161,13 +161,16 @@ class GetMigrationPlans:
         # ここでtarget_mvとべき集合の一つを渡してMV作成SQLを取得
         for mv_candidate in filtered_children:
             if target_mv in mv_candidate:
-                print(f"マイグレーションなし")
-                mv_sqls[str(mv_candidate)] = target_mv
+                # マイグレーションなし
+                mv_sqls[str(mv_candidate)] = "NON_MIGRATE"
                 continue   
             # 新しい MV の SQL を生成、MV候補をキーにして保存
-            mv_sql = self.generate_mv_sql_with_existing(target_mv, mv_candidate)
-            if mv_sql:
-                mv_sqls[str(mv_candidate)] = mv_sql
+            if not mv_candidate:
+                mv_sql = self.generate_mv_sql_with_existing(target_mv, mv_candidate)
+                if mv_sql:
+                    mv_sqls[str(mv_candidate)] = mv_sql
+            else:
+                mv_sqls[str(mv_candidate)] = "CREATE MATERIALIZED VIEW"
 
         return mv_sqls
     
