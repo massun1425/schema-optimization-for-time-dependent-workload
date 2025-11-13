@@ -152,7 +152,7 @@ class MigrationCostCalculatorWithExplain:
                     dependencies = eval(plan_key)
                     target_cost = self.node_costs.get(node_id, 0.0)
                     dependency_cost = sum(self.node_costs.get(dep, 0.0) for dep in dependencies)
-                    self.costs[node_id][plan_key] = max(target_cost - dependency_cost, 0.0)
+                    self.costs[node_id][plan_key] = max(target_cost - dependency_cost, 1.0)
         
         self._save_costs()
         print(f"完了: {len(self.costs)} ノード処理済み")

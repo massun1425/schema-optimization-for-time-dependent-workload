@@ -1,3 +1,4 @@
+# マイグレーションプランを取得　MVを使用しないものだけSQL生成
 import argparse
 import psycopg2
 import re 

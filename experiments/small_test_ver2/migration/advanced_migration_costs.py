@@ -1,6 +1,6 @@
 """
 マイグレーションプランのコストを計算するスクリプト（EXPLAIN JSON使用版）
-
+ちょっと値が違いすぎるかも、limitがくせ者
 使い方:
     python experiments/small_test_ver2/migration/advanced_migration_costs.py --query-set job_like
     python experiments/small_test_ver2/migration/advanced_migration_costs.py --query-set explicit_join
