@@ -83,11 +83,19 @@ def mock_query_manager():
     class MockQueryManager:
         def __init__(self):
             self.leaf_nodes_map = {
-                "leaf_1": {"table_name": "users", "alias": "u", "conditions": "u.age > 20"},
-                "leaf_2": {"table_name": "orders", "alias": "o", "conditions": "o.total > 1000"},
+                ("Seq Scan", "users", "u", "u.age > 20"): "leaf_1",
+                ("Seq Scan", "orders", "o", "o.total > 1000"): "leaf_2",
+            }
+            self.leaf_nodes_map_r = {
+                "leaf_1": ("Seq Scan", "users", "u", "u.age > 20"),
+                "leaf_2": ("Seq Scan", "orders", "o", "o.total > 1000"),
             }
             self.non_leaf_nodes_map = {}
             self.non_leaf_nodes_map_r = {}
+            self.relation_tables = {
+                "leaf_1": "users",
+                "leaf_2": "orders",
+            }
             self.query_map = {
                 1: {"original_sql": "SELECT u.name FROM users u WHERE u.age > 20", "cost": 100.0}
             }

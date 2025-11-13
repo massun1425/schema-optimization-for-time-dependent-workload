@@ -97,11 +97,11 @@ class TestQueryGraphMatcher:
         qm.process_leaf_node(
             "Seq Scan", "title", "t",
             "(production_year > 2000)",
-            [0, 0], 30.0, 12500, 25
+            [0, 0], 30.0, 30.0, 12500, 25
         )
         qm.process_leaf_node(
             "Seq Scan", "cast_info", "ci", "",
-            [0, 1], 50.0, 125000, 25
+            [0, 1], 50.0, 50.0, 125000, 25
         )
         
         # Add non-leaf node with enhanced info
@@ -123,6 +123,7 @@ class TestQueryGraphMatcher:
             filters=[],
             position=[0, 2],
             total_cost=100.0,
+            original_cost=100.0,
             rows=1000,
             width=50
         )
@@ -210,11 +211,11 @@ class TestQueryRewriteEngine:
         qm.process_leaf_node(
             "Seq Scan", "title", "t",
             "(production_year > 2000)",
-            [0, 0], 30.0, 12500, 25
+            [0, 0], 30.0, 30.0, 12500, 25
         )
         qm.process_leaf_node(
             "Seq Scan", "cast_info", "ci", "",
-            [0, 1], 50.0, 125000, 25
+            [0, 1], 50.0, 50.0, 125000, 25
         )
         
         # Add non-leaf MV
@@ -236,6 +237,7 @@ class TestQueryRewriteEngine:
             filters=[],
             position=[0, 2],
             total_cost=100.0,
+            original_cost=100.0,
             rows=1000,
             width=50
         )

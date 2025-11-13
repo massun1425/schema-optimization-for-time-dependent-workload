@@ -221,17 +221,6 @@ docs(readme): update Python 3.11 requirements
 - ❌ Commit `Output/`, `__pycache__/` → ✅ Check `.gitignore`
 - ❌ Vague commits "fix bug" → ✅ Conventional Commits
 
-**Debugging**:
-- ❌ Add temporary log statements for debugging → ✅ Use MCP debug tools
-- ❌ Create throwaway test scripts to investigate behavior → ✅ Use MCP debug tools
-- ✅ **Prefer MCP debugging tools** (e.g., `mcp_python-debug`) for:
-  - Setting breakpoints and inspecting variables
-  - Stepping through code execution
-  - Investigating bug behavior
-  - Understanding code flow without modifying source
-
----
-
 ## 6. Dependencies and Special Considerations
 
 **Critical Dependencies**:

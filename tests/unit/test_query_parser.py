@@ -205,8 +205,8 @@ class TestQueryParser:
     def test_search_leaf_node(self, qp):
         """Test finding leaf tables in a subtree."""
         # Create a tree structure
-        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 100, 50)
-        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 200, 60)
+        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 5.0, 100, 50)
+        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 7.0, 200, 60)
         qp.qm.process_non_leaf_node(["leaf_1", "leaf_2"], [-1, -1], 15.0, 300, 110)
 
         # Search from non-leaf node
@@ -216,7 +216,7 @@ class TestQueryParser:
 
     def test_search_leaf_node_direct_leaf(self, qp):
         """Test searching from a leaf node itself."""
-        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 100, 50)
+        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 5.0, 100, 50)
 
         tables = qp.search_leaf_node("leaf_1")
 
@@ -225,8 +225,8 @@ class TestQueryParser:
     def test_check_m_cost(self, qp):
         """Test maintenance cost calculation."""
         # Create some nodes
-        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 10.0, 100, 50)
-        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 15.0, 200, 60)
+        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 10.0, 10.0, 100, 50)
+        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 15.0, 15.0, 200, 60)
 
         m_cost = [0.0, 0.0]
         table_list = ["users", "posts"]
@@ -255,8 +255,8 @@ class TestQueryParser:
     def test_set_inclusive_dependency(self, qp):
         """Test building inclusive dependency matrix."""
         # Create a simple tree
-        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 100, 50)
-        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 200, 60)
+        qp.qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 5.0, 100, 50)
+        qp.qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 7.0, 200, 60)
         qp.qm.process_non_leaf_node(["leaf_1", "leaf_2"], [-1, -1], 15.0, 300, 110)
 
         qp.node_list = ["leaf_1", "leaf_2", "non_leaf_1"]

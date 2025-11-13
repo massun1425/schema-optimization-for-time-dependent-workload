@@ -50,6 +50,7 @@ class TestQueryManager:
             filter_condition="u.age > 18",
             position=[0, 0],
             total_cost=10.5,
+            original_cost=10.5,
             size=1000,
             width=100,
         )
@@ -66,12 +67,12 @@ class TestQueryManager:
         """Test processing a duplicate leaf node returns same ID."""
         # First call
         node_id1 = qm.process_leaf_node(
-            "Seq Scan", "users", "u", "u.age > 18", [0, 0], 10.5, 1000, 100
+            "Seq Scan", "users", "u", "u.age > 18", [0, 0], 10.5, 10.5, 1000, 100
         )
 
         # Second call with same properties
         node_id2 = qm.process_leaf_node(
-            "Seq Scan", "users", "u", "u.age > 18", [1, 0], 10.5, 1000, 100
+            "Seq Scan", "users", "u", "u.age > 18", [1, 0], 10.5, 10.5, 1000, 100
         )
 
         assert node_id1 == node_id2
@@ -81,17 +82,17 @@ class TestQueryManager:
     def test_process_leaf_node_cost_minimum(self, qm):
         """Test that minimum cost is kept for duplicate nodes."""
         # First call with higher cost
-        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [0, 0], 20.0, 1000, 100)
+        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [0, 0], 20.0, 20.0, 1000, 100)
 
         # Second call with lower cost
-        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [1, 0], 10.0, 1000, 100)
+        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [1, 0], 10.0, 10.0, 1000, 100)
 
         assert qm.subquery_costs["leaf_1"] == 10.0  # Lower cost kept
 
     def test_process_leaf_node_invalid_position(self, qm):
         """Test that invalid position is not added."""
         node_id = qm.process_leaf_node(
-            "Seq Scan", "users", "u", "u.age > 18", [-1, -1], 10.5, 1000, 100
+            "Seq Scan", "users", "u", "u.age > 18", [-1, -1], 10.5, 10.5, 1000, 100
         )
 
         assert node_id not in qm.subquery_positions
@@ -99,8 +100,8 @@ class TestQueryManager:
     def test_process_non_leaf_node_new(self, qm):
         """Test processing a new non-leaf node."""
         # Create child nodes first
-        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [0, 0], 5.0, 500, 50)
-        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [0, 1], 7.0, 700, 70)
+        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [0, 0], 5.0, 5.0, 500, 50)
+        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [0, 1], 7.0, 7.0, 700, 70)
 
         # Process non-leaf node
         node_id = qm.process_non_leaf_node(
@@ -121,8 +122,8 @@ class TestQueryManager:
 
     def test_process_non_leaf_node_order_independent(self, qm):
         """Test that child order doesn't affect node deduplication."""
-        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 500, 50)
-        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 700, 70)
+        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 5.0, 500, 50)
+        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 7.0, 700, 70)
 
         # Process with children in different order
         node_id1 = qm.process_non_leaf_node([child1, child2], [-1, -1], 15.0, 200, 120)
@@ -197,7 +198,7 @@ class TestQueryManager:
 
     def test_get_node_info_leaf(self, qm):
         """Test getting info for a leaf node."""
-        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [0, 0], 10.0, 1000, 100)
+        qm.process_leaf_node("Seq Scan", "users", "u", "u.age > 18", [0, 0], 10.0, 10.0, 1000, 100)
 
         info = qm.get_node_info("leaf_1")
 
@@ -211,8 +212,8 @@ class TestQueryManager:
 
     def test_get_node_info_non_leaf(self, qm):
         """Test getting info for a non-leaf node."""
-        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 500, 50)
-        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 700, 70)
+        child1 = qm.process_leaf_node("Seq Scan", "users", "u", "", [-1, -1], 5.0, 5.0, 500, 50)
+        child2 = qm.process_leaf_node("Seq Scan", "posts", "p", "", [-1, -1], 7.0, 7.0, 700, 70)
         qm.process_non_leaf_node([child1, child2], [0, 0], 15.0, 200, 120, "u.id = p.user_id")
 
         info = qm.get_node_info("non_leaf_1")
@@ -231,7 +232,7 @@ class TestQueryManager:
     def test_reset(self, qm):
         """Test resetting the QueryManager."""
         # Add some nodes
-        qm.process_leaf_node("Seq Scan", "users", "u", "", [0, 0], 10.0, 1000, 100)
+        qm.process_leaf_node("Seq Scan", "users", "u", "", [0, 0], 10.0, 10.0, 1000, 100)
         qm.process_non_leaf_node(["leaf_1"], [0, 1], 20.0, 500, 50)
 
         # Reset
