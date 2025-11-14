@@ -49,7 +49,15 @@ class TestQueryRewritingIntegration:
         """MV生成とクエリ書き換えの統合"""
 
         class MockQM:
-            leaf_nodes_map = {"leaf_1": {"table_name": "title", "alias": "t", "conditions": ""}}
+            leaf_nodes_map = {
+                ("Seq Scan", "title", "t", ""): "leaf_1"
+            }
+            leaf_nodes_map_r = {
+                "leaf_1": ("Seq Scan", "title", "t", "")
+            }
+            relation_tables = {
+                "leaf_1": "title"
+            }
             query_map = {1: {"original_sql": "SELECT * FROM title t"}}
 
         qm = MockQM()

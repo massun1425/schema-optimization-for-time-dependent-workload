@@ -72,6 +72,9 @@ class QueryParser:
         self.U_max: float = 0.0
         self.query: list[list[dict[str, Any]]] = []
         self.subqlist: dict[tuple[str, ...], str] = {}
+        
+        # Store original subquery costs (from EXPLAIN JSON Total Cost)
+        self.original_subquery_costs: dict[str, float] = {}
 
     def natural_sort_key(self, s: str) -> list:
         """Generate a key for natural sorting of strings with numbers.
@@ -341,6 +344,10 @@ class QueryParser:
                     additional_filters.append(node[filter_key])
 
             # Cost calculation logic
+            # まず、EXPLAIN JSONからの生のコストを取得（original_subquery_costs用）
+            original_cost = node.get("Total Cost", 0.0)
+            
+            # 次に、MV選択用の調整されたコストを計算
             # Prevent MVs with no filter condition
             if "Seq Scan" in node["Node Type"] and filter_condition == "":
                 cost = 0.0
@@ -350,7 +357,7 @@ class QueryParser:
             ):
                 cost = 0.0
             else:
-                cost = node.get("Total Cost", 0.0)
+                cost = original_cost
 
             # Zero cost if no filter
             if filter_condition == "":
@@ -371,6 +378,7 @@ class QueryParser:
                     "additional_filters": additional_filters,  # New field
                     "filter": filter_condition,
                     "cost": cost * frequency,
+                    "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
                     "size": node.get("Plan Rows", 0) * width,
                     "rows": node.get("Plan Rows", 0),  # New field
                     "width": width,
@@ -384,6 +392,10 @@ class QueryParser:
             # Determine filter condition
             # Note: Index Condは結合条件なのでリーフMV生成時は使わない
             # 親ノードのextract_join_conditions()で抽出される
+            
+            # まず、EXPLAIN JSONからの生のコストを取得（original_subquery_costs用）
+            original_cost = node.get("Total Cost", 0.0)
+            
             if "Filter" in node:
                 # Filterのみを使用（Index Condは除外）
                 filter_condition = node["Filter"]
@@ -417,6 +429,7 @@ class QueryParser:
                     "alias": alias,
                     "filter": filter_condition,
                     "cost": cost * frequency,
+                    "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
                     "size": node.get("Plan Rows", 0) * width,
                     "width": width,
                 }
@@ -895,6 +908,10 @@ class QueryParser:
             self.X = X
             self.U_max = U_max
             self.query = query
+            
+            # Store original subquery costs (from EXPLAIN JSON Total Cost)
+            # These are already preserved in qm.original_subquery_costs during processing
+            self.original_subquery_costs = self.qm.original_subquery_costs
 
         except json.JSONDecodeError as e:
             print(f"Error reading {files[i] if i < len(files) else 'unknown file'}: {e}")

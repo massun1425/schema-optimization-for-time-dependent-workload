@@ -185,11 +185,11 @@ class TestEnhancedParser:
         # Create some leaf nodes first
         leaf1 = qm.process_leaf_node(
             "Seq Scan", "title", "t", "(production_year > 2000)",
-            [0, 0], 30.0, 500, 25
+            [0, 0], 30.0, 30.0, 500, 25
         )
         leaf2 = qm.process_leaf_node(
             "Seq Scan", "cast_info", "ci", "",
-            [0, 1], 50.0, 5000, 25
+            [0, 1], 50.0, 50.0, 5000, 25
         )
         
         # Create JOIN condition
@@ -212,6 +212,7 @@ class TestEnhancedParser:
             filters=[],
             position=[0, 2],
             total_cost=100.0,
+            original_cost=100.0,
             rows=1000,
             width=50,
         )
@@ -236,9 +237,9 @@ class TestEnhancedParser:
 
     def test_process_non_leaf_node_v2_order_preserved(self, qm):
         """Test that child order is preserved in v2."""
-        leaf1 = qm.process_leaf_node("Seq Scan", "t1", "t1", "", [0, 0], 10.0, 100, 10)
-        leaf2 = qm.process_leaf_node("Seq Scan", "t2", "t2", "", [0, 1], 20.0, 200, 20)
-        leaf3 = qm.process_leaf_node("Seq Scan", "t3", "t3", "", [0, 2], 30.0, 300, 30)
+        leaf1 = qm.process_leaf_node("Seq Scan", "t1", "t1", "", [0, 0], 10.0, 10.0, 100, 10)
+        leaf2 = qm.process_leaf_node("Seq Scan", "t2", "t2", "", [0, 1], 20.0, 20.0, 200, 20)
+        leaf3 = qm.process_leaf_node("Seq Scan", "t3", "t3", "", [0, 2], 30.0, 30.0, 300, 30)
         
         # Create node with specific order
         node_id = qm.process_non_leaf_node_v2(
@@ -249,6 +250,7 @@ class TestEnhancedParser:
             filters=[],
             position=[0, 3],
             total_cost=100.0,
+            original_cost=100.0,
             rows=500,
             width=50,
         )
@@ -351,7 +353,7 @@ class TestEnhancedParser:
     def test_reset_clears_enhanced_data(self, qm):
         """Test that reset clears all enhanced data structures."""
         # Add some data
-        leaf1 = qm.process_leaf_node("Seq Scan", "t1", "t1", "", [0, 0], 10.0, 100, 10)
+        leaf1 = qm.process_leaf_node("Seq Scan", "t1", "t1", "", [0, 0], 10.0, 10.0, 100, 10)
         
         join_cond = JoinCondition(
             left_table="t1", left_column="id", operator="=",
@@ -361,7 +363,7 @@ class TestEnhancedParser:
         
         node_id = qm.process_non_leaf_node_v2(
             "Hash Join", "Inner", [leaf1], [join_cond], [],
-            [0, 1], 50.0, 500, 50
+            [0, 1], 50.0, 50.0, 500, 50
         )
         
         # Verify data exists

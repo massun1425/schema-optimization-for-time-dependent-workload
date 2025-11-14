@@ -154,11 +154,11 @@ class TestEnhancedMVGenerator:
         qm.process_leaf_node(
             "Seq Scan", "title", "t",
             "(production_year > 2000)",
-            [0, 0], 30.0, 12500, 25
+            [0, 0], 30.0, 30.0, 12500, 25
         )
         qm.process_leaf_node(
             "Seq Scan", "cast_info", "ci", "",
-            [0, 1], 50.0, 125000, 25
+            [0, 1], 50.0, 50.0, 125000, 25
         )
         
         return qm
@@ -222,6 +222,7 @@ class TestEnhancedMVGenerator:
             filters=[],
             position=[0, 2],
             total_cost=100.0,
+            original_cost=100.0,
             rows=1000,
             width=50
         )
