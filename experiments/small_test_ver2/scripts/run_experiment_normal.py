@@ -175,13 +175,16 @@ class NormalModeExperiment:
             
             query_sql = ''.join(query_lines).strip()
             
-            # EXPLAIN JSON を実行
+            # EXPLAIN JSON を実行（Bitmap Scanを無効化）
+            # SET文とEXPLAINを分けて実行し、EXPLAIN結果のみを取得
             explain_sql = f"EXPLAIN (FORMAT JSON, COSTS TRUE, VERBOSE FALSE) {query_sql}"
             
             try:
                 result = subprocess.run(
                     ["psql", "-U", "postgres", "-d", self.settings.database.database,
-                     "-t", "-A", "-c", explain_sql],
+                     "-t", "-A", 
+                     "-c", "SET enable_bitmapscan = off;",
+                     "-c", explain_sql],
                     capture_output=True,
                     text=True,
                     check=True,
@@ -190,7 +193,12 @@ class NormalModeExperiment:
                     env={**subprocess.os.environ, 'PGPASSWORD': ''}
                 )
                 
-                json_data = json.loads(result.stdout.strip())
+                # 出力から最後のJSON部分のみを抽出（SET文の出力を除外）
+                output_lines = result.stdout.strip().split('\n')
+                # "SET"行を除外してJSONのみを取得
+                json_lines = [line for line in output_lines if line and line != 'SET']
+                json_text = '\n'.join(json_lines)
+                json_data = json.loads(json_text)
                 
                 with open(output_file, 'w', encoding='utf-8') as f:
                     json.dump(json_data, f, indent=2, ensure_ascii=False)
@@ -287,6 +295,84 @@ class NormalModeExperiment:
             self.print_error(f"クエリパースに失敗: {e}")
             import traceback
             traceback.print_exc()
+            return False
+    
+# フェーズ2.5のみ実行
+# python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2.5 --query-set job
+
+    def phase2_5_annotate_json(self):
+        """フェーズ2.5: JSONファイルにノードIDを付加"""
+        self.print_header("JSONファイルへのノードID付加", 2.5)
+        
+        if self.qp is None:
+            if not self.pickle_path.exists():
+                self.print_error(f"{self.pickle_path} が見つかりません")
+                self.print_info("先にフェーズ2を実行してください")
+                return False
+            
+            self.print_info(f"パース結果を読み込み中: {self.pickle_path}")
+            try:
+                with open(self.pickle_path, 'rb') as f:
+                    self.qp = pickle.load(f)
+                self.print_success(f"{self.qp.s_num}個のノードを読み込み完了")
+            except Exception as e:
+                self.print_error(f"パース結果の読み込みに失敗: {e}")
+                return False
+        
+        # JSONファイルの一覧を取得
+        json_files = sorted(self.json_dir.glob("*.json"))
+        
+        if not json_files:
+            self.print_error(f"{self.json_dir} にJSONファイルが見つかりません")
+            return False
+        
+        self.print_info(f"{len(json_files)}個のJSONファイルを処理します")
+        
+        try:
+            from src.core.parse_exporter import ParseExporter
+            
+            # ParseExporterを初期化
+            exporter = ParseExporter(self.qp.qm)
+            
+            # JSONファイルを直接上書きする（output_dirを同じディレクトリに設定）
+            self.print_info("ノードIDを付加中...")
+            
+            # 一時ディレクトリに出力してから上書き
+            temp_dir = self.json_dir.parent / f".temp_{self.query_set}"
+            
+            # 注釈付きファイルを一時ディレクトリに出力
+            exporter.annotate_query_files(
+                [str(f) for f in json_files],
+                temp_dir
+            )
+            
+            # 一時ディレクトリから元の場所に移動（上書き）
+            annotated_files = list(temp_dir.glob("*.json"))
+            for annotated_file in annotated_files:
+                target_file = self.json_dir / annotated_file.name
+                import shutil
+                shutil.move(str(annotated_file), str(target_file))
+            
+            # 一時ディレクトリを削除
+            if temp_dir.exists():
+                import shutil
+                shutil.rmtree(temp_dir)
+            
+            self.print_success(f"{len(json_files)}個のJSONファイルにノードIDを付加完了")
+            self.print_info(f"  更新先: {self.json_dir}")
+            
+            return True
+            
+        except Exception as e:
+            self.print_error(f"ノードID付加に失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # エラー時に一時ディレクトリをクリーンアップ
+            if temp_dir.exists():
+                import shutil
+                shutil.rmtree(temp_dir)
+            
             return False
     
     def _save_parse_results(self):
@@ -403,7 +489,7 @@ class NormalModeExperiment:
         
         try:
             from experiments.small_test_ver2.mv_generation.enhanced_mv_generator import EnhancedMVGenerator
-            from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
+            from src.rewrite.schema_provider import SchemaProvider
             
             selected_views = self.result.get('selected_views', []) if isinstance(self.result, dict) else self.result.selected_views
             
@@ -412,7 +498,7 @@ class NormalModeExperiment:
                 node_id = view.get('node_id') if isinstance(view, dict) else view.node_id
                 selected_node_ids.add(node_id)
             
-            schema_provider = SmallTestSchemaProvider()
+            schema_provider = SchemaProvider(self.settings.database.__dict__)
             
             mv_generator = EnhancedMVGenerator(
                 query_manager=self.qp.qm,
@@ -575,6 +661,7 @@ class NormalModeExperiment:
             (0, "データベースセットアップ", self.phase0_setup),
             (1, "EXPLAIN JSON生成", self.phase1_generate_explain_json),
             (2, "クエリパース", self.phase2_parse_queries),
+            (2.5, "JSONノードID付加", self.phase2_5_annotate_json),
             (3, "ILP最適化", self.phase3_optimize),
             (4, "MV生成SQL作成", self.phase4_generate_mv_sql),
             (5, "MV作成", self.phase5_create_mvs),
@@ -599,8 +686,8 @@ def main():
         '--phase',
         type=str,
         default='all',
-        choices=['all', '0', '1', '2', '3', '4', '5', '6'],
-        help='実行するフェーズ (all: 全実行, 0-6: 個別実行)'
+        choices=['all', '0', '1', '2', '2.5', '3', '4', '5', '6'],
+        help='実行するフェーズ (all: 全実行, 0-6: 個別実行, 2.5: JSON注釈)'
     )
     parser.add_argument(
         '--config',
@@ -627,6 +714,8 @@ def main():
         success = exp.phase1_generate_explain_json()
     elif args.phase == '2':
         success = exp.phase2_parse_queries()
+    elif args.phase == '2.5':
+        success = exp.phase2_5_annotate_json()
     elif args.phase == '3':
         success = exp.phase3_optimize()
     elif args.phase == '4':

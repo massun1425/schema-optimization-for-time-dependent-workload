@@ -6,15 +6,25 @@
 database:
   host: localhost
   port: 5432
-  database: mv_small_test  # 小規模実験用DB (IMDb用は imdbload に変更)
+  # === データベース切り替え ===
+  # 小規模実験用: mv_small_test
+  # JOB/IMDBベンチマーク用: imdbload
+  # database: mv_small_test
+  database: imdbload  # JOBベンチマーク実行時はこちらをコメント解除
   user: postgres
   password: "1608"
   timeout: 300
 
 # 最適化パラメータ（小規模実験用）
 optimization:
-  storage_limit_mb: 0.01              
-  storage_limit_bytes: 10240  # 10KB
+  # === ストレージ制限切り替え ===
+  # 小規模実験用: 10KB
+  # storage_limit_mb: 0.01              
+  #storage_limit_bytes: 10240  # 10KB
+  # JOBベンチマーク用: 100MB（推奨） - 使用時は上記2行をコメントアウト
+  storage_limit_mb: 100
+  storage_limit_bytes: 104857600  # 100MB
+  
   insert_queries: 50               # 挿入クエリ数: 50回
   
   # 使用するアルゴリズム（normalのみ使用）
@@ -28,8 +38,13 @@ optimization:
 # ベンチマーク設定
 benchmark:
   type: custom
+  # === クエリディレクトリ切り替え ===
+  # 小規模実験用 (3クエリ)
   queries_dir: experiments/small_test_ver2/02_json
   sql_dir: experiments/small_test_ver2/01_queries
+  # JOBベンチマーク用 (113クエリ) - 使用時は上記2行をコメントアウト
+  # queries_dir: dataset/redbench/imdb/benchmarks/job/json
+  # sql_dir: dataset/redbench/imdb/benchmarks/job/sql
   workloads_dir: ""
   query_selection_mode: all_job    # すべてのJOBクエリを使用
 
@@ -44,7 +59,11 @@ paths:
 
 # クエリ設定
 query:
-  num_queries: 3
+  # === クエリ数切り替え ===
+  # 小規模実験用: 3
+  # num_queries: 3
+  # JOBベンチマーク用: 113（全クエリ）
+  num_queries: 113
 
 # 実行制御（段階的実行用）
 execution:

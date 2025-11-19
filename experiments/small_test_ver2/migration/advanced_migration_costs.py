@@ -62,15 +62,26 @@ class MigrationCostCalculator:
 
             for plan_key, plan in plans.items():
                 if not plan.startswith("CREATE MATERIALIZED VIEW"):
-                    self.costs[node_id][plan_key] =0.0
+                    self.costs[node_id][plan_key] = 0.0
                     continue
 
-                dependencies = eval(plan_key) if plan_key != "[]" else []
+                # plan_keyを安全にパース（eval()の代わりにjson.loads()を使用）
+                try:
+                    if plan_key == "[]":
+                        dependencies = []
+                    else:
+                        # Pythonのリスト表現をJSONに変換してパース
+                        # "['leaf_1', 'leaf_2']" -> '["leaf_1", "leaf_2"]'
+                        json_str = plan_key.replace("'", '"')
+                        dependencies = json.loads(json_str)
+                except (json.JSONDecodeError, ValueError) as e:
+                    print(f"警告: {node_id} の plan_key '{plan_key}' のパースに失敗: {e}")
+                    dependencies = []
 
                 # マイグレーションコスト = ターゲットコスト - 依存コストの合計
                 target_cost = self.node_costs.get(node_id, 0.0)
                 dependency_cost = sum(self.node_costs.get(dep, 0.0) for dep in dependencies)
-                cost = max(target_cost - dependency_cost, 0.0)
+                cost = target_cost - dependency_cost
 
                 self.costs[node_id][plan_key] = cost
 

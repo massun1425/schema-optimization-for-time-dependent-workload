@@ -14,6 +14,74 @@
 
 ---
 
+## データベースの切り替え（小規模実験 vs JOBベンチマーク）
+
+### 1. 小規模実験用データベース（デフォルト）
+
+`mv_small_test` データベースを使用した小規模実験（3クエリ）の場合は、`config.yaml` をそのまま使用できます。
+
+### 2. JOBベンチマーク用IMDBデータベース
+
+113クエリのJOBベンチマークを実行する場合は、以下の手順でIMDBデータベースをセットアップし、設定を切り替えます。
+
+#### ステップ1: IMDBデータベースのセットアップ
+
+```bash
+# IMDBデータのダウンロード、データベース作成、データインポート、インデックス作成を一括実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --all
+
+# または段階的に実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --download      # ダウンロードのみ
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-db     # DB作成
+python experiments/small_test_ver2/scripts/setup_imdb.py --import-data   # データインポート
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-indexes # インデックス作成
+
+# セットアップの検証
+python experiments/small_test_ver2/scripts/setup_imdb.py --verify
+```
+
+#### ステップ2: config.yaml の設定変更
+
+`experiments/small_test_ver2/config.yaml` を編集し、以下の設定をコメント切り替えします：
+
+```yaml
+# データベース接続設定
+database:
+  # database: mv_small_test  # 小規模実験用（コメントアウト）
+  database: imdbload         # JOBベンチマーク用（コメント解除）
+
+# 最適化パラメータ
+optimization:
+  # storage_limit_mb: 0.01              # 小規模実験用（コメントアウト）
+  # storage_limit_bytes: 10240
+  storage_limit_mb: 100                 # JOBベンチマーク用（コメント解除）
+  storage_limit_bytes: 104857600        # 100MB
+
+# ベンチマーク設定
+benchmark:
+  # queries_dir: experiments/small_test_ver2/02_json        # 小規模実験用（コメントアウト）
+  # sql_dir: experiments/small_test_ver2/01_queries
+  queries_dir: dataset/redbench/imdb/benchmarks/job/json   # JOBベンチマーク用（コメント解除）
+  sql_dir: dataset/redbench/imdb/benchmarks/job/sql
+
+# クエリ設定
+query:
+  # num_queries: 3    # 小規模実験用（コメントアウト）
+  num_queries: 113    # JOBベンチマーク用（コメント解除）
+```
+
+#### ステップ3: JOBベンチマークの実行
+
+設定変更後、通常通り実験スクリプトを実行します：
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all
+```
+
+**注意**: JOBベンチマークは113クエリあるため、小規模実験よりも処理時間が長くなります。
+
+---
+
 ## 実行手順
 
 ### 前提条件

@@ -1,0 +1,342 @@
+[
+  {
+    "Plan": {
+      "node_id": "non_leaf_253",
+      "Node Type": "Aggregate",
+      "Strategy": "Plain",
+      "Partial Mode": "Finalize",
+      "Parallel Aware": false,
+      "Async Capable": false,
+      "Startup Cost": 592063.67,
+      "Total Cost": 592063.68,
+      "Plan Rows": 1,
+      "Plan Width": 64,
+      "Disabled": false,
+      "Plans": [
+        {
+          "node_id": "non_leaf_252",
+          "Node Type": "Gather",
+          "Parent Relationship": "Outer",
+          "Parallel Aware": false,
+          "Async Capable": false,
+          "Startup Cost": 592063.45,
+          "Total Cost": 592063.66,
+          "Plan Rows": 2,
+          "Plan Width": 64,
+          "Disabled": false,
+          "Workers Planned": 2,
+          "Single Copy": false,
+          "Plans": [
+            {
+              "node_id": "non_leaf_251",
+              "Node Type": "Aggregate",
+              "Strategy": "Plain",
+              "Partial Mode": "Partial",
+              "Parent Relationship": "Outer",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 591063.45,
+              "Total Cost": 591063.46,
+              "Plan Rows": 1,
+              "Plan Width": 64,
+              "Disabled": false,
+              "Plans": [
+                {
+                  "node_id": "non_leaf_250",
+                  "Node Type": "Hash Join",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Join Type": "Inner",
+                  "Startup Cost": 550216.79,
+                  "Total Cost": 590011.25,
+                  "Plan Rows": 210441,
+                  "Plan Width": 33,
+                  "Disabled": false,
+                  "Inner Unique": true,
+                  "Hash Cond": "(mc.company_type_id = ct.id)",
+                  "Plans": [
+                    {
+                      "node_id": "non_leaf_248",
+                      "Node Type": "Hash Join",
+                      "Parent Relationship": "Outer",
+                      "Parallel Aware": true,
+                      "Async Capable": false,
+                      "Join Type": "Inner",
+                      "Startup Cost": 550190.81,
+                      "Total Cost": 589429.57,
+                      "Plan Rows": 210441,
+                      "Plan Width": 37,
+                      "Disabled": false,
+                      "Inner Unique": false,
+                      "Hash Cond": "(mc.movie_id = t.id)",
+                      "Plans": [
+                        {
+                          "node_id": "non_leaf_157",
+                          "Node Type": "Hash Join",
+                          "Parent Relationship": "Outer",
+                          "Parallel Aware": true,
+                          "Async Capable": false,
+                          "Join Type": "Inner",
+                          "Startup Cost": 5390.61,
+                          "Total Cost": 37939.77,
+                          "Plan Rows": 391768,
+                          "Plan Width": 8,
+                          "Disabled": false,
+                          "Inner Unique": true,
+                          "Hash Cond": "(mc.company_id = cn.id)",
+                          "Plans": [
+                            {
+                              "node_id": "leaf_70",
+                              "Node Type": "Seq Scan",
+                              "Parent Relationship": "Outer",
+                              "Parallel Aware": true,
+                              "Async Capable": false,
+                              "Relation Name": "movie_companies",
+                              "Alias": "mc",
+                              "Startup Cost": 0.0,
+                              "Total Cost": 29695.37,
+                              "Plan Rows": 1087137,
+                              "Plan Width": 12,
+                              "Disabled": false
+                            },
+                            {
+                              "node_id": "non_leaf_156",
+                              "Node Type": "Hash",
+                              "Parent Relationship": "Inner",
+                              "Parallel Aware": true,
+                              "Async Capable": false,
+                              "Startup Cost": 4767.92,
+                              "Total Cost": 4767.92,
+                              "Plan Rows": 49815,
+                              "Plan Width": 4,
+                              "Disabled": false,
+                              "Plans": [
+                                {
+                                  "node_id": "leaf_71",
+                                  "Node Type": "Seq Scan",
+                                  "Parent Relationship": "Outer",
+                                  "Parallel Aware": true,
+                                  "Async Capable": false,
+                                  "Relation Name": "company_name",
+                                  "Alias": "cn",
+                                  "Startup Cost": 0.0,
+                                  "Total Cost": 4767.92,
+                                  "Plan Rows": 49815,
+                                  "Plan Width": 4,
+                                  "Disabled": false,
+                                  "Filter": "((country_code)::text = '[us]'::text)"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "node_id": "non_leaf_247",
+                          "Node Type": "Hash",
+                          "Parent Relationship": "Inner",
+                          "Parallel Aware": true,
+                          "Async Capable": false,
+                          "Startup Cost": 540356.2,
+                          "Total Cost": 540356.2,
+                          "Plan Rows": 208720,
+                          "Plan Width": 41,
+                          "Disabled": false,
+                          "Plans": [
+                            {
+                              "node_id": "non_leaf_246",
+                              "Node Type": "Nested Loop",
+                              "Parent Relationship": "Outer",
+                              "Parallel Aware": false,
+                              "Async Capable": false,
+                              "Join Type": "Inner",
+                              "Startup Cost": 62597.02,
+                              "Total Cost": 540356.2,
+                              "Plan Rows": 208720,
+                              "Plan Width": 41,
+                              "Disabled": false,
+                              "Inner Unique": true,
+                              "Plans": [
+                                {
+                                  "node_id": "non_leaf_244",
+                                  "Node Type": "Hash Join",
+                                  "Parent Relationship": "Outer",
+                                  "Parallel Aware": true,
+                                  "Async Capable": false,
+                                  "Join Type": "Inner",
+                                  "Startup Cost": 62596.58,
+                                  "Total Cost": 516461.98,
+                                  "Plan Rows": 431061,
+                                  "Plan Width": 29,
+                                  "Disabled": false,
+                                  "Inner Unique": true,
+                                  "Hash Cond": "(ci.movie_id = t.id)",
+                                  "Plans": [
+                                    {
+                                      "node_id": "non_leaf_242",
+                                      "Node Type": "Hash Join",
+                                      "Parent Relationship": "Outer",
+                                      "Parallel Aware": false,
+                                      "Async Capable": false,
+                                      "Join Type": "Inner",
+                                      "Startup Cost": 25.98,
+                                      "Total Cost": 443119.89,
+                                      "Plan Rows": 622280,
+                                      "Plan Width": 8,
+                                      "Disabled": false,
+                                      "Inner Unique": true,
+                                      "Hash Cond": "(ci.role_id = rt.id)",
+                                      "Plans": [
+                                        {
+                                          "node_id": "leaf_97",
+                                          "Node Type": "Seq Scan",
+                                          "Parent Relationship": "Outer",
+                                          "Parallel Aware": true,
+                                          "Async Capable": false,
+                                          "Relation Name": "cast_info",
+                                          "Alias": "ci",
+                                          "Startup Cost": 0.0,
+                                          "Total Cost": 441450.69,
+                                          "Plan Rows": 622280,
+                                          "Plan Width": 12,
+                                          "Disabled": false,
+                                          "Filter": "(note ~~ '%(producer)%'::text)"
+                                        },
+                                        {
+                                          "node_id": "non_leaf_241",
+                                          "Node Type": "Hash",
+                                          "Parent Relationship": "Inner",
+                                          "Parallel Aware": false,
+                                          "Async Capable": false,
+                                          "Startup Cost": 17.1,
+                                          "Total Cost": 17.1,
+                                          "Plan Rows": 710,
+                                          "Plan Width": 4,
+                                          "Disabled": false,
+                                          "Plans": [
+                                            {
+                                              "node_id": "leaf_98",
+                                              "Node Type": "Seq Scan",
+                                              "Parent Relationship": "Outer",
+                                              "Parallel Aware": false,
+                                              "Async Capable": false,
+                                              "Relation Name": "role_type",
+                                              "Alias": "rt",
+                                              "Startup Cost": 0.0,
+                                              "Total Cost": 17.1,
+                                              "Plan Rows": 710,
+                                              "Plan Width": 4,
+                                              "Disabled": false
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "node_id": "non_leaf_243",
+                                      "Node Type": "Hash",
+                                      "Parent Relationship": "Inner",
+                                      "Parallel Aware": true,
+                                      "Async Capable": false,
+                                      "Startup Cost": 49174.21,
+                                      "Total Cost": 49174.21,
+                                      "Plan Rows": 729631,
+                                      "Plan Width": 21,
+                                      "Disabled": false,
+                                      "Plans": [
+                                        {
+                                          "node_id": "leaf_99",
+                                          "Node Type": "Seq Scan",
+                                          "Parent Relationship": "Outer",
+                                          "Parallel Aware": true,
+                                          "Async Capable": false,
+                                          "Relation Name": "title",
+                                          "Alias": "t",
+                                          "Startup Cost": 0.0,
+                                          "Total Cost": 49174.21,
+                                          "Plan Rows": 729631,
+                                          "Plan Width": 21,
+                                          "Disabled": false,
+                                          "Filter": "(production_year > 1990)"
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "node_id": "non_leaf_245",
+                                  "Node Type": "Memoize",
+                                  "Parent Relationship": "Inner",
+                                  "Parallel Aware": false,
+                                  "Async Capable": false,
+                                  "Startup Cost": 0.44,
+                                  "Total Cost": 0.59,
+                                  "Plan Rows": 1,
+                                  "Plan Width": 20,
+                                  "Disabled": false,
+                                  "Cache Key": "ci.person_role_id",
+                                  "Cache Mode": "logical",
+                                  "Plans": [
+                                    {
+                                      "node_id": "leaf_79",
+                                      "Node Type": "Index Scan",
+                                      "Parent Relationship": "Outer",
+                                      "Parallel Aware": false,
+                                      "Async Capable": false,
+                                      "Scan Direction": "Forward",
+                                      "Index Name": "char_name_pkey",
+                                      "Relation Name": "char_name",
+                                      "Alias": "chn",
+                                      "Startup Cost": 0.43,
+                                      "Total Cost": 0.58,
+                                      "Plan Rows": 1,
+                                      "Plan Width": 20,
+                                      "Disabled": false,
+                                      "Index Cond": "(id = ci.person_role_id)"
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "node_id": "non_leaf_249",
+                      "Node Type": "Hash",
+                      "Parent Relationship": "Inner",
+                      "Parallel Aware": false,
+                      "Async Capable": false,
+                      "Startup Cost": 17.1,
+                      "Total Cost": 17.1,
+                      "Plan Rows": 710,
+                      "Plan Width": 4,
+                      "Disabled": false,
+                      "Plans": [
+                        {
+                          "node_id": "leaf_100",
+                          "Node Type": "Seq Scan",
+                          "Parent Relationship": "Outer",
+                          "Parallel Aware": false,
+                          "Async Capable": false,
+                          "Relation Name": "company_type",
+                          "Alias": "ct",
+                          "Startup Cost": 0.0,
+                          "Total Cost": 17.1,
+                          "Plan Rows": 710,
+                          "Plan Width": 4,
+                          "Disabled": false
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

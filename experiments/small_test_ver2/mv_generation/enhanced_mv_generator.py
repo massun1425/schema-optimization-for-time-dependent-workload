@@ -14,6 +14,7 @@ from src.core.models import NonLeafNodeInfo, JoinCondition
 from src.rewrite.schema_provider import SchemaProvider
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.WARNING)
 
 
 class EnhancedMVGenerator:
@@ -163,8 +164,15 @@ class EnhancedMVGenerator:
             # 現在のノードのJOIN条件を追加（重複除去）
             if node_info.join_conditions:
                 for jc in node_info.join_conditions:
-                    jc_str = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
-                    all_join_conditions_set.add(jc_str)
+                    # テーブル名が空でないことを確認してからJOIN条件を構築
+                    left_table = jc.left_table if jc.left_table else ""
+                    right_table = jc.right_table if jc.right_table else ""
+                    
+                    if left_table and right_table:
+                        jc_str = f"{left_table}.{jc.left_column} {jc.operator} {right_table}.{jc.right_column}"
+                        all_join_conditions_set.add(jc_str)
+                    else:
+                        logger.warning(f"JOIN condition has missing table name in node {node_id}: left={left_table}, right={right_table}, columns={jc.left_column}, {jc.right_column}")
             
             # setをlistに変換
             all_join_conditions = list(all_join_conditions_set)
@@ -195,8 +203,15 @@ class EnhancedMVGenerator:
             # サブツリー全体から全てのJOIN条件を収集（既存の条件に追加）
             subtree_join_conditions = self._collect_all_join_conditions(node_info, self.qm)
             for jc in subtree_join_conditions:
-                jc_str = f"{jc.left_table}.{jc.left_column} {jc.operator} {jc.right_table}.{jc.right_column}"
-                all_join_conditions_set.add(jc_str)
+                # テーブル名が空でないことを確認してからJOIN条件を構築
+                left_table = jc.left_table if jc.left_table else ""
+                right_table = jc.right_table if jc.right_table else ""
+                
+                if left_table and right_table:
+                    jc_str = f"{left_table}.{jc.left_column} {jc.operator} {right_table}.{jc.right_column}"
+                    all_join_conditions_set.add(jc_str)
+                else:
+                    logger.warning(f"JOIN condition has missing table name: left={left_table}, right={right_table}, columns={jc.left_column}, {jc.right_column}")
             
             # JOIN条件のテーブル名をエイリアスに変換
             converted_join_conditions = []
@@ -205,6 +220,11 @@ class EnhancedMVGenerator:
                 converted_jc = jc_str
                 for table_name, alias in table_to_alias.items():
                     converted_jc = converted_jc.replace(f"{table_name}.", f"{alias}.")
+                
+                # 変換後に不正な条件（`.column`形式）が残っていないか確認
+                if " ." in converted_jc or converted_jc.startswith("."):
+                    logger.error(f"Invalid JOIN condition after conversion: {converted_jc} (original: {jc_str})")
+                    continue  # 不正な条件はスキップ
                 
                 converted_join_conditions.append(converted_jc)
             
@@ -365,6 +385,8 @@ FROM {from_clause}{where_clause};"""
         
         # パターン2: WHERE句などで単独で使われるカラム名
         # 例: "note = 'something'" → "it.note = 'something'"
+        # 例: "note IS NULL" → "it.note IS NULL"
+        # 例: "note IS NOT NULL" → "it.note IS NOT NULL"
         # ただし、関数名や既にエイリアスが付いているものは除外
         def replace_bare_column(match):
             prefix = match.group(1)  # 前の文字（スペースや括弧）
@@ -372,14 +394,15 @@ FROM {from_clause}{where_clause};"""
             suffix = match.group(3)  # 後ろの文字（演算子など）
             
             # 既にエイリアスが付いている、または関数名の可能性がある場合はスキップ
-            if '.' in column_name or column_name.upper() in ['AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL']:
+            if '.' in column_name or column_name.upper() in ['AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'NULL']:
                 return match.group(0)
             
             return f"{prefix}{table_alias}.{column_name}{suffix}"
         
         # 単語境界で囲まれたカラム名を検出（演算子の前など）
+        # IS NOT NULL や IS NULL のパターンも考慮
         # (?<![.]) で「直前がドットでない」ことを確認
-        result = re.sub(r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY))', 
+        result = re.sub(r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY|IS\s+NOT\s+NULL|IS\s+NULL))', 
                        replace_bare_column, result, flags=re.IGNORECASE)
         
         return result

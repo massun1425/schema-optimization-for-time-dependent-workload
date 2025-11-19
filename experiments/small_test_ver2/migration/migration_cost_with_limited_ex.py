@@ -95,8 +95,9 @@ class MigrationCostCalculatorWithExplain:
                     # 例: "CREATE MATERIALIZED VIEW leaf_1 AS\nSELECT ..." -> "SELECT ..."
                     select_sql = self._extract_select_from_create_mv(base_plan_sql)
                     
-                    # EXPLAINを実行
+                    # EXPLAINを実行（Bitmap Scanを無効化）
                     try:
+                        cur.execute("SET enable_bitmapscan = off")
                         cur.execute(f"EXPLAIN (FORMAT JSON) {select_sql}")
                         explain_result = cur.fetchone()[0]
                         
@@ -109,6 +110,8 @@ class MigrationCostCalculatorWithExplain:
                     except Exception as e:
                         print(f"  {node_id}: エラー - {e}")
                         base_costs[node_id] = 0.0
+                        # トランザクションをロールバックして aborted 状態を解除
+                        conn.rollback()
         
         self.node_costs = base_costs
         return base_costs
@@ -152,7 +155,7 @@ class MigrationCostCalculatorWithExplain:
                     dependencies = eval(plan_key)
                     target_cost = self.node_costs.get(node_id, 0.0)
                     dependency_cost = sum(self.node_costs.get(dep, 0.0) for dep in dependencies)
-                    self.costs[node_id][plan_key] = max(target_cost - dependency_cost, 1.0)
+                    self.costs[node_id][plan_key] = target_cost - dependency_cost
         
         self._save_costs()
         print(f"完了: {len(self.costs)} ノード処理済み")
