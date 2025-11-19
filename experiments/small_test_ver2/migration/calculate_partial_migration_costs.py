@@ -3,7 +3,7 @@
 partial_migration_plans.jsonのコストを実測
 
 使い方:
-    python experiments/small_test_ver2/migration/calculate_partial_migration_costs.py --query-set job --input partial_migration_non_leaf_100.json
+    python experiments/small_test_ver2/migration/calculate_partial_migration_costs.py --query-set job --input partial_migration_non_leaf_100_non_leaf_200.json
 """
 
 import argparse
@@ -48,6 +48,7 @@ class PartialMigrationCostCalculator:
         
         # 結果保存用
         self.costs = {}
+        self.explain_results = {}
         self.required_mvs: Set[str] = set()
     
     def _load_json(self, file_path: Path) -> Dict[str, Any]:
@@ -225,12 +226,12 @@ class PartialMigrationCostCalculator:
         else:
             return ""
     
-    def _explain_sql(self, sql: str) -> float:
-        """SQLをEXPLAINし、totalcostを取得"""
+    def _explain_sql(self, sql: str) -> tuple[float, dict]:
+        """SQLをEXPLAINし、totalcostとJSON結果を取得"""
         select_sql = self._extract_select_from_create_mv(sql)
         
         if not select_sql:
-            return 0.0
+            return 0.0, {}
         
         try:
             with self._get_connection() as conn:
@@ -242,14 +243,15 @@ class PartialMigrationCostCalculator:
                     result = cursor.fetchone()
                     
                     if result and result[0]:
-                        plan = result[0][0]
-                        return float(plan.get('Plan', {}).get('Total Cost', 0.0))
+                        json_result = result[0][0]
+                        cost = float(json_result.get('Plan', {}).get('Total Cost', 0.0))
+                        return cost, json_result
                     else:
-                        return 0.0
+                        return 0.0, {}
         
         except Exception as e:
             print(f"    エラー: EXPLAIN失敗 - {str(e).split(chr(10))[0]}")
-            return 0.0
+            return 0.0, {}
     
     def calculate_all_costs(self) -> Dict[str, Dict[str, float]]:
         """すべてのマイグレーションプランのコストを計算"""
@@ -263,13 +265,15 @@ class PartialMigrationCostCalculator:
         for node_id, plans in self.partial_plans.items():
             print(f"\n  ノード: {node_id} ({len(plans)}個のプラン)")
             self.costs[node_id] = {}
+            self.explain_results[node_id] = {}
             
             for plan_key, sql in plans.items():
                 processed += 1
                 print(f"    [{processed}/{total_plans}] {plan_key[:50]}...", end=" ")
                 
-                cost = self._explain_sql(sql)
+                cost, json_result = self._explain_sql(sql)
                 self.costs[node_id][plan_key] = cost
+                self.explain_results[node_id][plan_key] = json_result
                 
                 print(f"→ {cost:.2f}")
         
@@ -310,6 +314,50 @@ class PartialMigrationCostCalculator:
             
         except Exception as e:
             print(f"✗ JSONファイルの保存に失敗: {e}")
+    
+    def save_explain_samples(self):
+        """各ノードの代表的なプランのEXPLAIN JSONを保存"""
+        print("\n" + "="*70)
+        print("サンプルEXPLAIN JSONを保存中...")
+        print("="*70)
+        
+        for node_id, plans in self.partial_plans.items():
+            samples = {}
+            
+            # []プラン（MV無し）を取得
+            if "[]" in plans:
+                samples["no_mv"] = {
+                    "plan_key": "[]",
+                    "sql": plans["[]"],
+                    "explain_json": self.explain_results.get(node_id, {}).get("[]", {}),
+                    "cost": self.costs.get(node_id, {}).get("[]", 0.0)
+                }
+            
+            # MVありプランを2つ取得（[]以外）
+            mv_plans = [(k, v) for k, v in plans.items() if k != "[]" and v not in ["NON_MIGRATE", "CREATE MATERIALIZED VIEW (generation failed)"]]
+            
+            # 最初の2つのMVありプランを選択
+            for i, (plan_key, sql) in enumerate(mv_plans[:2], 1):
+                samples[f"with_mv_{i}"] = {
+                    "plan_key": plan_key,
+                    "sql": sql,
+                    "explain_json": self.explain_results.get(node_id, {}).get(plan_key, {}),
+                    "cost": self.costs.get(node_id, {}).get(plan_key, 0.0)
+                }
+            
+            # サンプルが存在する場合のみ保存
+            if samples:
+                output_file = self.output_dir / f"partial_explain_{node_id}.json"
+                try:
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        json.dump(samples, f, indent=2, ensure_ascii=False)
+                    print(f"  ✓ {node_id}: {len(samples)}個のプランを保存 -> {output_file.name}")
+                except Exception as e:
+                    print(f"  ✗ {node_id}: 保存失敗 - {e}")
+        
+        print("\n" + "="*70)
+        print("サンプルEXPLAIN JSON保存完了")
+        print("="*70 + "\n")
     
     def cleanup_mvs(self):
         """作成したMVをクリーンアップ（削除）"""
@@ -422,6 +470,10 @@ def main():
         # ステップ5: 結果を保存
         print("\n【ステップ5】結果を保存")
         calculator.save_costs()
+        
+        # ステップ6: サンプルEXPLAIN JSONを保存
+        print("\n【ステップ6】サンプルEXPLAIN JSONを保存")
+        calculator.save_explain_samples()
         
     finally:
         # クリーンアップ（オプション）
