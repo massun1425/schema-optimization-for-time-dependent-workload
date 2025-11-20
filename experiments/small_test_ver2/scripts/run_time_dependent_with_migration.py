@@ -7,6 +7,8 @@ This script loads data from:
 
 And performs ILP optimization considering time-varying workloads
 and migration costs between timesteps.
+python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set job
+python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set job --migration-file simple_migration_costs.json
 """
 
 import json
@@ -203,8 +205,15 @@ def main():
         default="job_like",
         help="Query set name (e.g., job_like, explicit_join)"
     )
+    parser.add_argument(
+        "--migration-file",
+        type=str,
+        default="migration_costs.json",
+        help="Migration cost file name (e.g., migration_costs.json, simple_migration_costs.json)"
+    )
     args = parser.parse_args()
     query_set = args.query_set
+    migration_file = args.migration_file
     
     output_dir = os.path.join(base_dir, "time_dependent_output", query_set)
     os.makedirs(output_dir, exist_ok=True)
@@ -252,9 +261,9 @@ def main():
             else:
                 frequencies[ts] = frequencies[ts][:query_count]
 
-    # 3. Load migration costs from migration_costs.json
-    logger.info("\n[3/4] Loading migration costs from migration_costs.json...")
-    recipes = parse_migration_costs(base_dir, node_list, query_set)
+    # 3. Load migration costs from migration cost file
+    logger.info(f"\n[3/4] Loading migration costs from {migration_file}...")
+    recipes = parse_migration_costs(base_dir, node_list, query_set, migration_file)
     logger.info(f"  - Loaded recipes for {len(recipes)} MVs")
 
     # Log sample recipes
