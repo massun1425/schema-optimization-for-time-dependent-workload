@@ -73,28 +73,71 @@ def load_qp_inputs(base_dir: str, query_set: str = "job_like") -> dict:
 def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -> Tuple[List[str], Dict[str, List[float]]]:
     """
     Extract timesteps and query frequencies from frequency_time_dependent.json.
+    
+    Supports two formats:
+    1. New format: {"queries": {"1a.sql": [f0, f1, f2], ...}}
+    2. Old format: {"timesteps": [{"time_id": "t0", "frequencies": {...}}, ...]}
 
     Args:
         base_dir: Base directory (e.g., experiments/small_test_ver2)
+        query_set: Query set name (e.g., "job", "job_like", "explicit_join")
 
     Returns:
         Tuple of (timestep_names, frequency_dict)
-        - timestep_names: List of timestep IDs (e.g., ["morning", "evening"])
+        - timestep_names: List of timestep IDs (e.g., ["0", "1", "2"])
         - frequency_dict: Dict mapping timestep ID to list of query frequencies
     """
     freq_path = os.path.join(base_dir, "01_queries", query_set, "frequency_time_dependent.json")
     if not os.path.exists(freq_path):
         logger.warning(f"frequency_time_dependent.json not found in {freq_path}, using defaults")
-        return ["t0", "t1"], {"t0": [1.0], "t1": [1.0]}
+        return ["0", "1"], {"0": [1.0], "1": [1.0]}
 
     with open(freq_path, "r", encoding="utf-8") as f:
         freq_data = json.load(f)
 
+    # Check for new format (queries key with list values)
+    queries_data = freq_data.get("queries", {})
+    if queries_data:
+        logger.info(f"Loading frequencies from new format (queries-based)")
+        
+        # Get all query names sorted naturally
+        query_names = sorted(queries_data.keys())
+        
+        # Get number of timesteps from first query's frequency list
+        if not query_names:
+            logger.warning("No queries found in frequency_time_dependent.json")
+            return ["0", "1"], {"0": [1.0], "1": [1.0]}
+        
+        first_query_freqs = queries_data[query_names[0]]
+        num_timesteps = len(first_query_freqs)
+        
+        # Generate timestep names: "0", "1", "2", ...
+        timesteps = [str(i) for i in range(num_timesteps)]
+        
+        # Build frequency_dict: {time_id: [freq for each query]}
+        frequencies = {}
+        for t_idx in range(num_timesteps):
+            time_id = str(t_idx)
+            freq_list = []
+            for query_name in query_names:
+                query_freqs = queries_data[query_name]
+                if t_idx < len(query_freqs):
+                    freq_list.append(float(query_freqs[t_idx]))
+                else:
+                    # Fallback if frequency list is shorter
+                    freq_list.append(0.0)
+            frequencies[time_id] = freq_list
+        
+        logger.info(f"Loaded {len(query_names)} queries with {num_timesteps} timesteps")
+        return timesteps, frequencies
+    
+    # Fall back to old format (timesteps-based)
     timestep_data = freq_data.get("timesteps", [])
     if not timestep_data:
-        logger.warning("No timesteps found in frequency_time_dependent.json")
-        return ["t0", "t1"], {"t0": [1.0], "t1": [1.0]}
+        logger.warning("No timesteps or queries found in frequency_time_dependent.json")
+        return ["0", "1"], {"0": [1.0], "1": [1.0]}
 
+    logger.info(f"Loading frequencies from old format (timesteps-based)")
     timesteps = []
     frequencies = {}
 
@@ -153,22 +196,23 @@ def load_query_frequency(
 
 
 def parse_migration_costs(
-    base_dir: str, node_list: List[str], query_set: str = "job_like"
+    base_dir: str, node_list: List[str], query_set: str = "job_like", migration_file: str = "migration_costs.json"
 ) -> Dict[int, List[Tuple[Tuple[int, ...], float]]]:
     """
-    Parse migration_costs.json into recipe format.
+    Parse migration costs JSON into recipe format.
 
     Args:
         base_dir: Base directory (e.g., experiments/small_test_ver2)
         node_list: List of node IDs (from qp_class.pkl) for index mapping
         query_set: Query set name (e.g., "job_like", "explicit_join")
+        migration_file: Name of migration cost file (e.g., "migration_costs.json" or "simple_migration_costs.json")
 
     Returns:
         Dictionary mapping j (MV index) to list of (recipe_tuple, cost)
         where recipe_tuple is a tuple of dependency indices.
     """
 
-    path = os.path.join(base_dir, "04_migration", query_set, "migration_costs.json")
+    path = os.path.join(base_dir, "04_migration", query_set, migration_file)
 
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)

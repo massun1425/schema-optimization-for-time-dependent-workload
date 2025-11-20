@@ -13,7 +13,6 @@ import re
 import logging
 
 from experiments.small_test_ver2.mv_generation.enhanced_mv_generator import EnhancedMVGenerator
-from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
 from experiments.small_test_ver2.mv_generation.comma_join_rewriter import CommaJoinRewriter
 
 
@@ -27,13 +26,18 @@ class SimpleMVSQLGenerator:
     the base query to reference existing MVs when beneficial.
     """
     
-    def __init__(self, qp):
+    def __init__(self, qp, db_config: dict | None = None):
         """Initialize MVSQLGenerator.
         
         Args:
             qp: QueryParser instance (single, time-independent)
+            db_config: Database configuration dict for SchemaProvider
         """
         self.qp = qp
+        self.db_config = db_config
+        # SchemaProviderを1回だけ作成して再利用（パフォーマンス最適化）
+        from src.rewrite.schema_provider import SchemaProvider
+        self.schema_provider = SchemaProvider(self.db_config)
     
     def generate_mv_sql(
         self, 
@@ -54,12 +58,10 @@ class SimpleMVSQLGenerator:
             return None
         
         try:
-            # 1. EnhancedMVGeneratorで元のMV定義を生成
-            schema_provider = SmallTestSchemaProvider()
-            
+            # 1. EnhancedMVGeneratorで元のMV定義を生成（再利用したschema_providerを使用）
             mv_generator = EnhancedMVGenerator(
                 query_manager=self.qp.qm,
-                schema_provider=schema_provider,
+                schema_provider=self.schema_provider,
                 selected_mvs=set()  # 既存MVなしで純粋なクエリを生成
             )
             
@@ -82,10 +84,10 @@ class SimpleMVSQLGenerator:
             if existing_mvs:
                 print(f"  [INFO] 既存MV {len(existing_mvs)}個を使用して書き換え")
                 
-                # CommaJoinRewriterを初期化
+                # CommaJoinRewriterを初期化（再利用したschema_providerを使用）
                 comma_rewriter = CommaJoinRewriter(
                     query_manager=self.qp.qm,
-                    schema_provider=schema_provider
+                    schema_provider=self.schema_provider
                 )
                 
                 # 各既存MVのカバー範囲を判定
@@ -200,12 +202,10 @@ class SimpleMVSQLGenerator:
             mv_aliases = set(mv_info['aliases'])
             
             # クエリからテーブルエイリアスを抽出して検証
-            # CommaJoinRewriterのparse_queryを使用
+            # CommaJoinRewriterのparse_queryを使用（再利用したschema_providerを使用）
             from experiments.small_test_ver2.mv_generation.comma_join_rewriter import CommaJoinRewriter
-            from experiments.small_test_ver2.core.small_test_schema_provider import SmallTestSchemaProvider
             
-            schema_provider = SmallTestSchemaProvider()
-            rewriter = CommaJoinRewriter(self.qp.qm, schema_provider)
+            rewriter = CommaJoinRewriter(self.qp.qm, self.schema_provider)
             
             # クエリをパースして使用されているテーブルを確認
             parsed = rewriter.parse_query(query)
