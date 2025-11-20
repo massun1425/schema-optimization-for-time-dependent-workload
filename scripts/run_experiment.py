@@ -231,6 +231,10 @@ def run_ilp_optimization(
     logger.info(f"\n{'='*60}")
     logger.info(f"Running ILP: {ilp_type}")
     logger.info(f"{'='*60}")
+    
+    # 各アルゴリズム実行前に既存のMVを全て削除
+    logger.info("Cleaning up existing materialized views before starting...")
+    cleanup_mv_files()
 
     # Display which phases will run
     phases_to_run = []
@@ -487,9 +491,6 @@ def run_ilp_optimization(
             phase_start = time.time()
             logger.info("[4/6] Creating MVs in database...")
             
-            # MVファイルクリーンアップ (既存のMVを削除してから新しいMVを作成)
-            cleanup_mv_files()
-            
             logger.info("Initializing MaterializedViewManager...")
             mv_manager = MaterializedViewManager(DatabaseConnection(settings.database))
             
@@ -562,6 +563,46 @@ def run_ilp_optimization(
             logger.info(f"  ✗ Failed:  {failed_count}/{total_mvs} ({failed_count/total_mvs*100:.1f}%)")
             logger.info(f"  ⏱  Total time: {phase_times['mv_creation']:.2f} seconds")
             logger.info(f"  ⚡ Avg time per MV: {phase_times['mv_creation']/total_mvs:.2f} seconds")
+            
+            # MV作成直後に統計情報を更新
+            logger.info("")
+            logger.info("Updating statistics for created materialized views...")
+            analyze_start = time.time()
+            try:
+                db_conn = DatabaseConnection(settings.database)
+                conn = db_conn.get_connection()
+                cursor = conn.cursor()
+                
+                # 作成に成功したMVのみANALYZEを実行
+                analyzed_count = 0
+                failed_analyze = 0
+                
+                for mv in sorted_mvs:
+                    # 作成に成功したMVかチェック
+                    mv_log = next((log for log in mv_creation_log if log['view_id'] == mv.view_id), None)
+                    if mv_log and mv_log['status'] == 'SUCCESS':
+                        try:
+                            cursor.execute(f"ANALYZE {mv.view_id}")
+                            analyzed_count += 1
+                            if verbose:
+                                logger.info(f"  Analyzed {mv.view_id}")
+                        except Exception as e:
+                            failed_analyze += 1
+                            logger.warning(f"  Failed to analyze {mv.view_id}: {e}")
+                
+                conn.commit()
+                cursor.close()
+                db_conn.close()
+                
+                analyze_time = time.time() - analyze_start
+                logger.info(f"✓ Analyzed {analyzed_count}/{created_count} materialized views in {analyze_time:.2f}s")
+                if failed_analyze > 0:
+                    logger.warning(f"  Failed to analyze {failed_analyze} views")
+            except Exception as e:
+                logger.warning(f"Failed to analyze materialized views: {e}")
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
             
             # MV作成結果を保存
             mv_creation_dir = algorithm_dir / "mv_creation"
