@@ -182,6 +182,9 @@ class OptimizationResult:
     def save_to_csv(self, output_path: str) -> None:
         """Save selected MVs to CSV file (legacy format).
         
+        This maps each query to the MVs that are ACTUALLY USED by that query
+        (based on y_ij), not just MVs that appear in the query structure.
+        
         Args:
             output_path: Path to output CSV file
         """
@@ -190,12 +193,37 @@ class OptimizationResult:
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
         
         # Create a mapping of query_id -> list of node_ids
+        # Use y_ij from metadata if available to get actual usage
+        y_ij = self.metadata.get('y_ij')
+        node_list = self.metadata.get('node_list')
+        
         query_mv_map: dict[int, list[str]] = {}
-        for mv in self.selected_views:
-            for query_id, _ in mv.usage_positions:
-                if query_id not in query_mv_map:
-                    query_mv_map[query_id] = []
-                query_mv_map[query_id].append(mv.node_id)
+        
+        if y_ij is not None and node_list is not None:
+            # Use y_ij to determine which MVs are actually used by each query
+            # y_ij[i][j] = 1 means query i uses MV at node index j
+            
+            # Build a set of selected node indices from selected_views
+            selected_node_ids = {mv.node_id for mv in self.selected_views}
+            
+            # For each query, collect the node_ids where y_ij[i][j] == 1
+            for i, query_row in enumerate(y_ij):
+                for j, used in enumerate(query_row):
+                    if used == 1:
+                        node_id = node_list[j]
+                        # Only include if this node is in our selected MVs
+                        if node_id in selected_node_ids:
+                            if i not in query_mv_map:
+                                query_mv_map[i] = []
+                            query_mv_map[i].append(node_id)
+        else:
+            # Fallback: use usage_positions (old behavior)
+            # Note: This includes ALL positions where the MV appears, not just where it's used
+            for mv in self.selected_views:
+                for query_id, _ in mv.usage_positions:
+                    if query_id not in query_mv_map:
+                        query_mv_map[query_id] = []
+                    query_mv_map[query_id].append(mv.node_id)
         
         # Write CSV file
         with open(output_path, 'w', encoding='utf-8') as f:

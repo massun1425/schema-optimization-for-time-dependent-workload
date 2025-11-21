@@ -75,6 +75,9 @@ class QueryParser:
         
         # Store original subquery costs (from EXPLAIN JSON Total Cost)
         self.original_subquery_costs: dict[str, float] = {}
+        
+        # Store processed query files
+        self.query_files: list[str] = []
 
     def natural_sort_key(self, s: str) -> list:
         """Generate a key for natural sorting of strings with numbers.
@@ -648,6 +651,7 @@ class QueryParser:
             files, file_freq = get_red_queries(path, workloads_dir, get_ceb)
         
         files = sorted(files, key=natural_sort_key)
+        self.query_files = [Path(f).stem for f in files]  # Store filenames without extension as query IDs
 
         q_num_len = len(files)
         print(f"q_num_len= {q_num_len}")
