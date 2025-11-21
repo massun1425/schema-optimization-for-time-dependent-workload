@@ -288,18 +288,55 @@ with tab3:
             opt_results = loader.load_optimization_results(selected_algorithm)
             selected_views = opt_results.get('selected_views', []) if opt_results else []
             
+            # Get y_ij, node_list, and query_files from metadata to determine actual MV usage
+            metadata = {}
+            if opt_results:
+                metadata = opt_results.get('metadata')
+                if not metadata and 'solution' in opt_results:
+                    metadata = opt_results['solution'].get('metadata', {})
+                if metadata is None:
+                    metadata = {}
+            
+            y_ij = metadata.get('y_ij')
+            node_list = metadata.get('node_list')
+            query_files = metadata.get('query_files')
+            
             # Find MVs used in this query
-            query_idx = query_ids.index(selected_query)
             used_mvs = []
             mv_node_positions = {}  # node_id -> mv info
             
-            for view in selected_views:
-                for pos in view.get('usage_positions', []):
-                    if pos[0] == query_idx:  # This query uses this MV
-                        used_mvs.append(view)
-                        node_id = view.get('node_id', '')
-                        mv_node_positions[node_id] = view
-                        break
+            # Determine query index for y_ij lookup
+            # The row index in y_ij corresponds to the order in query_files
+            query_idx_for_y = -1
+            if query_files and selected_query in query_files:
+                query_idx_for_y = query_files.index(selected_query)
+            
+            if y_ij is not None and node_list is not None and query_idx_for_y != -1:
+                # Use y_ij to find MVs actually used by this query
+                for view in selected_views:
+                    node_id = view.get('node_id', '')
+                    # Find the node index in node_list
+                    try:
+                        node_idx = node_list.index(node_id)
+                        # Check if this query uses this MV using the correct row index
+                        if y_ij[query_idx_for_y][node_idx] == 1:
+                            used_mvs.append(view)
+                            mv_node_positions[node_id] = view
+                    except (ValueError, IndexError):
+                        # Node not found in node_list or index error
+                        pass
+            else:
+                # Fallback to old behavior using usage_positions
+                # Or if query_files is missing (backward compatibility)
+                query_idx = query_ids.index(selected_query) # This might be unreliable if order differs
+                
+                for view in selected_views:
+                    for pos in view.get('usage_positions', []):
+                        if pos[0] == query_idx:  # This query uses this MV
+                            used_mvs.append(view)
+                            node_id = view.get('node_id', '')
+                            mv_node_positions[node_id] = view
+                            break
             
             if used_mvs:
                 st.markdown(f"**Materialized Views Used:** {len(used_mvs)}")

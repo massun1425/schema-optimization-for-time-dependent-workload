@@ -45,6 +45,7 @@ class BaseILPOptimizer(ABC):
         u_ij: list[list[float]],
         X: list[list[int]],
         q_s_list: list[list[int]],
+        query_files: list[str] | None = None,
         settings: Settings | None = None,
     ) -> None:
         """Initialize the optimizer.
@@ -59,6 +60,7 @@ class BaseILPOptimizer(ABC):
             u_ij: Utility matrix
             X: Dependency matrix
             q_s_list: Query-subquery relationship matrix
+            query_files: List of query IDs corresponding to u_ij rows
             settings: Configuration settings (optional)
         """
         self.qm = qm
@@ -71,6 +73,7 @@ class BaseILPOptimizer(ABC):
         self.u_ij = u_ij
         self.X = X
         self.q_s_list = q_s_list
+        self.query_files = query_files or []
         self.model: gp.Model | None = None
 
     def build_ilp_model(self, cand_i: list[int], cand_j: list[int]) -> tuple[dict, dict]:
@@ -214,10 +217,14 @@ class BaseILPOptimizer(ABC):
                 # Find all descendants of orig_j among candidates
                 # and create subsumption constraint
                 descendant_indices = []
-                for u in range(len(cand_j)):
-                    orig_u = cand_j[u]
-                    if self.X[orig_j][orig_u] == 1:
-                        descendant_indices.append(u)
+                for u in M[i]:  # Only check subqueries within the same query i
+                    if u != j:  # Skip self
+                        orig_u = cand_j[u]
+                        if self.X[orig_j][orig_u] == 1:
+                            descendant_indices.append(u)
+                        
+                        if self.X[orig_u][orig_j] == 1:
+                            descendant_indices.append(u)
                 
                 # Only add constraint if there are descendants
                 if descendant_indices:
@@ -240,6 +247,7 @@ class BaseILPOptimizer(ABC):
         # Prevent materializing both a node and its descendants
         # This ensures subsumption is enforced across all queries
         
+        """
         constraint_count = 0
         for j in range(len(cand_j)):
             orig_j = cand_j[j]
@@ -255,6 +263,8 @@ class BaseILPOptimizer(ABC):
                             name=f"global_subsumption_{j}_{u}",
                         )
                         constraint_count += 1
+        
+        """
         
         # Storage budget constraint - use original indices
         self.model.addConstr(
@@ -529,5 +539,5 @@ class BaseILPOptimizer(ABC):
             total_utility=obj_val,
             total_storage=total_storage,
             execution_time=execution_time,
-            metadata={"y_ij": y_ij, "z_j": z_j, **metadata},
+            metadata={"y_ij": y_ij, "z_j": z_j, "node_list": self.node_list, "query_files": self.query_files, **metadata},
         )

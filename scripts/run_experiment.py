@@ -342,6 +342,7 @@ def run_ilp_optimization(
                 "u_ij": qp.u_ij,
                 "X": qp.X,
                 "q_s_list": qp.q_s_list,
+                "query_files": getattr(qp, 'query_files', []),  # Pass query files list
                 "settings": settings,
             }
             
