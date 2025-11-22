@@ -843,8 +843,7 @@ class NormalModeExperiment:
                     if mvs_to_drop:
                         f.write(f"-- 削除するMV: {len(mvs_to_drop)}個\n")
                         for mv_id in sorted(mvs_to_drop):
-                            mv_name = f"mv_{mv_id}"
-                            f.write(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name} CASCADE;\n")
+                            f.write(f"DROP MATERIALIZED VIEW IF EXISTS {mv_id} CASCADE;\n")
                         f.write("\n")
                     
                     # 新規作成が必要なMV
@@ -1023,6 +1022,149 @@ class NormalModeExperiment:
         
         return True
     
+    def phase9_execute_benchmark(self, mode='dynamic'):
+        """フェーズ9: 時間依存型ベンチマーク実行
+        
+        Args:
+            mode: ベンチマークモード
+                - 'dynamic': 動的MV（マイグレーションあり）
+                - 'static': 静的MV（最初のタイムステップのみ）
+                - 'baseline': ベースライン（MVなし）
+        """
+        mode_names = {
+            'dynamic': '動的MV（マイグレーションあり）',
+            'static': '静的MV（マイグレーションなし）',
+            'baseline': 'ベースライン（MVなし）'
+        }
+        
+        self.print_header(f"時間依存型ベンチマーク実行 - {mode_names.get(mode, mode)}", 9)
+        
+        from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
+        from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
+        
+        # モードに応じて最適化結果の読み込み要否を判定
+        optimization_result = None
+        migration_sql_dir = None
+        
+        if mode in ['dynamic', 'static']:
+            # 最適化結果を読み込み
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "td_mv_optimization_result.json"
+            
+            if not result_file.exists():
+                self.print_error("時間依存型最適化結果が見つかりません")
+                self.print_info("先にフェーズ6を実行してください")
+                return False
+            
+            with open(result_file, 'r', encoding='utf-8') as f:
+                optimization_result = json.load(f)
+            
+            # migration_analysisの存在確認
+            if 'migration_analysis' not in optimization_result:
+                self.print_error("時間依存型最適化結果ではありません")
+                return False
+            
+            # マイグレーションSQLディレクトリ
+            migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set
+            
+            if not migration_sql_dir.exists() and mode == 'dynamic':
+                self.print_error(f"マイグレーションSQLディレクトリが見つかりません: {migration_sql_dir}")
+                self.print_info("先にフェーズ7を実行してください")
+                return False
+        
+        # クエリファイルを取得
+        query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
+        
+        if not query_files:
+            self.print_error("クエリファイルが見つかりません")
+            return False
+        
+        self.print_info(f"クエリ数: {len(query_files)}")
+        
+        # 頻度情報を読み込み
+        self.print_info("頻度情報を読み込み中...")
+        try:
+            timesteps, frequencies_by_timestep = load_timesteps_and_frequencies(
+                str(self.exp_dir), 
+                self.query_set
+            )
+            self.print_success(f"  タイムステップ数: {len(timesteps)}")
+        except Exception as e:
+            self.print_error(f"頻度情報の読み込みに失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        # TimeDependentQueryExecutorを初期化
+        self.print_info("ベンチマーク実行の準備中...")
+        executor = TimeDependentQueryExecutor(self.settings)
+        
+        try:
+            # モードに応じてベンチマークを実行
+            self.print_info(f"ベンチマーク実行を開始します（モード: {mode}）...\n")
+            
+            if mode == 'baseline':
+                # ベースライン: MVなし
+                benchmark_results = executor.execute_baseline_benchmark(
+                    query_files=query_files,
+                    frequencies_by_timestep=frequencies_by_timestep,
+                    timesteps=timesteps,
+                    timeout_minutes=30,
+                    verbose=True
+                )
+            elif mode == 'static':
+                # 静的MV: 最初のタイムステップのみ
+                benchmark_results = executor.execute_static_mv_benchmark(
+                    optimization_result=optimization_result,
+                    migration_sql_dir=migration_sql_dir,
+                    query_files=query_files,
+                    frequencies_by_timestep=frequencies_by_timestep,
+                    timeout_minutes=30,
+                    verbose=True
+                )
+            else:  # dynamic
+                # 動的MV: マイグレーションあり（既存）
+                benchmark_results = executor.execute_time_dependent_benchmark(
+                    optimization_result=optimization_result,
+                    migration_sql_dir=migration_sql_dir,
+                    query_files=query_files,
+                    frequencies_by_timestep=frequencies_by_timestep,
+                    timeout_minutes=30,
+                    verbose=True
+                )
+            
+            # 結果を保存
+            output_dir = self.exp_dir / "time_dependent_output" / self.query_set
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_file = output_dir / f"benchmark_results_{mode}.json"
+            
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
+            
+            self.print_success(f"\nベンチマーク結果を保存: {output_file}")
+            
+            # サマリー表示
+            summary = benchmark_results.get('summary', {})
+            self.print_info(f"  総タイムステップ数: {summary.get('total_timesteps', 0)}")
+            
+            if mode == 'dynamic':
+                self.print_info(f"  総マイグレーション時間: {summary.get('total_migration_time', 0):.2f}秒")
+            elif mode == 'static':
+                self.print_info(f"  初期MV作成時間: {summary.get('initial_mv_creation_time', 0):.2f}秒")
+            
+            self.print_info(f"  総クエリ実行時間: {summary.get('total_query_time', 0):.2f}秒")
+            self.print_info(f"  総ベンチマーク時間: {summary.get('total_benchmark_time', 0):.2f}秒")
+            
+            return True
+            
+        except Exception as e:
+            self.print_error(f"ベンチマーク実行に失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        finally:
+            executor.close()
+
+    
     def run_all_phases(self):
         """全フェーズを順番に実行"""
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
@@ -1037,6 +1179,7 @@ class NormalModeExperiment:
             (6, "ILP最適化", self.phase6_optimize),
             (7, "MV生成SQL作成", self.phase7_generate_mv_sql),
             (8, "クエリ書き換え", self.phase8_rewrite_queries),
+            (9, "ベンチマーク実行", self.phase9_execute_benchmark),
         ]
         
         for phase_num, phase_name, phase_func in phases:
@@ -1057,8 +1200,8 @@ def main():
         '--phase',
         type=str,
         default='all',
-        choices=['all', '0', '1', '2', '3', '4', '5', '6', '7', '8'],
-        help='実行するフェーズ (all: 全実行, 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 7: MV SQL, 8: Rewrite)'
+        choices=['all', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+        help='実行するフェーズ (all: 全実行, 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
     )
     parser.add_argument(
         '--config',
@@ -1071,6 +1214,13 @@ def main():
         type=str,
         default='job_like',
         help='実行するクエリセット(job_like, explicit_join, etc.)'
+    )
+    parser.add_argument(
+        '--benchmark-mode',
+        type=str,
+        default='dynamic',
+        choices=['dynamic', 'static', 'baseline'],
+        help='ベンチマークモード (dynamic: マイグレーションあり, static: 最初のMVのみ, baseline: MVなし)'
     )
     
     args = parser.parse_args()
@@ -1097,6 +1247,8 @@ def main():
         success = exp.phase7_generate_mv_sql()
     elif args.phase == '8':
         success = exp.phase8_rewrite_queries()
+    elif args.phase == '9':
+        success = exp.phase9_execute_benchmark(mode=args.benchmark_mode)
     else:
         print(f"不明なフェーズ: {args.phase}")
         success = False
