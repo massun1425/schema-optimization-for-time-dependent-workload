@@ -14,7 +14,7 @@ import json
 import pickle
 import subprocess
 import sys
-import yaml
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -31,31 +31,24 @@ from src.utils.legacy import get_all_job_queries, natural_sort_key
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, config_path: str = "config.yaml", query_set: str = "job_like"):
+    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job"):
         """初期化
         
         Args:
-            config_path: 設定ファイルのパス
-            query_set: 使用するクエリセット名 (例: job_style, explicit_join)
+            exp_dir: 実験ディレクトリのパス
+            query_set: 使用するクエリセット名 (例: job, job_like, explicit_join)
         """
-        self.config_path = Path(config_path)
-        self.exp_dir = self.config_path.parent
+        self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
         
-        # UTF-8でYAMLを読み込む
-        with open(self.config_path, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f)
-        
-        # 一時ファイルに書き込んでからSettingsを読み込む
-        temp_config = self.exp_dir / '.temp_config.yaml'
-        with open(temp_config, 'w', encoding='utf-8') as f:
-            yaml.dump(config_data, f, allow_unicode=True)
-        
-        try:
-            self.settings = Settings.from_yaml(str(temp_config))
-        finally:
-            if temp_config.exists():
-                temp_config.unlink()
+        # config.yamlを使わず、settings.pyのデフォルト値を使用
+        # デフォルト値:
+        #   database.password: ""
+        #   database.timeout: 1800
+        #   optimization.storage_limit_mb: 50
+        #   optimization.storage_limit_bytes: 52428800
+        #   optimization.insert_queries: 1000
+        self.settings = Settings()
         
         # 各ディレクトリのパス（クエリセット別）
         self.queries_dir = self.exp_dir / "01_queries" / self.query_set
@@ -70,6 +63,9 @@ class NormalModeExperiment:
 
         self.qp: Optional[QueryParser] = None
         self.result = None
+        
+        # 各フェーズの実行時間を記録
+        self.phase_times = {}
         
         # クエリセットの存在確認
         if not self.queries_dir.exists():
@@ -102,59 +98,107 @@ class NormalModeExperiment:
         """エラーメッセージを表示"""
         print(f"  [ERROR] {message}")
     
-    def phase0_setup(self):
-        """フェーズ0: データベースセットアップ (setup_imdb.pyを使用)"""
-        self.print_header("データベースセットアップ", 0)
+    def _drop_all_mvs(self):
+        """既存のマテリアライズドビューを全て削除"""
+        import psycopg2
         
         try:
-            # setup_imdbモジュールのインポート
-            from experiments.small_test_ver2.scripts.setup_imdb import IMDBSetup
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
             
-            # セットアップクラスの初期化
-            setup = IMDBSetup(str(self.config_path))
-            
-            self.print_info("IMDBデータベースのセットアップを開始します...")
-            
-            # 1. データのダウンロード（存在確認含む）
-            if not setup.download_imdb_data():
-                self.print_error("IMDBデータのダウンロードに失敗しました")
-                return False
-            
-            # 2. データベース作成とスキーマ適用
-            if not setup.create_database():
-                self.print_error("データベース作成に失敗しました")
-                return False
-            
-            # 3. データインポート
-            if not setup.import_data():
-                self.print_error("データインポートに失敗しました")
-                return False
-            
-            # 4. インデックス作成
-            if not setup.create_indexes():
-                self.print_error("インデックス作成に失敗しました")
-                return False
-            
-            # 5. 検証
-            if not setup.verify_setup():
-                self.print_error("セットアップ検証に失敗しました")
-                return False
+            with conn.cursor() as cursor:
+                # 既存のMVを取得
+                cursor.execute("""
+                    SELECT schemaname, matviewname 
+                    FROM pg_matviews 
+                    WHERE schemaname = 'public'
+                """)
+                mvs = cursor.fetchall()
                 
-            self.print_success("データベースセットアップ完了")
+                if not mvs:
+                    self.print_info("削除するMVはありません")
+                    conn.close()
+                    return True
+                
+                # 全てのMVを削除
+                dropped_count = 0
+                for schema, mv_name in mvs:
+                    try:
+                        cursor.execute(f"DROP MATERIALIZED VIEW IF EXISTS {schema}.{mv_name} CASCADE;")
+                        dropped_count += 1
+                    except Exception as e:
+                        self.print_error(f"  {mv_name}の削除に失敗: {e}")
+            
+            conn.commit()
+            conn.close()
+            
+            self.print_success(f"{dropped_count}個の既存MVを削除完了")
             return True
             
-        except ImportError as e:
-            self.print_error(f"setup_imdb.py のインポートに失敗しました: {e}")
-            return False
         except Exception as e:
-            self.print_error(f"セットアップ中にエラーが発生しました: {e}")
-            import traceback
-            traceback.print_exc()
+            self.print_error(f"MV削除エラー: {e}")
+            return False
+    
+    def _analyze_base_tables(self):
+        """ベーステーブルに対してANALYZEを実行"""
+        import psycopg2
+        
+        # 主要なベーステーブルのリスト
+        base_tables = [
+            'title', 'cast_info', 'movie_info', 'movie_companies',
+            'movie_keyword', 'name', 'person_info', 'keyword',
+            'company_name', 'company_type', 'info_type', 'kind_type',
+            'role_type', 'movie_info_idx'
+        ]
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            analyzed_count = 0
+            with conn.cursor() as cursor:
+                for table in base_tables:
+                    try:
+                        cursor.execute(f"ANALYZE {table};")
+                        analyzed_count += 1
+                    except Exception:
+                        pass  # テーブルが存在しない場合はスキップ
+            
+            conn.commit()
+            conn.close()
+            
+            self.print_success(f"{analyzed_count}個のベーステーブルをANALYZE完了")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"ANALYZE実行エラー: {e}")
             return False
     
     def phase1_generate_explain_json(self):
         """フェーズ1: EXPLAIN JSON 生成"""
         self.print_header("EXPLAIN JSON 生成", 1)
+        
+        # 既存のMVを全て削除
+        self.print_info("既存のMVをクリーンアップ中...")
+        if not self._drop_all_mvs():
+            self.print_error("MVの削除に失敗しました")
+            # 失敗しても続行（警告のみ）
+        
+        # ベーステーブルのANALYZEを実行
+        self.print_info("ベーステーブルの統計情報を更新中...")
+        if not self._analyze_base_tables():
+            self.print_error("ベーステーブルのANALYZEに失敗しました")
+            # 失敗しても続行（警告のみ）
+        # クリーンアップが完了してから計測開始
+        phase_start = time.time()
         
         # クエリディレクトリの確認
         if not self.queries_dir.exists():
@@ -229,6 +273,7 @@ class NormalModeExperiment:
     def phase2_parse_queries(self):
         """フェーズ2: クエリパース（頻度重み付けを行わないように変更済み）"""
         self.print_header("クエリパース", 2)
+        phase_start = time.time()
         
         # from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
         
@@ -304,6 +349,9 @@ class NormalModeExperiment:
             
             self._save_parse_results()
             
+            # フェーズ時間を記録
+            self.phase_times['phase2_parse'] = time.time() - phase_start
+            
             return True
             
         except Exception as e:
@@ -318,6 +366,7 @@ class NormalModeExperiment:
     def phase3_annotate_json(self):
         """フェーズ3: JSONファイルへのノードID付加"""
         self.print_header("JSONファイルへのノードID付加", 3)
+        phase_start = time.time()
         
         if self.qp is None:
             if not self.pickle_path.exists():
@@ -376,6 +425,9 @@ class NormalModeExperiment:
             self.print_success(f"{len(json_files)}個のJSONファイルにノードIDを付加完了")
             self.print_info(f"  更新先: {self.json_dir}")
             
+            # フェーズ時間を記録
+            self.phase_times['phase3_annotate_json'] = time.time() - phase_start
+            
             return True
             
         except Exception as e:
@@ -420,6 +472,7 @@ class NormalModeExperiment:
     def phase4_enumerate_migration_plans(self):
         """フェーズ4: マイグレーションプラン列挙"""
         self.print_header("マイグレーションプラン列挙", 4)
+        phase_start = time.time()
         
         if self.qp is None:
             if not self.pickle_path.exists():
@@ -464,6 +517,9 @@ class NormalModeExperiment:
                 self.print_error("マイグレーションプランファイルが見つかりません")
                 return False
             
+            # フェーズ時間を記録
+            self.phase_times['phase4_migration_plans'] = time.time() - phase_start
+            
             return True
             
         except Exception as e:
@@ -475,6 +531,7 @@ class NormalModeExperiment:
     def phase5_calculate_migration_costs(self):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
+        phase_start = time.time()
         
         # マイグレーションプランファイルの存在確認
         plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
@@ -508,6 +565,9 @@ class NormalModeExperiment:
                 self.print_error("マイグレーションコストファイルが見つかりません")
                 return False
             
+            # フェーズ時間を記録
+            self.phase_times['phase5_migration_costs'] = time.time() - phase_start
+            
             return True
             
         except Exception as e:
@@ -537,15 +597,18 @@ class NormalModeExperiment:
         
         self.print_info("時間依存型最適化（マイグレーションコスト考慮）を実行")
         
+        # フェーズ時間計測開始
+        phase_start = time.time()
+        
         try:
             from experiments.small_test_ver2.core.io_loaders import (
                 load_timesteps_and_frequencies,
-                parse_migration_costs,
+                parse_migration_costs_and_sizes,
             )
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(self.settings.optimization.storage_limit_bytes)
+            B_max = float(50*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -562,15 +625,15 @@ class NormalModeExperiment:
                     else:
                         frequencies[ts] = frequencies[ts][:query_count]
             
-            # マイグレーションコストを読み込み
-            self.print_info("マイグレーションコストを読み込み中...")
-            recipes = parse_migration_costs(
+            # マイグレーションコストとサイズを読み込み（Phase 5の結果）
+            self.print_info("マイグレーションコストとサイズを読み込み中...")
+            recipes, b_j_from_migration = parse_migration_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
-                self.query_set,
-                "migration_costs.json"
+                self.query_set
             )
             self.print_success(f"  {len(recipes)}個のMVのレシピを読み込み完了")
+            self.print_success(f"  サイズデータをPhase 5のEXPLAIN結果から読み込み完了")
             
             # オプティマイザを初期化
             self.print_info("オプティマイザを初期化中...")
@@ -578,7 +641,7 @@ class NormalModeExperiment:
                 node_list=self.qp.node_list,
                 u_ij=self.qp.u_ij,
                 X=self.qp.X,
-                b_j=self.qp.b_j,
+                b_j=b_j_from_migration,  # Phase 5のEXPLAIN結果からのサイズを使用
                 B_max=B_max,
                 timesteps=timesteps,
                 migration_recipes=recipes,
@@ -592,7 +655,10 @@ class NormalModeExperiment:
             
             # マイグレーション分析
             self.print_info("マイグレーション分析を実行中...")
-            enhanced_result = self._analyze_migration_transitions(result, recipes, B_max)
+            enhanced_result = self._analyze_migration_transitions(result, recipes, b_j_from_migration, B_max)
+            
+            # フェーズ時間を記録
+            self.phase_times['phase6_optimization'] = time.time() - phase_start
             
             # 結果を表示
             self.print_success("最適化完了")
@@ -600,6 +666,7 @@ class NormalModeExperiment:
             self.print_info(f"  ワークロードコスト: {enhanced_result['workload_cost']:.4f}")
             self.print_info(f"  マイグレーションコスト: {enhanced_result['migration_cost']:.4f}")
             self.print_info(f"  実行時間: {enhanced_result['solve_time_sec']:.2f} 秒")
+            self.print_info(f"  フェーズ実行時間: {self.phase_times['phase6_optimization']:.2f} 秒")
             
             # 結果を保存（run_time_dependent_with_migration.pyと同じディレクトリ構造）
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
@@ -620,8 +687,15 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def _analyze_migration_transitions(self, result: dict, recipes: dict, B_max: float) -> dict:
-        """マイグレーション遷移を分析"""
+    def _analyze_migration_transitions(self, result: dict, recipes: dict, b_j: list, B_max: float) -> dict:
+        """マイグレーション遷移を分析
+        
+        Args:
+            result: 最適化結果
+            recipes: マイグレーションレシピ
+            b_j: 各MVのサイズリスト（Phase 5のEXPLAIN結果から取得）
+            B_max: ストレージ予算
+        """
         timesteps = result["timesteps"]
         z_by_timestep = result["z_by_timestep"]
         
@@ -633,7 +707,7 @@ class NormalModeExperiment:
             
             # タイムステップごとの情報
             selected_nodes = [self.qp.node_list[j] for j in sorted(current_mvs)]
-            total_size = sum(self.qp.b_j[j] for j in current_mvs)
+            total_size = sum(b_j[j] for j in current_mvs)  # 正しいb_jを使用
             utilization = (total_size / B_max * 100) if B_max > 0 else 0
             
             timestep_info = {
@@ -659,17 +733,17 @@ class NormalModeExperiment:
                     "maintained": {
                         "count": len(maintained),
                         "mvs": [self.qp.node_list[j] for j in sorted(maintained)],
-                        "total_size": round(sum(self.qp.b_j[j] for j in maintained), 2)
+                        "total_size": round(sum(b_j[j] for j in maintained), 2)  # 正しいb_jを使用
                     },
                     "created": {
                         "count": len(created),
                         "mvs": [self.qp.node_list[j] for j in sorted(created)],
-                        "total_size": round(sum(self.qp.b_j[j] for j in created), 2)
+                        "total_size": round(sum(b_j[j] for j in created), 2)  # 正しいb_jを使用
                     },
                     "deleted": {
                         "count": len(deleted),
                         "mvs": [self.qp.node_list[j] for j in sorted(deleted)],
-                        "total_size": round(sum(self.qp.b_j[j] for j in deleted), 2)
+                        "total_size": round(sum(b_j[j] for j in deleted), 2)  # 正しいb_jを使用
                     }
                 }
                 
@@ -689,7 +763,7 @@ class NormalModeExperiment:
                         creation_cost += best_cost
                         creation_details.append({
                             "mv": self.qp.node_list[j],
-                            "size": round(self.qp.b_j[j], 2),
+                            "size": round(b_j[j], 2),  # 正しいb_jを使用
                             "cost": round(best_cost, 2),
                             "dependencies": [self.qp.node_list[dep] for dep in best_recipe] if best_recipe else []
                         })
@@ -711,7 +785,7 @@ class NormalModeExperiment:
                         initial_cost += cost
                         creation_details.append({
                             "mv": self.qp.node_list[j],
-                            "size": round(self.qp.b_j[j], 2),
+                            "size": round(b_j[j], 2),  # 正しいb_jを使用
                             "cost": round(cost, 2),
                             "dependencies": []
                         })
@@ -756,14 +830,14 @@ class NormalModeExperiment:
         """フェーズ7: タイムステップごとのマイグレーションSQL作成"""
         self.print_header("マイグレーションSQL作成", 7)
         
-        if self.qp is None:
-            if not self.pickle_path.exists():
-                self.print_error(f"{self.pickle_path} が見つかりません")
-                return False
+        # if self.qp is None:
+        #     if not self.pickle_path.exists():
+        #         self.print_error(f"{self.pickle_path} が見つかりません")
+        #         return False
             
-            self.print_info(f"パース結果を読み込み中: {self.pickle_path}")
-            with open(self.pickle_path, 'rb') as f:
-                self.qp = pickle.load(f)
+        #     self.print_info(f"パース結果を読み込み中: {self.pickle_path}")
+        #     with open(self.pickle_path, 'rb') as f:
+        #         self.qp = pickle.load(f)
         
         if self.result is None:
             # Load time-dependent optimization result
@@ -787,6 +861,10 @@ class NormalModeExperiment:
     
     def _generate_time_dependent_migration_sql(self):
         """時間依存型最適化の結果からタイムステップごとのマイグレーションSQLを生成"""
+        
+        # フェーズ時間計測開始
+        phase_start = time.time()
+        
         try:
             # マイグレーションプランを読み込み
             plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
@@ -866,7 +944,8 @@ class NormalModeExperiment:
                                 sql = plans["[]"]
                                 if sql and sql != "NON_MIGRATE":
                                     f.write(f"-- MV: {mv_id}\n")
-                                    f.write(f"{sql}\n\n")
+                                    f.write(f"{sql}\n")
+                                    f.write(f"ANALYZE {mv_id};\n\n")
                                     created_count += 1
                         
                         f.write(f"-- {created_count}個のMVを作成\n")
@@ -877,8 +956,12 @@ class NormalModeExperiment:
                 self.print_success(f"  タイムステップ '{timestep_name}': {output_file.name}")
                 self.print_info(f"    作成: {len(mvs_to_create)}個, 削除: {len(mvs_to_drop)}個")
             
+            # フェーズ時間を記録
+            self.phase_times['phase7_mv_sql_generation'] = time.time() - phase_start
+            
             self.print_success(f"タイムステップごとのマイグレーションSQLを生成 → {output_dir}")
             self.print_info(f"  総操作数: {total_sql_count}")
+            self.print_info(f"  SQL生成時間: {self.phase_times['phase7_mv_sql_generation']:.2f} 秒")
             
             return True
             
@@ -894,6 +977,9 @@ class NormalModeExperiment:
     def phase8_rewrite_queries(self):
         """フェーズ8: 時間依存型クエリ書き換え（タイムステップごと）"""
         self.print_header("時間依存型クエリ書き換え", 8)
+        
+        # フェーズ時間計測開始
+        phase_start = time.time()
         
         from src.rewrite.query_rewriter import QueryRewriter
         from src.core.models import MaterializedView
@@ -1017,8 +1103,12 @@ class NormalModeExperiment:
             total_rewritten += rewritten_count
             self.print_success(f"  {rewritten_count}個のクエリを書き換え → {timestep_output_dir}")
         
+        # フェーズ時間を記録
+        self.phase_times['phase8_query_rewriting'] = time.time() - phase_start
+        
         self.print_success(f"\n合計 {total_rewritten}個のクエリを書き換え完了")
         self.print_info(f"  出力先: {base_output_dir}")
+        self.print_info(f"  クエリ書き換え時間: {self.phase_times['phase8_query_rewriting']:.2f} 秒")
         
         return True
     
@@ -1033,11 +1123,12 @@ class NormalModeExperiment:
         """
         mode_names = {
             'dynamic': '動的MV（マイグレーションあり）',
-            'static': '静的MV（マイグレーションなし）',
+            'static': '静的MV（最初のタイムステップのみ）',
             'baseline': 'ベースライン（MVなし）'
         }
         
         self.print_header(f"時間依存型ベンチマーク実行 - {mode_names.get(mode, mode)}", 9)
+        phase_start = time.time()       
         
         from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
         from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
@@ -1071,14 +1162,17 @@ class NormalModeExperiment:
                 self.print_info("先にフェーズ7を実行してください")
                 return False
         
-        # クエリファイルを取得
-        query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
+        # 書き換えられたクエリファイルを使用
+        rewritten_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
         
-        if not query_files:
+        # 元のクエリファイルリストを取得（クエリ名のリストとして使用）
+        original_query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
+        
+        if not original_query_files:
             self.print_error("クエリファイルが見つかりません")
             return False
         
-        self.print_info(f"クエリ数: {len(query_files)}")
+        self.print_info(f"クエリ数: {len(original_query_files)}")
         
         # 頻度情報を読み込み
         self.print_info("頻度情報を読み込み中...")
@@ -1103,9 +1197,9 @@ class NormalModeExperiment:
             self.print_info(f"ベンチマーク実行を開始します（モード: {mode}）...\n")
             
             if mode == 'baseline':
-                # ベースライン: MVなし
+                # ベースライン: MVなし（元のクエリを使用）
                 benchmark_results = executor.execute_baseline_benchmark(
-                    query_files=query_files,
+                    query_files=original_query_files,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timesteps=timesteps,
                     timeout_minutes=30,
@@ -1116,7 +1210,8 @@ class NormalModeExperiment:
                 benchmark_results = executor.execute_static_mv_benchmark(
                     optimization_result=optimization_result,
                     migration_sql_dir=migration_sql_dir,
-                    query_files=query_files,
+                    # query_files=query_files,
+                    rewritten_queries_base_dir = rewritten_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timeout_minutes=30,
                     verbose=True
@@ -1126,7 +1221,8 @@ class NormalModeExperiment:
                 benchmark_results = executor.execute_time_dependent_benchmark(
                     optimization_result=optimization_result,
                     migration_sql_dir=migration_sql_dir,
-                    query_files=query_files,
+                    #query_files=query_files,
+                    rewritten_queries_base_dir = rewritten_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timeout_minutes=30,
                     verbose=True
@@ -1154,6 +1250,9 @@ class NormalModeExperiment:
             self.print_info(f"  総クエリ実行時間: {summary.get('total_query_time', 0):.2f}秒")
             self.print_info(f"  総ベンチマーク時間: {summary.get('total_benchmark_time', 0):.2f}秒")
             
+            # フェーズ時間を記録
+            self.phase_times['phase9_benchmark'] = time.time() - phase_start
+            
             return True
             
         except Exception as e:
@@ -1169,8 +1268,10 @@ class NormalModeExperiment:
         """全フェーズを順番に実行"""
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
         
+        # 全体の開始時刻を記録
+        total_start_time = time.time()
+        
         phases = [
-            (0, "データベースセットアップ", self.phase0_setup),
             (1, "EXPLAIN JSON生成", self.phase1_generate_explain_json),
             (2, "クエリパース", self.phase2_parse_queries),
             (3, "JSONノードID付加", self.phase3_annotate_json),
@@ -1183,13 +1284,43 @@ class NormalModeExperiment:
         ]
         
         for phase_num, phase_name, phase_func in phases:
-            if not phase_func():
-                print(f"\n✗ フェーズ{phase_num}で失敗しました")
+            try:
+                if not phase_func():
+                    self.print_error(f"フェーズ{phase_num}で失敗しました")
+                    return False
+            except Exception as e:
+                self.print_error(f"フェーズ{phase_num}でエラー発生: {e}")
+                import traceback
+                traceback.print_exc()
                 return False
         
-        self.print_header("実験完了！")
-        self.print_success("全フェーズが正常に完了しました")
-        self.print_info(f"結果は {self.exp_dir} に保存されています")
+        # 全体の実行時間を記録
+        total_elapsed = time.time() - total_start_time
+        
+        # フェーズ時間のサマリーを保存
+        result_dir = self.exp_dir / "time_dependent_output" / self.query_set
+        result_dir.mkdir(parents=True, exist_ok=True)
+        
+        summary = {
+            "query_set": self.query_set,
+            "total_execution_time": round(total_elapsed, 2),
+            "phase_times": {
+                key: round(value, 2) for key, value in self.phase_times.items()
+            },
+            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        
+        summary_file = result_dir / "execution_summary.json"
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+        
+        self.print_header("全フェーズ完了")
+        self.print_success(f"総実行時間: {total_elapsed:.2f} 秒")
+        if self.phase_times:
+            self.print_info("フェーズ別実行時間:")
+            for phase_name, phase_time in self.phase_times.items():
+                self.print_info(f"  {phase_name}: {phase_time:.2f} 秒")
+        self.print_success(f"サマリーを {summary_file} に保存")
         
         return True
 
@@ -1206,14 +1337,14 @@ def main():
     parser.add_argument(
         '--config',
         type=str,
-        default='experiments/small_test_ver2/config.yaml',
-        help='設定ファイルのパス'
+        default='experiments/small_test_ver2',
+        help='実験ディレクトリのパス（設定ファイルは不要）'
     )
     parser.add_argument(
         '--query-set',
         type=str,
-        default='job_like',
-        help='実行するクエリセット(job_like, explicit_join, etc.)'
+        default='job',
+        help='実行するクエリセット(job, job_like, explicit_join, etc.)'
     )
     parser.add_argument(
         '--benchmark-mode',
@@ -1225,7 +1356,7 @@ def main():
     
     args = parser.parse_args()
     
-    exp = NormalModeExperiment(args.config, query_set=args.query_set)
+    exp = NormalModeExperiment(exp_dir=args.config, query_set=args.query_set)
     
     if args.phase == 'all':
         success = exp.run_all_phases()

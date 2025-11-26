@@ -253,3 +253,89 @@ def parse_migration_costs(
         mig[j] = recipes
 
     return mig
+
+
+def parse_migration_costs_and_sizes(
+    base_dir: str, 
+    node_list: List[str], 
+    query_set: str = "job_like"
+) -> Tuple[Dict[int, List[Tuple[Tuple[int, ...], float]]], List[float]]:
+    """
+    Parse migration costs JSON and extract both recipe costs and MV sizes.
+    
+    This function loads from simple_migration_costs.json which contains
+    enhanced data from Phase 5 including cost, rows, width, and size.
+    
+    Args:
+        base_dir: Base directory (e.g., experiments/small_test_ver2)
+        node_list: List of node IDs (from qp_class.pkl) for index mapping
+        query_set: Query set name (e.g., "job_like", "explicit_join")
+    
+    Returns:
+        Tuple of (recipes_dict, size_list)
+        - recipes_dict: Dictionary mapping j (MV index) to list of (recipe_tuple, cost)
+        - size_list: List of sizes for each MV (indexed by j)
+    """
+    path = os.path.join(base_dir, "04_migration", query_set, "simple_migration_costs.json")
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"simple_migration_costs.json not found at {path}")
+    
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    
+    idx = {node_id: j for j, node_id in enumerate(node_list)}
+    mig: Dict[int, List[Tuple[Tuple[int, ...], float]]] = {}
+    
+    # Initialize size list with default values
+    b_j = [1.0] * len(node_list)
+    
+    for node_id, mapping in raw.items():
+        j = idx.get(node_id)
+        if j is None:
+            logger.debug(f"Node {node_id} not found in node_list, skipping")
+            continue
+        
+        recipes: List[Tuple[Tuple[int, ...], float]] = []
+        
+        for k_str, data in mapping.items():
+            try:
+                ids = ast.literal_eval(k_str)
+                if not isinstance(ids, list):
+                    ids = []
+            except Exception:
+                ids = []
+            
+            # Extract cost from the data structure
+            if isinstance(data, dict):
+                cost = float(data.get("cost", 0.0))
+                # Extract size from empty dependency recipe (full build from base tables)
+                if len(ids) == 0:
+                    size = float(data.get("size", 1.0))
+                    b_j[j] = size
+            else:
+                # Fallback for old format (just cost as float)
+                cost = float(data)
+            
+            dep_indices: List[int] = []
+            for dep_node_id in ids:
+                dep_j = idx.get(dep_node_id)
+                if dep_j is not None:
+                    dep_indices.append(dep_j)
+                else:
+                    logger.debug(f"Dependency {dep_node_id} not found in node_list for {node_id}")
+            
+            recipes.append((tuple(sorted(dep_indices)), cost))
+        
+        # Add fallback empty recipe (full build) if not present
+        if not any(len(r[0]) == 0 for r in recipes):
+            logger.warning(f"Node {node_id} has no full-build recipe (empty list), adding with inf cost")
+            recipes.append((tuple(), float("inf")))
+        
+        mig[j] = recipes
+    
+    logger.info(f"Loaded migration costs and sizes for {len(mig)} nodes")
+    logger.info(f"Size range: min={min(b_j):.2f}, max={max(b_j):.2f}, avg={sum(b_j)/len(b_j):.2f}")
+    
+    return mig, b_j
+

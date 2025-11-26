@@ -114,12 +114,29 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --
 
 ### ステップ1: データベースのセットアップとクエリ実行計画の取得
 
-まず、データベースをセットアップし、各クエリの実行計画（EXPLAIN JSON）を取得します。
+**前提条件**: 実験を開始する前に、データベースのセットアップを完了させてください。
+
+#### データベースセットアップ（実験開始前に1回のみ実行）
 
 ```bash
-# フェーズ0: データベースのセットアップ（setup_imdb.pyを使用: ダウンロード、DB作成、インポート、インデックス作成）
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 0
+# IMDBデータのダウンロード、データベース作成、データインポート、インデックス作成を一括実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --all
 
+# または段階的に実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --download      # ダウンロードのみ
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-db     # DB作成
+python experiments/small_test_ver2/scripts/setup_imdb.py --import-data   # データインポート
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-indexes # インデックス作成
+
+# セットアップの検証
+python experiments/small_test_ver2/scripts/setup_imdb.py --verify
+```
+
+#### フェーズ1: クエリのEXPLAIN JSON生成
+
+データベースセットアップ完了後、各クエリの実行計画（EXPLAIN JSON）を取得します。
+
+```bash
 # フェーズ1: クエリのEXPLAIN JSON生成（デフォルトのjob_likeクエリセット）
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1
 
@@ -236,8 +253,39 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --
 
 各フォルダには、全てのクエリ（113個）が書き換えられたSQLファイルとして保存されます。
 
+
 ---
 
+### ステップ9: ベンチマーク実行
+
+各タイムステップのMV構成で書き換えられたクエリを実行し、性能を測定します。
+
+```bash
+# フェーズ9: ベンチマーク実行（動的MVモード）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job
+```
+
+**実行モード**:
+- `dynamic`: 動的MV（デフォルト）- 各タイムステップでマイグレーションを実行してMVを更新
+- `static`: 静的MV - 最初のタイムステップのMVのみを作成し、全タイムステップで使用
+- `baseline`: ベースライン - MVを使用せず元のクエリを実行
+
+**生成されるファイル**:
+- `time_dependent_output/{query_set}/benchmark_results_dynamic.json`: 動的MVモードのベンチマーク結果
+- `time_dependent_output/{query_set}/benchmark_results_static.json`: 静的MVモードの結果
+- `time_dependent_output/{query_set}/benchmark_results_baseline.json`: ベースラインの結果
+
+**ベンチマーク結果の内容**:
+- 各タイムステップでの全クエリの実行時間（ミリ秒）
+- タイムアウトしたクエリの情報
+- MVの作成・削除にかかったマイグレーション時間
+- タイムステップごとの総実行時間
+- 全体のサマリー統計（総実行時間、平均クエリ時間など）
+
+**実行時間の計測**:
+- **クエリ実行時間**: 各クエリの実際の実行時間のみを計測
+- **マイグレーション時間**: MVの作成・削除にかかった時間を別途計測
+- **注意**: ベンチマーク実行時間には、最適化時間、SQL生成時間、クエリ書き換え時間は含まれません
 ### 全フェーズの一括実行
 
 ```bash
@@ -329,7 +377,7 @@ experiments/small_test_ver2/
 ### コアスクリプト（実行に必須）
 | ファイル名 | 場所 | 役割 |
 |-----------|------|------|
-| `run_experiment_normal.py` | `scripts/` | メイン実験スクリプト（全フェーズ統合）<br>- フェーズ0: データベースセットアップ<br>- フェーズ1: EXPLAIN JSON生成<br>- フェーズ2: クエリパース<br>- フェーズ2.5: JSONノードID付加<br>- フェーズ2.7: マイグレーションプラン列挙<br>- フェーズ2.8: マイグレーションコスト計算<br>- フェーズ3: 時間依存最適化<br>- フェーズ4: マイグレーションSQL生成<br>- フェーズ6: クエリ書き換え |
+| `run_experiment_normal.py` | `scripts/` | メイン実験スクリプト（全フェーズ統合）<br>- フェーズ1: EXPLAIN JSON生成<br>- フェーズ2: クエリパース<br>- フェーズ3: JSONノードID付加<br>- フェーズ4: マイグレーションプラン列挙<br>- フェーズ5: マイグレーションコスト計算<br>- フェーズ6: ILP最適化<br>- フェーズ7: マイグレーションSQL生成<br>- フェーズ8: クエリ書き換え<br>- フェーズ9: ベンチマーク実行 |
 | `enumerate_simple_migration_plan.py` | `migration/` | マイグレーションプラン（SQL）の列挙（フェーズ2.7から内部利用） |
 | `simple_migration_cost_calculator.py` | `migration/` | マイグレーションコストの測定（フェーズ2.8から内部利用） |
 

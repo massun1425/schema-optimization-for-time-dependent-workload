@@ -299,10 +299,10 @@ class TimeDependentQueryExecutor:
                 'executions': execution_count,
                 'successful': query_successful,
                 'failed': query_failed,
-                'total_time': round(sum(execution_times), 2),
-                'avg_time': round(avg_time, 2),
-                'min_time': round(min(execution_times), 2) if execution_times else 0,
-                'max_time': round(max(execution_times), 2) if execution_times else 0,
+                'total_time': round(sum(execution_times), 5),
+                'avg_time': round(avg_time, 5),
+                'min_time': round(min(execution_times), 5) if execution_times else 0,
+                'max_time': round(max(execution_times), 5) if execution_times else 0,
             })
         
         return {
@@ -310,7 +310,7 @@ class TimeDependentQueryExecutor:
             'total_executions': total_executions,
             'successful_executions': successful_executions,
             'failed_executions': failed_executions,
-            'total_time': round(total_time, 2),
+            'total_time': round(total_time, 5),
         }
     
     def _cleanup_existing_mvs(self) -> Tuple[bool, int]:
@@ -366,7 +366,7 @@ class TimeDependentQueryExecutor:
         self,
         optimization_result: Dict,
         migration_sql_dir: Path,
-        query_files: List[Path],
+        rewritten_queries_base_dir: Path,
         frequencies_by_timestep: Dict[str, List[float]],
         timeout_minutes: int = 30,
         verbose: bool = False
@@ -376,7 +376,7 @@ class TimeDependentQueryExecutor:
         Args:
             optimization_result: 最適化結果（migration_analysisを含む）
             migration_sql_dir: マイグレーションSQLが格納されているディレクトリ
-            query_files: クエリファイルのリスト
+            rewritten_queries_base_dir: 書き換えられたクエリのベースディレクトリ（例: jobs/）
             frequencies_by_timestep: タイムステップごとの頻度情報
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
@@ -466,19 +466,33 @@ class TimeDependentQueryExecutor:
             
             total_migration_time += migration_time
             
-            # クエリ実行（頻度に基づく）
-            logger.info(f"Executing queries for timestep {timestep_name}...")
+            # 書き換えられたクエリファイルを取得（タイムステップ別）
+            rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_{t_idx}_{timestep_name}"
             
-            frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(query_files))
+            if not rewritten_queries_dir.exists():
+                logger.error(f"Rewritten queries directory not found: {rewritten_queries_dir}")
+                return {'error': f'Rewritten queries directory not found for timestep {timestep_name}'}
+            
+            query_files_for_timestep = sorted(rewritten_queries_dir.glob("*.sql"), key=lambda x: x.name)
+            
+            if not query_files_for_timestep:
+                logger.error(f"No query files found in {rewritten_queries_dir}")
+                return {'error': f'No query files found for timestep {timestep_name}'}
+            
+            logger.info(f"Executing queries for timestep {timestep_name}...")
+            logger.info(f"  Using rewritten queries from: {rewritten_queries_dir}")
+            logger.info(f"  Query count: {len(query_files_for_timestep)}")
+            
+            frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(query_files_for_timestep))
             
             # 頻度リストの長さを調整
-            if len(frequencies) < len(query_files):
-                frequencies.extend([0.0] * (len(query_files) - len(frequencies)))
-            elif len(frequencies) > len(query_files):
-                frequencies = frequencies[:len(query_files)]
+            if len(frequencies) < len(query_files_for_timestep):
+                frequencies.extend([0.0] * (len(query_files_for_timestep) - len(frequencies)))
+            elif len(frequencies) > len(query_files_for_timestep):
+                frequencies = frequencies[:len(query_files_for_timestep)]
             
             query_results = self._execute_queries_with_frequency(
-                query_files,
+                query_files_for_timestep,
                 frequencies,
                 timeout_minutes,
                 verbose
@@ -494,12 +508,12 @@ class TimeDependentQueryExecutor:
                 'timestep_index': t_idx,
                 'migration': {
                     'success': migration_success,
-                    'time': round(migration_time, 2),
+                    'time': round(migration_time, 5),
                     'error': migration_error,
                     'sql_file': str(migration_sql_file) if 'migration_sql_file' in locals() else None
                 },
                 'queries': query_results,
-                'total_time': round(timestep_elapsed, 2),
+                'total_time': round(timestep_elapsed, 5),
             }
             
             timestep_results.append(timestep_result)
@@ -527,8 +541,8 @@ class TimeDependentQueryExecutor:
             'timestep_results': timestep_results,
             'summary': {
                 'total_timesteps': len(timesteps),
-                'total_migration_time': round(total_migration_time, 2),
-                'total_query_time': round(total_query_time, 2),
+                'total_migration_time': round(total_migration_time, 5),
+                'total_query_time': round(total_query_time, 5),
                 'total_benchmark_time': round(benchmark_elapsed, 2),
             }
         }
@@ -598,7 +612,7 @@ class TimeDependentQueryExecutor:
                 'timestep': timestep_name,
                 'timestep_index': t_idx,
                 'queries': query_results,
-                'total_time': round(timestep_elapsed, 2),
+                'total_time': round(timestep_elapsed, 5),
             }
             
             timestep_results.append(timestep_result)
@@ -623,7 +637,7 @@ class TimeDependentQueryExecutor:
             'timestep_results': timestep_results,
             'summary': {
                 'total_timesteps': len(timesteps),
-                'total_query_time': round(total_query_time, 2),
+                'total_query_time': round(total_query_time, 5),
                 'total_benchmark_time': round(benchmark_elapsed, 2),
             }
         }
@@ -632,7 +646,7 @@ class TimeDependentQueryExecutor:
         self,
         optimization_result: Dict,
         migration_sql_dir: Path,
-        query_files: List[Path],
+        rewritten_queries_base_dir: Path,
         frequencies_by_timestep: Dict[str, List[float]],
         timeout_minutes: int = 30,
         verbose: bool = False
@@ -640,9 +654,9 @@ class TimeDependentQueryExecutor:
         """静的MV: 最初のタイムステップでMVを作成し、マイグレーションなしで実行
         
         Args:
-            optimization_result: 最適化結果（migration_analysisを含む）
+            optimization_result: 最適化結果（migration_analysis生む）
             migration_sql_dir: マイグレーションSQLが格納されているディレクトリ
-            query_files: クエリファイルのリスト
+            rewritten_queries_base_dir: 書き換えられたクエリのベースディレクトリ（例: jobs/）
             frequencies_by_timestep: タイムステップごとの頻度情報
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
@@ -690,26 +704,45 @@ class TimeDependentQueryExecutor:
         else:
             logger.warning("No initial migration SQL found")
         
-        # 各タイムステップでクエリを実行（同じMVのまま）
+        # 最初のタイムステップの書き換えられたクエリを取得（全タイムステップで使用）
+        # Static モードではMVが変わらないため、クエリも変わらない
+        initial_rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_0_{timesteps[0]}"
+        
+        if not initial_rewritten_queries_dir.exists():
+            logger.error(f"Initial rewritten queries directory not found: {initial_rewritten_queries_dir}")
+            return {'error': f'Initial rewritten queries directory not found'}
+        
+        static_query_files = sorted(initial_rewritten_queries_dir.glob("*.sql"), key=lambda x: x.name)
+        
+        if not static_query_files:
+            logger.error(f"No query files found in {initial_rewritten_queries_dir}")
+            return {'error': f'No initial query files found'}
+        
+        logger.info(f"Loaded {len(static_query_files)} queries from: {initial_rewritten_queries_dir}")
+        logger.info(f"These queries will be used for all timesteps (MVs do not change)")
+        
+        # 各タイムステップでクエリを実行（同じMVとクエリのまま）
         for t_idx, timestep_name in enumerate(timesteps):
             logger.info(f"\n{'='*60}")
-            logger.info(f"Timestep {t_idx}: {timestep_name} (using initial MVs)")
+            logger.info(f"Timestep {t_idx}: {timestep_name} (using initial MVs and queries)")
             logger.info(f"{'='*60}")
             
             timestep_start = time.time()
             
             logger.info(f"Executing queries for timestep {timestep_name}...")
+            logger.info(f"  Using initial rewritten queries (timestep 0)")
+            logger.info(f"  Query count: {len(static_query_files)}")
             
-            frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(query_files))
+            frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(static_query_files))
             
             # 頻度リストの長さを調整
-            if len(frequencies) < len(query_files):
-                frequencies.extend([0.0] * (len(query_files) - len(frequencies)))
-            elif len(frequencies) > len(query_files):
-                frequencies = frequencies[:len(query_files)]
+            if len(frequencies) < len(static_query_files):
+                frequencies.extend([0.0] * (len(static_query_files) - len(frequencies)))
+            elif len(frequencies) > len(static_query_files):
+                frequencies = frequencies[:len(static_query_files)]
             
             query_results = self._execute_queries_with_frequency(
-                query_files,
+                static_query_files,  # 常に最初のタイムステップのクエリを使用
                 frequencies,
                 timeout_minutes,
                 verbose
@@ -723,7 +756,7 @@ class TimeDependentQueryExecutor:
                 'timestep': timestep_name,
                 'timestep_index': t_idx,
                 'queries': query_results,
-                'total_time': round(timestep_elapsed, 2),
+                'total_time': round(timestep_elapsed, 5),
             }
             
             timestep_results.append(timestep_result)
@@ -746,12 +779,12 @@ class TimeDependentQueryExecutor:
         return {
             'mode': 'static',
             'timesteps': timesteps,
-            'initial_mv_creation_time': round(initial_mv_creation_time, 2),
+            'initial_mv_creation_time': round(initial_mv_creation_time, 5),
             'timestep_results': timestep_results,
             'summary': {
                 'total_timesteps': len(timesteps),
-                'initial_mv_creation_time': round(initial_mv_creation_time, 2),
-                'total_query_time': round(total_query_time, 2),
+                'initial_mv_creation_time': round(initial_mv_creation_time, 5),
+                'total_query_time': round(total_query_time, 5),
                 'total_benchmark_time': round(benchmark_elapsed, 2),
             }
         }
