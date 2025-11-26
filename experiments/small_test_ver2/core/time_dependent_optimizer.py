@@ -76,6 +76,9 @@ class TimeDependentOptimizer:
         self.J = len(self.node_list)  # Number of MV candidates
         self.T = len(self.timesteps)  # Number of timesteps
 
+        # Initialize candidate filtering
+        self.cand_j = self.initialize_candidates()
+
         self.model: gp.Model | None = None
         self.y: Dict[tuple, gp.Var] = {}  # y[i,j,t]: query i uses MV j at time t
         self.z: Dict[tuple, gp.Var] = {}  # z[j,t]: MV j exists at time t
@@ -85,6 +88,24 @@ class TimeDependentOptimizer:
         self.gurobi_output = gurobi_output
 
         logger.info(f"Initialized TimeDependentOptimizer: I={self.I}, J={self.J}, T={self.T}")
+        logger.info(f"Filtered to {len(self.cand_j)} candidates (from {self.J} total nodes)")
+
+    def initialize_candidates(self) -> list[int]:
+        """Initialize MV candidates based on utility.
+        
+        Returns only nodes that have positive utility (u_ij > 0) for at least
+        one query. This reduces the ILP problem size by excluding nodes that
+        cannot provide any benefit.
+        
+        Returns:
+            List of candidate node indices (nodes with u_ij > 0 for some query i)
+        """
+        candidates = set()
+        for i in range(self.I):
+            for j in range(self.J):
+                if self.u_ij[i][j] > 0:
+                    candidates.add(j)
+        return sorted(list(candidates))
 
     def build_variables(self) -> None:
         """Create all Gurobi variables."""
@@ -94,7 +115,7 @@ class TimeDependentOptimizer:
         logger.info("Building variables...")
 
         for t in range(self.T):
-            for j in range(self.J):
+            for j in self.cand_j:  # Only create variables for candidates
                 self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
                 self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
 
@@ -104,7 +125,7 @@ class TimeDependentOptimizer:
                     self.a[j, t, k_idx] = m.addVar(vtype=gp.GRB.BINARY, name=f"a_{j}_{t}_{k_idx}")
 
             for i in range(self.I):
-                for j in range(self.J):
+                for j in self.cand_j:  # Only create variables for candidates
                     self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
 
         m.update()
@@ -122,13 +143,13 @@ class TimeDependentOptimizer:
             # At most one MV per query
             #for i in range(self.I): # いらない
             #    m.addConstr(
-            #        gp.quicksum(self.y[i, j, t] for j in range(self.J)) <= 1,
+            #        gp.quicksum(self.y[i, j, t] for j in self.cand_j) <= 1,
             #        name=f"at_most_one_mv_{i}_{t}",
             #    )
             #    constraint_count += 1
 
             for i in range(self.I):
-                for j in range(self.J):
+                for j in self.cand_j:  # Only iterate over candidates
                     # Usage implies materialization
                     m.addConstr(
                         self.y[i, j, t] <= self.z[j, t],
@@ -139,7 +160,7 @@ class TimeDependentOptimizer:
                     # Inclusion/overlap exclusion
                     
                     m.addConstr(
-                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in range(self.J) if u != j) <= 1,
+                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in self.cand_j if u != j) <= 1,
                         # / self.J <= 1 この割り算なくてもよさそう
                         name=f"inclusive_excl_{i}_{j}_{t}",
                     )
@@ -147,7 +168,7 @@ class TimeDependentOptimizer:
 
             # Storage budget constraint
             m.addConstr(
-                gp.quicksum(self.b_j[j] * self.z[j, t] for j in range(self.J)) <= self.B_max,
+                gp.quicksum(self.b_j[j] * self.z[j, t] for j in self.cand_j) <= self.B_max,
                 name=f"storage_{t}",
             )
             constraint_count += 1
@@ -163,7 +184,7 @@ class TimeDependentOptimizer:
         constraint_count = 0
 
         for t in range(self.T):
-            for j in range(self.J):
+            for j in self.cand_j:  # Only iterate over candidates
                 # Creation flag definition
                 if t == 0:
                     # Initial timestep: c[j,0] = z[j,0]
@@ -234,14 +255,14 @@ class TimeDependentOptimizer:
             -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
             for t in range(self.T)
             for i in range(self.I)
-            for j in range(self.J)
+            for j in self.cand_j  # Only sum over candidates
         )
 
         # Migration cost: sum of recipe costs when creating MVs
         migration_cost = gp.quicksum(
             float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
             for t in range(self.T)
-            for j in range(self.J)
+            for j in self.cand_j  # Only sum over candidates
             for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
         )
 
@@ -298,14 +319,17 @@ class TimeDependentOptimizer:
             raise RuntimeError(f"Gurobi optimization failed with status: {self.model.status}")
 
         # Extract solution
-        z_by_t = [
-            [int(round(self.z[j, t].X)) for j in range(self.J)]
-            for t in range(self.T)
-        ]
-        y_by_t = [
-            [[int(round(self.y[i, j, t].X)) for j in range(self.J)] for i in range(self.I)]
-            for t in range(self.T)
-        ]
+        # Initialize full arrays with zeros for all nodes
+        z_by_t = [[0] * self.J for _ in range(self.T)]
+        y_by_t = [[[0] * self.J for _ in range(self.I)] for _ in range(self.T)]
+        
+        # Fill in candidate values
+        for t in range(self.T):
+            for j in self.cand_j:
+                z_by_t[t][j] = int(round(self.z[j, t].X))
+                for i in range(self.I):
+                    y_by_t[t][i][j] = int(round(self.y[i, j, t].X))
+        
         obj = float(self.model.objVal)
 
         # Calculate objective breakdown
@@ -314,14 +338,14 @@ class TimeDependentOptimizer:
                 -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
                 for t in range(self.T)
                 for i in range(self.I)
-                for j in range(self.J)
+                for j in self.cand_j  # Only sum over candidates
             ).getValue()
         )
         migration_val = float(
             gp.quicksum(
                 float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
                 for t in range(self.T)
-                for j in range(self.J)
+                for j in self.cand_j  # Only sum over candidates
                 for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
             ).getValue()
         )

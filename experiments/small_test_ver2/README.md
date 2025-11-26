@@ -114,12 +114,29 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --
 
 ### ステップ1: データベースのセットアップとクエリ実行計画の取得
 
-まず、データベースをセットアップし、各クエリの実行計画（EXPLAIN JSON）を取得します。
+**前提条件**: 実験を開始する前に、データベースのセットアップを完了させてください。
+
+#### データベースセットアップ（実験開始前に1回のみ実行）
 
 ```bash
-# フェーズ0: データベースのセットアップ
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 0
+# IMDBデータのダウンロード、データベース作成、データインポート、インデックス作成を一括実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --all
 
+# または段階的に実行
+python experiments/small_test_ver2/scripts/setup_imdb.py --download      # ダウンロードのみ
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-db     # DB作成
+python experiments/small_test_ver2/scripts/setup_imdb.py --import-data   # データインポート
+python experiments/small_test_ver2/scripts/setup_imdb.py --create-indexes # インデックス作成
+
+# セットアップの検証
+python experiments/small_test_ver2/scripts/setup_imdb.py --verify
+```
+
+#### フェーズ1: クエリのEXPLAIN JSON生成
+
+データベースセットアップ完了後、各クエリの実行計画（EXPLAIN JSON）を取得します。
+
+```bash
 # フェーズ1: クエリのEXPLAIN JSON生成（デフォルトのjob_likeクエリセット）
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1
 
@@ -150,54 +167,131 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --
 
 ---
 
-### ステップ3: マイグレーションプランの列挙
+### ステップ3: JSONファイルへのノードID付加
+
+EXPLAIN JSONファイルに各ノードのIDを付加します。
+
+```bash
+# フェーズ3: JSONファイルへのノードID付加
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 3 --query-set job
+```
+
+**生成されるファイル**:
+- `02_json/{query_set}/*.json`: ノードID付きEXPLAIN JSON（上書き更新）
+
+---
+
+### ステップ4: マイグレーションプランの列挙
 
 各MV候補について、作成に必要な依存関係とマイグレーションプラン（SQLレシピ）を列挙します。
 
 ```bash
-# デフォルトのjob_likeクエリセット
-python experiments/small_test_ver2/migration/enumerate_migration_plan.py
-
-# または特定のクエリセットを指定
-python experiments/small_test_ver2/migration/enumerate_migration_plan.py --query-set explicit_join
+# フェーズ4: マイグレーションプラン列挙
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 4 --query-set job
 ```
 
 **生成されるファイル**:
-- `04_migration/{query_set}/migration_plans.json`: 全MV候補のマイグレーションプラン（SQL）
+- `04_migration/{query_set}/simple_migration_plans.json`: 全MV候補のマイグレーションプラン（SQL）
 
 ---
 
-### ステップ4: マイグレーションコストの計算
+### ステップ5: マイグレーションコストの計算
 
-各マイグレーションプランを実際に実行し、コストを測定します。
+各マイグレーションプランのコストを計算します。
 
 ```bash
-# デフォルトのjob_likeクエリセット
-python experiments/small_test_ver2/migration/migration_cost_calculator.py
-
-# または特定のクエリセットを指定
-python experiments/small_test_ver2/migration/migration_cost_calculator.py --query-set explicit_join
+# フェーズ5: マイグレーションコスト計算
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 5 --query-set job
 ```
 
 **生成されるファイル**:
-- `04_migration/{query_set}/migration_costs.json`: 各MV候補のレシピとコスト
+- `04_migration/{query_set}/simple_migration_costs.json`: 各MV候補のレシピとコスト
 
 ---
 
-### ステップ5: 時間依存最適化の実行
+### ステップ6: 時間依存最適化の実行
 
 タイムステップごとのクエリ頻度とマイグレーションコストを考慮して、ILP最適化を実行します。
 
 ```bash
-# デフォルトのjob_likeクエリセット
-python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py
-
-# または特定のクエリセットを指定
-python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set explicit_join
+# フェーズ6: ILP最適化
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job
 ```
 
 **生成されるファイル**:
 - `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 最適化結果（選択されたMV、コスト、マイグレーション分析など）
+
+---
+
+### ステップ7: マイグレーションSQL生成
+
+各タイムステップのマイグレーションに必要なSQLファイルを生成します。
+
+```bash
+# フェーズ7: マイグレーションSQL生成
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job
+```
+
+**生成されるファイル**:
+- `time_dependent_output/{query_set}/timestep_*_{timestep_name}.sql`: 各タイムステップのマイグレーションSQL
+
+---
+
+### ステップ8: クエリ書き換え
+
+各タイムステップごとに、選択されたMVを使用してクエリを書き換えます。
+
+```bash
+# フェーズ8: 時間依存型クエリ書き換え
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job
+```
+
+**生成されるファイル**:
+- `time_dependent_output/{query_set}/jobs/timestep_0_*/`: タイムステップ0の書き換えクエリ
+- `time_dependent_output/{query_set}/jobs/timestep_1_*/`: タイムステップ1の書き換えクエリ
+- `time_dependent_output/{query_set}/jobs/timestep_2_*/`: タイムステップ2の書き換えクエリ
+
+各フォルダには、全てのクエリ（113個）が書き換えられたSQLファイルとして保存されます。
+
+
+---
+
+### ステップ9: ベンチマーク実行
+
+各タイムステップのMV構成で書き換えられたクエリを実行し、性能を測定します。
+
+```bash
+# フェーズ9: ベンチマーク実行（動的MVモード）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job
+```
+
+**実行モード**:
+- `dynamic`: 動的MV（デフォルト）- 各タイムステップでマイグレーションを実行してMVを更新
+- `static`: 静的MV - 最初のタイムステップのMVのみを作成し、全タイムステップで使用
+- `baseline`: ベースライン - MVを使用せず元のクエリを実行
+
+**生成されるファイル**:
+- `time_dependent_output/{query_set}/benchmark_results_dynamic.json`: 動的MVモードのベンチマーク結果
+- `time_dependent_output/{query_set}/benchmark_results_static.json`: 静的MVモードの結果
+- `time_dependent_output/{query_set}/benchmark_results_baseline.json`: ベースラインの結果
+
+**ベンチマーク結果の内容**:
+- 各タイムステップでの全クエリの実行時間（ミリ秒）
+- タイムアウトしたクエリの情報
+- MVの作成・削除にかかったマイグレーション時間
+- タイムステップごとの総実行時間
+- 全体のサマリー統計（総実行時間、平均クエリ時間など）
+
+**実行時間の計測**:
+- **クエリ実行時間**: 各クエリの実際の実行時間のみを計測
+- **マイグレーション時間**: MVの作成・削除にかかった時間を別途計測
+- **注意**: ベンチマーク実行時間には、最適化時間、SQL生成時間、クエリ書き換え時間は含まれません
+### 全フェーズの一括実行
+
+```bash
+# 全フェーズを順番に実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job
+```
 
 ---
 
@@ -233,51 +327,42 @@ experiments/small_test_ver2/
 │   ├── io_loaders.py                  # データロード
 │   └── small_test_schema_provider.py  # スキーマプロバイダー
 ├── migration/                     # マイグレーション関連
-│   ├── enumerate_migration_plan.py    # プラン列挙
-│   └── migration_cost_calculator.py   # コスト計算
+│   ├── enumerate_simple_migration_plan.py  # シンプルプラン列挙
+│   └── simple_migration_cost_calculator.py # コスト計算
 ├── mv_generation/                 # MV生成関連
 │   ├── enhanced_mv_generator.py       # 拡張MVジェネレーター
 │   ├── simple_mv_sql_generator.py     # シンプルSQLジェネレーター
 │   └── comma_join_rewriter.py         # カンマ結合書き換え
-├── rewrite/                       # クエリ書き換え
-│   └── query_rewriter.py              # クエリリライター
 ├── scripts/                       # 実行スクリプト
-│   ├── run_experiment_normal.py       # 通常実験
-│   └── run_time_dependent_with_migration.py  # 時間依存最適化
+│   ├── run_experiment_normal.py       # メイン実験スクリプト（全フェーズ統合）
+│   ├── run_time_dependent_with_migration.py  # 旧時間依存最適化（非推奨）
+│   └── setup_imdb.py                  # IMDBセットアップ
 ├── utils/                         # ユーティリティ
 │   └── inspect_pickle.py              # デバッグ用
 ├── 01_queries/                    # クエリ定義
-│   ├── job_like/                      # デフォルトクエリセット
-│   ├── explicit_join/                 # 明示的JOIN使用クエリセット
-│   ├── frequency.json
-│   └── frequency_time_dependent.json
+│   ├── job/                           # JOBクエリセット
+│   │   ├── *.sql                      # クエリファイル
+│   │   └── frequency_time_dependent.json  # 時間依存頻度
+│   └── job_like/                      # 旧クエリセット（非推奨）
 ├── 02_json/                       # EXPLAIN出力
-│   ├── job_like/                      # job_likeクエリセットのEXPLAIN結果
-│   └── explicit_join/                 # explicit_joinクエリセットのEXPLAIN結果
+│   └── job/                           # JOBクエリセットのEXPLAIN結果（ノードID付き）
 ├── 03_parsed/                     # パース結果
-│   ├── job_like/                      # job_likeクエリセットのパース結果
-│   └── explicit_join/                 # explicit_joinクエリセットのパース結果
-├── 04_optimized/                  # 最適化結果
-│   ├── job_like/
-│   └── explicit_join/
+│   └── job/
+│       ├── qp_class.pkl               # クエリパーサ出力
+│       └── parse_summary.json         # パースサマリー
 ├── 04_migration/                  # マイグレーション計画とコスト
-│   ├── job_like/
-│   │   ├── migration_plans.json
-│   │   └── migration_costs.json
-│   └── explicit_join/
-│       ├── migration_plans.json
-│       └── migration_costs.json
-├── 05_mv_sql/                     # MV生成SQL
-│   ├── job_like/
-│   └── explicit_join/
-├── 06_rewritten/                  # 書き換えクエリ
-│   ├── job_like/
-│   └── explicit_join/
+│   └── job/
+│       ├── simple_migration_plans.json    # マイグレーションプラン（SQL）
+│       ├── simple_migration_costs.json    # マイグレーションコスト
+│       └── partial_explain_*.json         # 部分EXPLAIN（中間データ）
 ├── time_dependent_output/         # 時間依存最適化出力
-│   ├── job_like/
-│   │   └── td_mv_optimization_result.json
-│   └── explicit_join/
-│       └── td_mv_optimization_result.json
+│   └── job/
+│       ├── td_mv_optimization_result.json # 最適化結果
+│       ├── timestep_*_*.sql               # タイムステップごとのマイグレーションSQL
+│       └── jobs/                          # 書き換えクエリ
+│           ├── timestep_0_0/              # タイムステップ0の書き換えクエリ
+│           ├── timestep_1_1/              # タイムステップ1の書き換えクエリ
+│           └── timestep_2_2/              # タイムステップ2の書き換えクエリ
 ├── small_docs/                    # ドキュメント
 ├── 00_setup.sql
 ├── insert_queries.sql
@@ -292,10 +377,15 @@ experiments/small_test_ver2/
 ### コアスクリプト（実行に必須）
 | ファイル名 | 場所 | 役割 |
 |-----------|------|------|
-| `run_experiment_normal.py` | `scripts/` | データベースセットアップ、EXPLAIN取得、クエリパース |
-| `enumerate_migration_plan.py` | `migration/` | マイグレーションプラン（SQL）の列挙 |
-| `migration_cost_calculator.py` | `migration/` | マイグレーションコストの測定 |
-| `run_time_dependent_with_migration.py` | `scripts/` | 時間依存最適化のメイン実行スクリプト |
+| `run_experiment_normal.py` | `scripts/` | メイン実験スクリプト（全フェーズ統合）<br>- フェーズ1: EXPLAIN JSON生成<br>- フェーズ2: クエリパース<br>- フェーズ3: JSONノードID付加<br>- フェーズ4: マイグレーションプラン列挙<br>- フェーズ5: マイグレーションコスト計算<br>- フェーズ6: ILP最適化<br>- フェーズ7: マイグレーションSQL生成<br>- フェーズ8: クエリ書き換え<br>- フェーズ9: ベンチマーク実行 |
+| `enumerate_simple_migration_plan.py` | `migration/` | マイグレーションプラン（SQL）の列挙（フェーズ2.7から内部利用） |
+| `simple_migration_cost_calculator.py` | `migration/` | マイグレーションコストの測定（フェーズ2.8から内部利用） |
+
+### サポートスクリプト
+| ファイル名 | 場所 | 役割 |
+|-----------|------|------|
+| `run_time_dependent_with_migration.py` | `scripts/` | 旧時間依存最適化スクリプト（非推奨、後方互換性のため残存） |
+| `setup_imdb.py` | `scripts/` | IMDBデータベースのセットアップツール |
 
 ### 最適化・パースクラス
 | ファイル名 | 場所 | 役割 |

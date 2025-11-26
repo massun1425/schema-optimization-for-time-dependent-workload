@@ -57,21 +57,21 @@ class SimpleMigrationCostCalculator:
         )
     
 
-    def _explain_sql(self, sql: str) -> float:
-        """SQLをEXPLAINし、totalcostを取得
+    def _explain_sql(self, sql: str) -> tuple[float, int, int]:
+        """SQLをEXPLAINし、totalcost、rows、widthを取得
         
         Args:
             sql: 実行するSQL
             
         Returns:
-            totalcost（float）、エラー時は0
+            (totalcost, plan_rows, plan_width) のタプル、エラー時は(0.0, 0, 0)
         """
         if not sql or sql.strip() == "" or not isinstance(sql, str):
-            return 0.0
+            return (0.0, 0, 0)
         
         # \"NON_MIGRATE\" は実際のSQLではないので0を返す
         if sql == "NON_MIGRATE":
-            return 0.0
+            return (0.0, 0, 0)
         
         # CREATE MATERIALIZED VIEWの場合、正規表現でSELECT部分を抽出
         # re.DOTALLで改行も含めてマッチ
@@ -81,7 +81,7 @@ class SimpleMigrationCostCalculator:
         else:
             # \"AS\" が見つからない場合はエラー
             print(f"  CREATE文のパースエラー: {sql[:80]}...")
-            return 0.0
+            return (0.0, 0, 0)
         
         try:
             with self._get_connection() as conn:
@@ -92,22 +92,26 @@ class SimpleMigrationCostCalculator:
                     result = cursor.fetchone()
 
                     if result and result[0]:
-                        # JSON形式の結果からtotal_costを取得
+                        # JSON形式の結果からtotal_cost、plan_rows、plan_widthを取得
                         plan = result[0][0]  # 最初のプラン
-                        return float(plan.get('Plan', {}).get('Total Cost', 0.0))
+                        plan_data = plan.get('Plan', {})
+                        total_cost = float(plan_data.get('Total Cost', 0.0))
+                        plan_rows = int(plan_data.get('Plan Rows', 0))
+                        plan_width = int(plan_data.get('Plan Width', 0))
+                        return (total_cost, plan_rows, plan_width)
                     else:
-                        return 0.0
+                        return (0.0, 0, 0)
         except Exception as e:
             print(f"  エラー: EXPLAINの実行失敗 - {e}")
             print(f"  SQL: {sql[:100]}...")
-            return 0.0
+            return (0.0, 0, 0)
         
 
-    def calculate_all_costs(self) -> Dict[str, Dict[str, float]]:
+    def calculate_all_costs(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
         """すべてのマイグレーションプラン（2パターンのみ）のコストを計算
         
         Returns:
-            ノード名 -> {プランキー: コスト} の辞書
+            ノード名 -> {プランキー: {cost, rows, width, size}} の辞書
         """
         print("\n" + "="*70)
         print("マイグレーションコストを計算中...")
@@ -130,12 +134,23 @@ class SimpleMigrationCostCalculator:
                 
                 if plan_key == "[]":
                     # 依存MV無しでマイグレーション
-                    cost = self._explain_sql(sql)
-                    self.costs[node][plan_key] = cost
+                    cost, rows, width = self._explain_sql(sql)
+                    size = rows * width
+                    self.costs[node][plan_key] = {
+                        "cost": cost,
+                        "rows": rows,
+                        "width": width,
+                        "size": size
+                    }
                 else:
                     # NON_MIGRATE パターン (str([target_mv])の形式)
-                    # SQLは "NON_MIGRATE" 文字列なので、コストは0
-                    self.costs[node][plan_key] = 0.0
+                    # SQLは "NON_MIGRATE" 文字列なので、コストとサイズは0
+                    self.costs[node][plan_key] = {
+                        "cost": 0.0,
+                        "rows": 0,
+                        "width": 0,
+                        "size": 0
+                    }
 
         print(f"\n✓ 計算完了: {len(self.costs)}個のノード")
         print("="*70 + "\n")
