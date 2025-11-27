@@ -290,6 +290,18 @@ def run_ilp_optimization(
                 import pickle
                 with open(pickle_path, 'wb') as f:
                     pickle.dump(qp, f)
+                
+                # Save parsing statistics
+                parse_stats = qp.get_parse_statistics()
+                if parse_stats:
+                    import json
+                    stats_path = Path(output_dir) / "parse_statistics.json"
+                    with open(stats_path, 'w') as f:
+                        json.dump(parse_stats, f, indent=2)
+                    logger.info(f"✓ Saved parsing statistics to {stats_path}")
+                    logger.info(f"  - Positive utility entries: {parse_stats['positive_utility_percentage']:.2f}%")
+                    logger.info(f"  - Nodes with positive utility: {parse_stats['nodes_with_positive_utility_percentage']:.2f}%")
+                    logger.info(f"  - Nodes with positive net benefit: {parse_stats['nodes_with_positive_net_benefit_percentage']:.2f}%")
             
             # Export annotated query files with node_id (always run in query_parsing phase)
             logger.info("Exporting annotated query files with node_id...")

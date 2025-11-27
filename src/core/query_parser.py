@@ -361,11 +361,7 @@ class QueryParser:
                 cost = 0.0
             else:
                 cost = original_cost
-
-            # Zero cost if no filter
-            if filter_condition == "":
-                cost = 0.0
-
+            
             # Ensure non-zero width
             width = node.get("Plan Width", 0)
             if width == 0:
@@ -916,7 +912,170 @@ class QueryParser:
             # Store original subquery costs (from EXPLAIN JSON Total Cost)
             # These are already preserved in qm.original_subquery_costs during processing
             self.original_subquery_costs = self.qm.original_subquery_costs
+            
+            # Compute and store parsing statistics
+            self.parse_statistics = self._compute_parse_statistics()
 
         except json.JSONDecodeError as e:
             print(f"Error reading {files[i] if i < len(files) else 'unknown file'}: {e}")
             raise
+
+    def _compute_parse_statistics(self) -> dict:
+        """Compute statistics about parsed queries and utilities.
+        
+        Returns:
+            Dictionary containing various parsing statistics
+        """
+        stats = {}
+        
+        # Basic counts
+        num_queries = len(self.u_ij)
+        num_nodes = len(self.node_list)
+        num_leaf_nodes = len(self.qm.leaf_nodes_map)
+        num_non_leaf_nodes = len(self.qm.non_leaf_nodes_map)
+        
+        stats['num_queries'] = num_queries
+        stats['num_nodes'] = num_nodes
+        stats['num_leaf_nodes'] = num_leaf_nodes
+        stats['num_non_leaf_nodes'] = num_non_leaf_nodes
+        
+        # Utility statistics
+        total_utility_entries = 0
+        positive_utility_entries = 0
+        zero_utility_entries = 0
+        negative_utility_entries = 0
+        
+        utility_values = []
+        positive_utilities = []
+        
+        for i, row in enumerate(self.u_ij):
+            for j, u in enumerate(row):
+                total_utility_entries += 1
+                utility_values.append(u)
+                if u > 0:
+                    positive_utility_entries += 1
+                    positive_utilities.append(u)
+                elif u == 0:
+                    zero_utility_entries += 1
+                else:
+                    negative_utility_entries += 1
+        
+        stats['total_utility_entries'] = total_utility_entries
+        stats['positive_utility_entries'] = positive_utility_entries
+        stats['zero_utility_entries'] = zero_utility_entries
+        stats['negative_utility_entries'] = negative_utility_entries
+        stats['positive_utility_percentage'] = (
+            positive_utility_entries / total_utility_entries * 100
+            if total_utility_entries > 0 else 0
+        )
+        stats['non_zero_utility_percentage'] = (
+            (positive_utility_entries + negative_utility_entries) / total_utility_entries * 100
+            if total_utility_entries > 0 else 0
+        )
+        
+        # Utility value statistics
+        if utility_values:
+            stats['utility_min'] = min(utility_values)
+            stats['utility_max'] = max(utility_values)
+            stats['utility_mean'] = sum(utility_values) / len(utility_values)
+            sorted_values = sorted(utility_values)
+            mid = len(sorted_values) // 2
+            stats['utility_median'] = (
+                sorted_values[mid] if len(sorted_values) % 2 == 1
+                else (sorted_values[mid - 1] + sorted_values[mid]) / 2
+            )
+        else:
+            stats['utility_min'] = 0
+            stats['utility_max'] = 0
+            stats['utility_mean'] = 0
+            stats['utility_median'] = 0
+        
+        if positive_utilities:
+            stats['positive_utility_mean'] = sum(positive_utilities) / len(positive_utilities)
+            stats['positive_utility_max'] = max(positive_utilities)
+        else:
+            stats['positive_utility_mean'] = 0
+            stats['positive_utility_max'] = 0
+        
+        # Maintenance cost statistics
+        if self.m_cost:
+            stats['maintenance_cost_min'] = min(self.m_cost)
+            stats['maintenance_cost_max'] = max(self.m_cost)
+            stats['maintenance_cost_mean'] = sum(self.m_cost) / len(self.m_cost)
+            stats['maintenance_cost_total'] = sum(self.m_cost)
+        else:
+            stats['maintenance_cost_min'] = 0
+            stats['maintenance_cost_max'] = 0
+            stats['maintenance_cost_mean'] = 0
+            stats['maintenance_cost_total'] = 0
+        
+        # Storage size statistics
+        if self.b_j:
+            stats['storage_size_min'] = min(self.b_j)
+            stats['storage_size_max'] = max(self.b_j)
+            stats['storage_size_mean'] = sum(self.b_j) / len(self.b_j)
+            stats['storage_size_total'] = sum(self.b_j)
+        else:
+            stats['storage_size_min'] = 0
+            stats['storage_size_max'] = 0
+            stats['storage_size_mean'] = 0
+            stats['storage_size_total'] = 0
+        
+        # Per-query statistics
+        queries_with_positive_utility = 0
+        for row in self.u_ij:
+            if any(u > 0 for u in row):
+                queries_with_positive_utility += 1
+        
+        stats['queries_with_positive_utility'] = queries_with_positive_utility
+        stats['queries_with_positive_utility_percentage'] = (
+            queries_with_positive_utility / num_queries * 100
+            if num_queries > 0 else 0
+        )
+        
+        # Per-node statistics (how many nodes have positive utility from at least one query)
+        nodes_with_positive_utility = 0
+        for j in range(num_nodes):
+            if any(self.u_ij[i][j] > 0 for i in range(num_queries)):
+                nodes_with_positive_utility += 1
+        
+        stats['nodes_with_positive_utility'] = nodes_with_positive_utility
+        stats['nodes_with_positive_utility_percentage'] = (
+            nodes_with_positive_utility / num_nodes * 100
+            if num_nodes > 0 else 0
+        )
+        
+        # Net benefit analysis (utility - maintenance_cost)
+        net_benefits = []
+        positive_net_benefits = 0
+        for j in range(num_nodes):
+            max_utility_for_node = max(self.u_ij[i][j] for i in range(num_queries)) if num_queries > 0 else 0
+            net_benefit = max_utility_for_node - self.m_cost[j] if j < len(self.m_cost) else max_utility_for_node
+            net_benefits.append(net_benefit)
+            if net_benefit > 0:
+                positive_net_benefits += 1
+        
+        stats['nodes_with_positive_net_benefit'] = positive_net_benefits
+        stats['nodes_with_positive_net_benefit_percentage'] = (
+            positive_net_benefits / num_nodes * 100
+            if num_nodes > 0 else 0
+        )
+        
+        if net_benefits:
+            stats['net_benefit_min'] = min(net_benefits)
+            stats['net_benefit_max'] = max(net_benefits)
+            stats['net_benefit_mean'] = sum(net_benefits) / len(net_benefits)
+        else:
+            stats['net_benefit_min'] = 0
+            stats['net_benefit_max'] = 0
+            stats['net_benefit_mean'] = 0
+        
+        return stats
+    
+    def get_parse_statistics(self) -> dict:
+        """Get parsing statistics.
+        
+        Returns:
+            Dictionary containing parsing statistics, or empty dict if not computed
+        """
+        return getattr(self, 'parse_statistics', {})
