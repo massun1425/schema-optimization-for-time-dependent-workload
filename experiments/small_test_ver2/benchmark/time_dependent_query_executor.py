@@ -648,6 +648,7 @@ class TimeDependentQueryExecutor:
         migration_sql_dir: Path,
         rewritten_queries_base_dir: Path,
         frequencies_by_timestep: Dict[str, List[float]],
+        timesteps: List[str] = None,
         timeout_minutes: int = 30,
         verbose: bool = False
     ) -> Dict:
@@ -673,9 +674,15 @@ class TimeDependentQueryExecutor:
         print(f"DEBUG: Cleanup completed - dropped={dropped_count}")
         
         migration_analysis = optimization_result.get('migration_analysis', [])
-        timesteps = optimization_result.get('timesteps', [])
+        # Staticモードの場合はmigration_analysisがない場合がある（純粋な静的最適化）
+        is_pure_static = 'migration_analysis' not in optimization_result and 'selected_mvs' in optimization_result
         
-        if not migration_analysis:
+        timesteps = optimization_result.get('timesteps', [])
+        # 純粋な静的最適化の場合、timestepsが含まれていない可能性があるため、frequencies_by_timestepから取得
+        if not timesteps and frequencies_by_timestep:
+            timesteps = sorted(frequencies_by_timestep.keys())
+        
+        if not migration_analysis and not is_pure_static:
             logger.error("No migration_analysis found in optimization result")
             return {'error': 'No migration_analysis found'}
         
@@ -689,7 +696,12 @@ class TimeDependentQueryExecutor:
         logger.info("Creating initial MVs (timestep 0)")
         logger.info(f"{'='*60}")
         
-        migration_sql_file = migration_sql_dir / f"timestep_0_{timesteps[0]}.sql"
+        if is_pure_static:
+            # 純粋な静的最適化の場合、専用のSQLファイルを使用
+            migration_sql_file = migration_sql_dir / "static_initial_mvs.sql"
+        else:
+            # 従来の時間依存最適化の最初のステップを使用する場合
+            migration_sql_file = migration_sql_dir / f"timestep_0_{timesteps[0]}.sql"
         
         if migration_sql_file.exists():
             logger.info(f"Creating initial MVs from {migration_sql_file.name}...")
@@ -706,7 +718,11 @@ class TimeDependentQueryExecutor:
         
         # 最初のタイムステップの書き換えられたクエリを取得（全タイムステップで使用）
         # Static モードではMVが変わらないため、クエリも変わらない
-        initial_rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_0_{timesteps[0]}"
+        if is_pure_static:
+            # 純粋な静的最適化の場合、rewritten_queries_base_dir がそのままクエリディレクトリ
+            initial_rewritten_queries_dir = rewritten_queries_base_dir
+        else:
+            initial_rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_0_{timesteps[0]}"
         
         if not initial_rewritten_queries_dir.exists():
             logger.error(f"Initial rewritten queries directory not found: {initial_rewritten_queries_dir}")
