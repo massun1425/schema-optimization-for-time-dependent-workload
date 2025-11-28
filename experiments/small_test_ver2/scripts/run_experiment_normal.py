@@ -1608,6 +1608,57 @@ class NormalModeExperiment:
             executor.close()
 
     
+    def run_post_optimization_phases(self, optimization_mode='dynamic'):
+        """最適化以降のフェーズを実行 (Phase 6-9)
+        
+        Args:
+            optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
+        
+        success = True
+        
+        # 全体の開始時刻を記録
+        total_start_time = time.time()
+        
+        # 最適化フェーズ（モードに応じて選択）
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode))
+        
+        # SQL生成・クエリ書き換え・ベンチマークフェーズ
+        post_optimization_phases = [
+            (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
+            (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode)),
+        ]
+        
+        # 全フェーズをまとめる
+        phases = [optimization_phase] + post_optimization_phases
+        
+        for phase_num, phase_name, phase_func in phases:
+            try:
+                if not phase_func():
+                    self.print_error(f"フェーズ{phase_num}で失敗しました")
+                    return False
+            except Exception as e:
+                self.print_error(f"フェーズ{phase_num}でエラー発生: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+        
+        # 全体の実行時間を記録
+        total_elapsed = time.time() - total_start_time
+        
+        self.print_header("最適化以降のフェーズ完了")
+        self.print_success(f"総実行時間: {total_elapsed:.2f} 秒")
+        
+        if self.phase_times:
+            self.print_info("フェーズ別実行時間:")
+            for phase, elapsed in self.phase_times.items():
+                if phase in ['phase6_optimization', 'phase7_mv_sql_generation', 'phase8_query_rewriting', 'phase9_benchmark']:
+                    self.print_info(f"  {phase}: {elapsed:.2f} 秒")
+        
+        return True
+    
     def run_all_phases(self, optimization_mode='dynamic'):
         """全フェーズを順次実行
         
@@ -1692,8 +1743,8 @@ def main():
         '--phase',
         type=str,
         default='all',
-        choices=['all', '0', '1', '2', '3', '4', '5', '6', '6.5', '7', '8', '9'],
-        help='実行するフェーズ (all: 全実行, 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 6.5: Static Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
+        choices=['all', 'post-opt', '0', '1', '2', '3', '4', '5', '6', '6.5', '7', '8', '9'],
+        help='実行するフェーズ (all: 全実行, post-opt: 最適化以降(6-9), 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 6.5: Static Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
     )
     parser.add_argument(
         '--config',
@@ -1728,6 +1779,8 @@ def main():
     
     if args.phase == 'all':
         success = exp.run_all_phases(optimization_mode=args.optimization_mode)
+    elif args.phase == 'post-opt':
+        success = exp.run_post_optimization_phases(optimization_mode=args.optimization_mode)
     elif args.phase == '0':
         success = exp.phase0_setup()
     elif args.phase == '1':

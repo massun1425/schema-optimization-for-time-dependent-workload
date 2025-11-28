@@ -182,13 +182,28 @@ class QueryRewriter:
         Returns:
             正規化されたSQL文
         """
+        # ステップ1: 文字列リテラルを保護（一時的にプレースホルダーに置換）
+        string_literals = []
+        
+        def replace_literal(match):
+            """文字列リテラルをプレースホルダーに置換"""
+            literal = match.group(0)
+            placeholder = f"__STRING_LITERAL_{len(string_literals)}__"
+            string_literals.append(literal)
+            return placeholder
+        
+        # シングルクォートとダブルクォートの両方に対応（エスケープも考慮）
+        # パターン: 'で囲まれた文字列 または "で囲まれた文字列
+        sql = re.sub(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"", replace_literal, sql)
+        
+        # ステップ2: SQL正規化（文字列リテラルが保護されているので安全）
         # 改行を空白に
         sql = sql.replace('\n', ' ')
         
         # 複数の空白を1つに
         sql = re.sub(r'\s+', ' ', sql)
         
-        # キーワードの大文字統一
+        # キーワードの大文字統一（文字列リテラルは既にプレースホルダーなので影響を受けない）
         sql = re.sub(r'\bas\b', 'AS', sql, flags=re.IGNORECASE)
         sql = re.sub(r'\band\b', 'AND', sql, flags=re.IGNORECASE)
         sql = re.sub(r'\bor\b', 'OR', sql, flags=re.IGNORECASE)
@@ -200,7 +215,13 @@ class QueryRewriter:
         sql = re.sub(r'(?<! )=(?! )', ' = ', sql)
         sql = sql.replace('! =', '!=')
         
+        # ステップ3: 文字列リテラルを復元
+        for i, literal in enumerate(string_literals):
+            placeholder = f"__STRING_LITERAL_{i}__"
+            sql = sql.replace(placeholder, literal)
+        
         return sql.strip()
+
     
     def _parse_sql_parts(self, sql: str) -> dict:
         """SQLを構成要素に分解
