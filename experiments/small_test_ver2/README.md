@@ -209,65 +209,87 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 5 --
 
 ---
 
-### ステップ6: 時間依存最適化の実行
+### ステップ6: MV最適化の実行
 
-タイムステップごとのクエリ頻度とマイグレーションコストを考慮して、ILP最適化を実行します。
+**最適化モード**を選択してILP最適化を実行します：
+- `dynamic` (デフォルト): 時間依存型最適化（マイグレーションコスト考慮）
+- `static`: 静的最適化（初期タイムステップのワークロードのみ）
 
 ```bash
-# フェーズ6: ILP最適化
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job
+# フェーズ6: ILP最適化（動的モード・デフォルト）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode dynamic
+
+# または静的モード
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 最適化結果（選択されたMV、コスト、マイグレーション分析など）
+- `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 動的最適化結果
+- `time_dependent_output/{query_set}/static_mv_optimization_result.json`: 静的最適化結果
 
 ---
 
-### ステップ7: マイグレーションSQL生成
+### ステップ7: MV作成SQL生成
 
-各タイムステップのマイグレーションに必要なSQLファイルを生成します。
+最適化結果に基づいてMV作成SQLを生成します。モードに応じて異なるSQLが生成されます。
 
 ```bash
-# フェーズ7: マイグレーションSQL生成
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job
+# フェーズ7: SQL生成（動的モード）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job --optimization-mode dynamic
+
+# または静的モード
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job --optimization-mode static
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/{query_set}/timestep_*_{timestep_name}.sql`: 各タイムステップのマイグレーションSQL
+- **動的モード**: `time_dependent_output/{query_set}/timestep_*_{timestep_name}.sql` - 各タイムステップのマイグレーションSQL
+- **静的モード**: `time_dependent_output/{query_set}/static_initial_mvs.sql` - 初期MV作成SQL
 
 ---
 
 ### ステップ8: クエリ書き換え
 
-各タイムステップごとに、選択されたMVを使用してクエリを書き換えます。
+選択されたMVを使用してクエリを書き換えます。モードに応じて異なる書き換えが行われます。
 
 ```bash
-# フェーズ8: 時間依存型クエリ書き換え
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job
+# フェーズ8: クエリ書き換え（動的モード）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job --optimization-mode dynamic
+
+# または静的モード
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job --optimization-mode static
 ```
 
 **生成されるファイル**:
-- `time_dependent_output/{query_set}/jobs/timestep_0_*/`: タイムステップ0の書き換えクエリ
-- `time_dependent_output/{query_set}/jobs/timestep_1_*/`: タイムステップ1の書き換えクエリ
-- `time_dependent_output/{query_set}/jobs/timestep_2_*/`: タイムステップ2の書き換えクエリ
+- **動的モード**: 
+  - `time_dependent_output/{query_set}/jobs/timestep_0_*/`: タイムステップ0の書き換えクエリ
+  - `time_dependent_output/{query_set}/jobs/timestep_1_*/`: タイムステップ1の書き換えクエリ
+  - `time_dependent_output/{query_set}/jobs/timestep_2_*/`: タイムステップ2の書き換えクエリ
+- **静的モード**:
+  - `time_dependent_output/{query_set}/jobs/rewritten_static/`: 静的MV用書き換えクエリ
 
 各フォルダには、全てのクエリ（113個）が書き換えられたSQLファイルとして保存されます。
-
 
 ---
 
 ### ステップ9: ベンチマーク実行
 
-各タイムステップのMV構成で書き換えられたクエリを実行し、性能を測定します。
+作成したMVと書き換えクエリを使用してベンチマークを実行し、性能を測定します。
+**注意**: `--benchmark-mode` 引数を使用します（`--optimization-mode`ではありません）。
 
 ```bash
 # フェーズ9: ベンチマーク実行（動的MVモード）
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode dynamic
+
+# または静的MVモード
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode static
+
+# またはベースライン（MVなし）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
 ```
 
-**実行モード**:
-- `dynamic`: 動的MV（デフォルト）- 各タイムステップでマイグレーションを実行してMVを更新
-- `static`: 静的MV - 最初のタイムステップのMVのみを作成し、全タイムステップで使用
+**ベンチマークモード**:
+- `dynamic`: 動的MV - 各タイムステップでマイグレーションを実行してMVを更新
+- `static`: 静的MV - 最初のタイムステップのMVのみを作成し、全タイムステップで使用  
 - `baseline`: ベースライン - MVを使用せず元のクエリを実行
 
 **生成されるファイル**:
@@ -288,10 +310,20 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --
 - **注意**: ベンチマーク実行時間には、最適化時間、SQL生成時間、クエリ書き換え時間は含まれません
 ### 全フェーズの一括実行
 
+`--optimization-mode` を指定して全フェーズを実行します。
+
 ```bash
-# 全フェーズを順番に実行
-python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job
+# 全フェーズを動的モードで実行（デフォルト）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode dynamic
+
+# または静的モードで実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode static
 ```
+
+**注意**: 
+- フェーズ6, 7, 8 では `--optimization-mode` (static/dynamic) を使用
+- フェーズ9 では `--benchmark-mode` (static/dynamic/baseline) を使用
+- `--phase all` 実行時は、指定した `--optimization-mode` がフェーズ6, 7, 8に適用されます
 
 ---
 

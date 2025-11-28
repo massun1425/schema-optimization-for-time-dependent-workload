@@ -1,3 +1,4 @@
+# サイズをサンプリングにより推定するコード
 import subprocess
 import json
 import sys

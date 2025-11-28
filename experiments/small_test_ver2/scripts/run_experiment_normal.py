@@ -575,9 +575,18 @@ class NormalModeExperiment:
             import traceback
             traceback.print_exc()
             return False
-    
-    def phase6_optimize(self):
-        """フェーズ6: ILP最適化（時間依存型・マイグレーションコスト考慮）"""
+        
+    def phase6_optimize(self, mode='dynamic'):
+        """フェーズ6: MV最適化
+        
+        Args:
+            mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        # 最初にモードで分岐
+        if mode == 'static':
+            return self.phase6b_optimize_static()
+        
+        # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
         
         if not self.pickle_path.exists():
@@ -826,8 +835,148 @@ class NormalModeExperiment:
         
         return enhanced
     
-    def phase7_generate_mv_sql(self):
-        """フェーズ7: タイムステップごとのマイグレーションSQL作成"""
+    def phase6b_optimize_static(self):
+        """フェーズ6b: 静的最適化（時間依存なし・初期タイムステップのみ）"""
+        self.print_header("静的最適化（初期タイムステップ）", 6.5)
+        
+        if not self.pickle_path.exists():
+            self.print_error(f"{self.pickle_path} が見つかりません")
+            return False
+            
+        if self.qp is None:
+            self.print_info(f"パース結果を読み込み中: {self.pickle_path}")
+            try:
+                with open(self.pickle_path, 'rb') as f:
+                    self.qp = pickle.load(f)
+            except Exception as e:
+                self.print_error(f"パース結果の読み込みに失敗: {e}")
+                return False
+
+        self.print_info("静的最適化（初期タイムステップのワークロードのみ）を実行")
+        phase_start = time.time()
+        
+        try:
+            from experiments.small_test_ver2.core.io_loaders import (
+                load_timesteps_and_frequencies,
+                parse_migration_costs_and_sizes,
+            )
+            from src.optimization.normal import NormalOptimizer
+            
+            # ストレージ予算
+            B_max = float(50*1024*1024)
+            
+            # タイムステップと頻度を読み込み
+            timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set)
+            
+            if not timesteps:
+                self.print_error("タイムステップ情報がありません")
+                return False
+                
+            # 初期タイムステップ（Timestep 0）の頻度を取得
+            initial_timestep = timesteps[0]
+            initial_frequencies = frequencies[initial_timestep]
+            self.print_info(f"初期タイムステップ: {initial_timestep}")
+            
+            # 頻度の次元調整
+            query_count = len(self.qp.u_ij)
+            if len(initial_frequencies) < query_count:
+                initial_frequencies.extend([1.0] * (query_count - len(initial_frequencies)))
+            else:
+                initial_frequencies = initial_frequencies[:query_count]
+                
+            # 重み付き効用を計算 (u_ij * frequency)
+            weighted_u_ij = []
+            for i in range(len(self.qp.u_ij)):
+                freq = initial_frequencies[i]
+                weighted_row = [u * freq for u in self.qp.u_ij[i]]
+                weighted_u_ij.append(weighted_row)
+            
+            # サイズデータの読み込み
+            _, b_j_from_migration = parse_migration_costs_and_sizes(
+                str(self.exp_dir), 
+                self.qp.node_list, 
+                self.query_set
+            )
+            
+            # NormalOptimizerの初期化
+            # m_costは0とする（マイグレーションコストを考慮しないため）
+            m_cost = [0.0] * len(self.qp.node_list)
+            
+            optimizer = NormalOptimizer(
+                qm=self.qp.qm, # Pass self.qp.qm (QueryManager) as qm
+                s_num=len(self.qp.node_list),
+                m_cost=m_cost,
+                node_list=self.qp.node_list,
+                B_max=B_max,
+                b_j=b_j_from_migration,
+                u_ij=weighted_u_ij,
+                X=self.qp.X,
+                q_s_list=[], # 使用しない
+                settings=self.settings
+            )
+            
+            # 最適化実行
+            self.print_info("最適化を実行中...")
+            result = optimizer.optimize()
+            
+            # 結果の整形
+            selected_mvs = [mv.node_id for mv in result.selected_views]
+            total_size = result.total_storage
+            
+            static_result = {
+                "algorithm": "static_normal",
+                "timestep": initial_timestep,
+                "selected_mvs": selected_mvs,
+                "mv_count": len(selected_mvs),
+                "total_size": total_size,
+                "storage_budget": B_max,
+                "utilization_percent": (total_size / B_max * 100) if B_max > 0 else 0,
+                "objective_value": result.total_utility,
+                "execution_time": result.execution_time
+            }
+            
+            self.print_success("静的最適化完了")
+            self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
+            self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
+            
+            # 結果保存
+            result_dir = self.exp_dir / "time_dependent_output" / self.query_set
+            result_dir.mkdir(parents=True, exist_ok=True)
+            result_file = result_dir / "static_mv_optimization_result.json"
+            
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(static_result, f, indent=2, ensure_ascii=False)
+            self.print_success(f"結果を {result_file} に保存")
+            
+            # SQL生成はPhase 7に移動
+            self.phase_times['phase6b_static_optimization'] = time.time() - phase_start
+            return True
+            
+        except Exception as e:
+            self.print_error(f"静的最適化に失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def phase7_generate_mv_sql(self, mode='dynamic'):
+        """フェーズ7: MV作成SQL生成
+        
+        Args:
+            mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        # Static mode: 静的最適化結果からSQL生成
+        if mode == 'static':
+            self.print_header("静的MV作成SQL生成", 7)
+            phase_start = time.time()
+            
+            success = self._generate_static_mv_sql()
+            
+            self.phase_times['phase7_static_sql_generation'] = time.time() - phase_start
+            if success:
+                self.print_info(f"  SQL生成時間: {self.phase_times['phase7_static_sql_generation']:.2f} 秒")
+            return success
+        
+        # Dynamic mode: タイムステップごとのマイグレーションSQL作成
         self.print_header("マイグレーションSQL作成", 7)
         
         # if self.qp is None:
@@ -974,8 +1123,95 @@ class NormalModeExperiment:
 
 
     
-    def phase8_rewrite_queries(self):
-        """フェーズ8: 時間依存型クエリ書き換え（タイムステップごと）"""
+    
+    def _generate_static_mv_sql(self):
+        """静的最適化結果からMV作成SQLを生成"""
+        try:
+            # 静的最適化結果を読み込み
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            if not result_file.exists():
+                self.print_error(f"静的最適化結果が見つかりません: {result_file}")
+                self.print_info("先にフェーズ6.5を実行してください")
+                return False
+            
+            with open(result_file, 'r', encoding='utf-8') as f:
+                static_result = json.load(f)
+            
+            selected_mvs = static_result.get('selected_mvs', [])
+            self.print_info(f"静的最適化結果を読み込み: {len(selected_mvs)}個のMV")
+            
+            # マイグレーションプランを読み込み
+            plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
+            if not plans_file.exists():
+                self.print_error(f"マイグレーションプランが見つかりません: {plans_file}")
+                self.print_info("先にフェーズ4を実行してください")
+                return False
+            
+            with open(plans_file, 'r', encoding='utf-8') as f:
+                migration_plans = json.load(f)
+            
+            # SQLステートメントを生成
+            sql_statements = []
+            sql_statements.append(f"-- =====================================================")
+            sql_statements.append(f"-- 静的最適化MV作成SQL")
+            sql_statements.append(f"-- 選択されたMV数: {len(selected_mvs)}")
+            sql_statements.append(f"-- =====================================================")
+            sql_statements.append(f"\\c {self.settings.database.database}")
+            sql_statements.append("")
+            
+            created_count = 0
+            for node_id in selected_mvs:
+                if node_id in migration_plans and "[]" in migration_plans[node_id]:
+                    sql = migration_plans[node_id]["[]"]
+                    if sql and sql != "NON_MIGRATE":
+                        sql_statements.append(f"-- MV: {node_id}")
+                        sql_statements.append(sql)
+                        sql_statements.append(f"ANALYZE {node_id};")
+                        sql_statements.append("")
+                        created_count += 1
+            
+            # SQLファイルを保存
+            sql_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_initial_mvs.sql"
+            sql_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(sql_file, 'w', encoding='utf-8') as f:
+                f.write("\n".join(sql_statements))
+            
+            self.print_success(f"静的MV作成SQLを生成: {sql_file}")
+            self.print_info(f"  作成するMV数: {created_count}")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"静的SQL生成に失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def phase8_rewrite_queries(self, mode='dynamic'):
+        """フェーズ8: クエリ書き換え
+        
+        Args:
+            mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        # 最初にモードで分岐
+        if mode == 'static':
+            # Static mode
+            self.print_header("クエリ書き換え（静的モード）", 8)
+            
+            static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            if not static_result_file.exists():
+                self.print_error("静的最適化結果が見つかりません")
+                self.print_info("先にフェーズ6を --optimization-mode static で実行してください")
+                return False
+            
+            self.print_info("静的最適化結果を使用してクエリを書き換えます。")
+            
+            phase_start = time.time()
+            success = self._rewrite_static_queries(static_result_file)
+            self.phase_times['phase8_rewrite_queries_static'] = time.time() - phase_start
+            
+            return success
+        
+        # 以下は dynamic モードの処理
         self.print_header("時間依存型クエリ書き換え", 8)
         
         # フェーズ時間計測開始
@@ -1061,8 +1297,7 @@ class NormalModeExperiment:
                 # Get usage positions from qm (which queries use this node?)
                 # For now, apply all MVs to all queries (safe but not optimal)
                 # TODO: Use actual usage information from query manager
-                usage_positions = [[i, 0] for i in range(len(query_files))]
-                
+                usage_positions = self.qp.qm.subquery_positions.get(node_id, [])
                 # Get create_sql from migration plans
                 create_sql = ""
                 if node_id in migration_plans:
@@ -1112,6 +1347,85 @@ class NormalModeExperiment:
         
         return True
     
+    def _rewrite_static_queries(self, result_file):
+        """静的最適化結果に基づいてクエリを書き換え"""
+        try:
+            from src.rewrite.query_rewriter import QueryRewriter
+            from src.core.models import MaterializedView
+            
+            # Load QueryParser if not already loaded
+            if self.qp is None:
+                self.print_info("QueryParserを読み込み中...")
+                if not self.pickle_path.exists():
+                    self.print_error("パース結果が見つかりません")
+                    return False
+                
+                with open(self.pickle_path, 'rb') as f:
+                    self.qp = pickle.load(f)
+            
+            with open(result_file, 'r', encoding='utf-8') as f:
+                result_data = json.load(f)
+            
+            selected_mvs = result_data.get('selected_mvs', [])
+            self.print_info(f"静的モード: {len(selected_mvs)}個のMVを使用してクエリを書き換え")
+            
+            # クエリファイル取得
+            query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
+            
+            # マイグレーションプラン読み込み
+            plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
+            if not plans_file.exists():
+                return
+                
+            with open(plans_file, 'r', encoding='utf-8') as f:
+                migration_plans = json.load(f)
+            
+            # MVオブジェクト作成
+            mv_objects = []
+            for node_id in selected_mvs:
+                # ノードインデックス検索
+                try:
+                    node_idx = self.qp.node_list.index(node_id)
+                    node_size = self.qp.b_j[node_idx] if node_idx < len(self.qp.b_j) else 0
+                except ValueError:
+                    continue
+                
+                create_sql = ""
+                if node_id in migration_plans and "[]" in migration_plans[node_id]:
+                    sql = migration_plans[node_id]["[]"]
+                    if sql and sql != "NON_MIGRATE":
+                        create_sql = sql
+                
+                mv = MaterializedView(
+                    view_id=f"mv_{node_id}",
+                    node_id=node_id,
+                    create_sql=create_sql,
+                    size=node_size,
+                    maintenance_cost=0.0,
+                    usage_positions=self.qp.qm.subquery_positions.get(node_id, [])
+                )
+                mv_objects.append(mv)
+            
+            # 書き換え実行
+            rewriter = QueryRewriter(self.settings)
+            rewritten_queries = rewriter.rewrite_queries(mv_objects)
+            
+            # 保存先
+            output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
+            output_dir.mkdir(parents=True, exist_ok=True)
+            
+            for query_id, rewritten_sql in rewritten_queries.items():
+                output_file = output_dir / f"{query_id}.sql"
+                with open(output_file, 'w', encoding='utf-8') as f:
+                    f.write(rewritten_sql)
+            
+            self.print_success(f"  静的モード用クエリを書き換え完了: {output_dir}")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"静的モード用クエリ書き換えに失敗: {e}")
+            return False
+
     def phase9_execute_benchmark(self, mode='dynamic'):
         """フェーズ9: 時間依存型ベンチマーク実行
         
@@ -1136,8 +1450,9 @@ class NormalModeExperiment:
         # モードに応じて最適化結果の読み込み要否を判定
         optimization_result = None
         migration_sql_dir = None
+        rewritten_queries_base_dir = None # Initialize here
         
-        if mode in ['dynamic', 'static']:
+        if mode == 'dynamic':
             # 最適化結果を読み込み
             result_file = self.exp_dir / "time_dependent_output" / self.query_set / "td_mv_optimization_result.json"
             
@@ -1148,22 +1463,50 @@ class NormalModeExperiment:
             
             with open(result_file, 'r', encoding='utf-8') as f:
                 optimization_result = json.load(f)
+                
+            migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set # This should point to the directory containing timestep_X_Y.sql
+            rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
             
-            # migration_analysisの存在確認
-            if 'migration_analysis' not in optimization_result:
-                self.print_error("時間依存型最適化結果ではありません")
+        elif mode == 'static':
+            # 静的最適化結果を読み込み
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            
+            if not result_file.exists():
+                self.print_error("静的最適化結果が見つかりません")
+                self.print_info("先にフェーズ6bを実行してください")
                 return False
-            
-            # マイグレーションSQLディレクトリ
+                
+            with open(result_file, 'r', encoding='utf-8') as f:
+                optimization_result = json.load(f)
+                
+            # 静的モード用の設定
+            # migration_sql_dir は static_initial_mvs.sql があるディレクトリ
             migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set
             
-            if not migration_sql_dir.exists() and mode == 'dynamic':
-                self.print_error(f"マイグレーションSQLディレクトリが見つかりません: {migration_sql_dir}")
-                self.print_info("先にフェーズ7を実行してください")
+            # 書き換え済みクエリのディレクトリ
+            rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
+            
+            if not rewritten_queries_base_dir.exists():
+                self.print_error(f"静的モード用クエリディレクトリが見つかりません: {rewritten_queries_base_dir}")
                 return False
+
+        elif mode == 'baseline':
+            # ベースラインモードでは最適化結果は不要だが、
+            # タイムステップと頻度情報を取得するためにダミーで読み込むか、
+            # あるいはoptimization_resultをNoneのままにする。
+            # ここではNoneのままにして、executorに直接オリジナルクエリを渡す。
+            optimization_result = None
+            migration_sql_dir = None # ベースラインではMV操作SQLは不要
+            rewritten_queries_base_dir = self.queries_dir # オリジナルクエリのディレクトリ
+            
+        # migration_sql_dirの存在確認 (dynamicモードのみ)
+        if mode == 'dynamic' and (not migration_sql_dir or not migration_sql_dir.exists()):
+            self.print_error(f"マイグレーションSQLディレクトリが見つかりません: {migration_sql_dir}")
+            self.print_info("先にフェーズ7を実行してください")
+            return False
         
         # 書き換えられたクエリファイルを使用
-        rewritten_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
+        # rewritten_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" # This line is now handled by rewritten_queries_base_dir
         
         # 元のクエリファイルリストを取得（クエリ名のリストとして使用）
         original_query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
@@ -1210,9 +1553,10 @@ class NormalModeExperiment:
                 benchmark_results = executor.execute_static_mv_benchmark(
                     optimization_result=optimization_result,
                     migration_sql_dir=migration_sql_dir,
-                    # query_files=query_files,
-                    rewritten_queries_base_dir = rewritten_base_dir,
+                    # query_files=query_files, # Not used directly, rewritten_queries_base_dir is used
+                    rewritten_queries_base_dir = rewritten_queries_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
+                    timesteps=timesteps, # Pass timesteps for static mode as well
                     timeout_minutes=30,
                     verbose=True
                 )
@@ -1221,8 +1565,8 @@ class NormalModeExperiment:
                 benchmark_results = executor.execute_time_dependent_benchmark(
                     optimization_result=optimization_result,
                     migration_sql_dir=migration_sql_dir,
-                    #query_files=query_files,
-                    rewritten_queries_base_dir = rewritten_base_dir,
+                    #query_files=query_files, # Not used directly, rewritten_queries_base_dir is used
+                    rewritten_queries_base_dir = rewritten_queries_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timeout_minutes=30,
                     verbose=True
@@ -1264,24 +1608,92 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_all_phases(self):
-        """全フェーズを順番に実行"""
-        self.print_header("小規模実験（通常モード） - 全フェーズ実行")
+    def run_post_optimization_phases(self, optimization_mode='dynamic'):
+        """最適化以降のフェーズを実行 (Phase 6-9)
+        
+        Args:
+            optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
+        
+        success = True
         
         # 全体の開始時刻を記録
         total_start_time = time.time()
         
-        phases = [
+        # 最適化フェーズ（モードに応じて選択）
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode))
+        
+        # SQL生成・クエリ書き換え・ベンチマークフェーズ
+        post_optimization_phases = [
+            (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
+            (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode)),
+        ]
+        
+        # 全フェーズをまとめる
+        phases = [optimization_phase] + post_optimization_phases
+        
+        for phase_num, phase_name, phase_func in phases:
+            try:
+                if not phase_func():
+                    self.print_error(f"フェーズ{phase_num}で失敗しました")
+                    return False
+            except Exception as e:
+                self.print_error(f"フェーズ{phase_num}でエラー発生: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+        
+        # 全体の実行時間を記録
+        total_elapsed = time.time() - total_start_time
+        
+        self.print_header("最適化以降のフェーズ完了")
+        self.print_success(f"総実行時間: {total_elapsed:.2f} 秒")
+        
+        if self.phase_times:
+            self.print_info("フェーズ別実行時間:")
+            for phase, elapsed in self.phase_times.items():
+                if phase in ['phase6_optimization', 'phase7_mv_sql_generation', 'phase8_query_rewriting', 'phase9_benchmark']:
+                    self.print_info(f"  {phase}: {elapsed:.2f} 秒")
+        
+        return True
+    
+    def run_all_phases(self, optimization_mode='dynamic'):
+        """全フェーズを順次実行
+        
+        Args:
+            optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+        """
+        self.print_header("小規模実験（通常モード） - 全フェーズ実行")
+        
+        success = True
+        
+        # 全体の開始時刻を記録
+        total_start_time = time.time()
+        
+        
+        # 基本フェーズ（モードに依存しない）
+        basic_phases = [
             (1, "EXPLAIN JSON生成", self.phase1_generate_explain_json),
             (2, "クエリパース", self.phase2_parse_queries),
             (3, "JSONノードID付加", self.phase3_annotate_json),
             (4, "マイグレーションプラン列挙", self.phase4_enumerate_migration_plans),
             (5, "マイグレーションコスト計算", self.phase5_calculate_migration_costs),
-            (6, "ILP最適化", self.phase6_optimize),
-            (7, "MV生成SQL作成", self.phase7_generate_mv_sql),
-            (8, "クエリ書き換え", self.phase8_rewrite_queries),
-            (9, "ベンチマーク実行", self.phase9_execute_benchmark),
         ]
+        
+        # 最適化フェーズ（モードに応じて選択）
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode))
+        
+        # SQL生成・クエリ書き換え・ベンチマークフェーズ
+        post_optimization_phases = [
+            (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
+            (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode)),
+        ]
+        
+        # 全フェーズをまとめる
+        phases = basic_phases + [optimization_phase] + post_optimization_phases
         
         for phase_num, phase_name, phase_func in phases:
             try:
@@ -1331,8 +1743,8 @@ def main():
         '--phase',
         type=str,
         default='all',
-        choices=['all', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
-        help='実行するフェーズ (all: 全実行, 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
+        choices=['all', 'post-opt', '0', '1', '2', '3', '4', '5', '6', '6.5', '7', '8', '9'],
+        help='実行するフェーズ (all: 全実行, post-opt: 最適化以降(6-9), 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 6.5: Static Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
     )
     parser.add_argument(
         '--config',
@@ -1353,13 +1765,22 @@ def main():
         choices=['dynamic', 'static', 'baseline'],
         help='ベンチマークモード (dynamic: マイグレーションあり, static: 最初のMVのみ, baseline: MVなし)'
     )
+    parser.add_argument(
+        '--optimization-mode',
+        type=str,
+        default='dynamic',
+        choices=['static', 'dynamic'],
+        help='最適化モード (static: 初期タイムステップのみ, dynamic: 時間依存型最適化)'
+    )
     
     args = parser.parse_args()
     
     exp = NormalModeExperiment(exp_dir=args.config, query_set=args.query_set)
     
     if args.phase == 'all':
-        success = exp.run_all_phases()
+        success = exp.run_all_phases(optimization_mode=args.optimization_mode)
+    elif args.phase == 'post-opt':
+        success = exp.run_post_optimization_phases(optimization_mode=args.optimization_mode)
     elif args.phase == '0':
         success = exp.phase0_setup()
     elif args.phase == '1':
@@ -1373,11 +1794,13 @@ def main():
     elif args.phase == '5':
         success = exp.phase5_calculate_migration_costs()
     elif args.phase == '6':
-        success = exp.phase6_optimize()
+        success = exp.phase6_optimize(mode=args.optimization_mode)
+    elif args.phase == '6.5':
+        success = exp.phase6b_optimize_static()
     elif args.phase == '7':
-        success = exp.phase7_generate_mv_sql()
+        success = exp.phase7_generate_mv_sql(mode=args.optimization_mode)
     elif args.phase == '8':
-        success = exp.phase8_rewrite_queries()
+        success = exp.phase8_rewrite_queries(mode=args.optimization_mode)
     elif args.phase == '9':
         success = exp.phase9_execute_benchmark(mode=args.benchmark_mode)
     else:
