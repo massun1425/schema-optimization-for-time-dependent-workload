@@ -62,6 +62,12 @@ class QueryManager:
         self.subquery_sizes: dict[str, int] = {}
         self.relation_tables: dict[str, str] = {}
         self.subquery_widths: dict[str, int] = {}
+        self.subquery_rows: dict[str, int] = {}  # ノードの推定行数
+        
+        # Index build cost for Index Scan nodes
+        # This is used for optimization phase to consider index creation cost
+        self.index_build_costs: dict[str, float] = {}  # node_id -> index build cost
+        self.requires_index_build: dict[str, bool] = {}  # node_id -> whether index is needed
 
     def _generate_unique_id(self, prefix: str) -> str:
         """Generate a unique ID for a query node.
@@ -95,11 +101,16 @@ class QueryManager:
         original_cost: float,  # EXPLAIN JSONの生のコスト
         size: int,
         width: int,
+        rows: int = 0,  # 推定行数（index build cost計算用）
+        index_build_cost_per_row: float = 1.0,  # 1行あたりのインデックス構築コスト
     ) -> str:
         """Process a leaf node (table scan).
 
         If a leaf node with the same properties already exists, returns its ID.
         Otherwise, creates a new leaf node and returns the new ID.
+
+        For Index Scan nodes, calculates and stores the index build cost
+        which is used in optimization phase.
 
         Args:
             operator_name: Operator type (e.g., 'Seq Scan', 'Index Scan')
@@ -111,6 +122,8 @@ class QueryManager:
             original_cost: Original cost from EXPLAIN JSON Total Cost
             size: Size of result set (rows * width)
             width: Width of result tuples in bytes
+            rows: Estimated number of rows (for index build cost calculation)
+            index_build_cost_per_row: Cost to insert one row into index (default: 1.0)
 
         Returns:
             Node ID for this leaf node
@@ -149,6 +162,27 @@ class QueryManager:
         self.subquery_sizes[node_id] = size
         self.relation_tables[node_id] = table_name
         self.subquery_widths[node_id] = width
+        
+        # Store row count
+        if rows > 0:
+            self.subquery_rows[node_id] = rows
+        elif width > 0:
+            self.subquery_rows[node_id] = size // width
+        else:
+            self.subquery_rows[node_id] = size
+        
+        # Calculate index build cost for Index Scan nodes
+        # Index Scan means the original query uses an index, so the MV should also have an index
+        is_index_scan = "Index" in operator_name and "Scan" in operator_name
+        self.requires_index_build[node_id] = is_index_scan
+        
+        if is_index_scan:
+            # Index build cost = insert_cost_per_row × number_of_rows
+            # This models building an index as inserting all rows
+            node_rows = self.subquery_rows[node_id]
+            self.index_build_costs[node_id] = index_build_cost_per_row * node_rows
+        else:
+            self.index_build_costs[node_id] = 0.0
 
         return node_id
 
@@ -325,6 +359,11 @@ class QueryManager:
             ValueError: If node type is invalid
         """
         if node["type"] == "leaf":
+            # Calculate rows from size/width if not provided
+            rows = node.get("rows", 0)
+            if rows == 0 and node["width"] > 0:
+                rows = node["size"] // node["width"]
+            
             return self.process_leaf_node(
                 node["operator"],
                 node["table"],
@@ -335,6 +374,7 @@ class QueryManager:
                 node.get("original_cost", node["cost"]),  # EXPLAIN JSONの生のコスト
                 node["size"],
                 node["width"],
+                rows=rows,
             )
         elif node["type"] == "non_leaf":
             # Recursively process children
@@ -348,7 +388,7 @@ class QueryManager:
                 additional_filters = node.get("additional_filters", [])
                 rows = node.get("rows", 0)
                 
-                return self.process_non_leaf_node_v2(
+                node_id = self.process_non_leaf_node_v2(
                     operator=node["operator"],
                     join_type=join_type,
                     child_node_ids=child_ids,
@@ -360,9 +400,14 @@ class QueryManager:
                     rows=rows,
                     width=node["width"],
                 )
+                
+                # Store row count for non-leaf nodes
+                self.subquery_rows[node_id] = rows
+                
+                return node_id
             else:
                 # Fallback to legacy processing for backward compatibility
-                return self.process_non_leaf_node(
+                node_id = self.process_non_leaf_node(
                     child_ids,
                     position,
                     node["cost"],
@@ -370,6 +415,14 @@ class QueryManager:
                     node["width"],
                     node.get("filter", ""),
                 )
+                
+                # Store row count for non-leaf nodes
+                rows = node.get("rows", 0)
+                if rows == 0 and node["width"] > 0:
+                    rows = node["size"] // node["width"]
+                self.subquery_rows[node_id] = rows
+                
+                return node_id
         else:
             raise ValueError(f"Invalid node type: {node.get('type')}")
 

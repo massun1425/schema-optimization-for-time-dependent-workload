@@ -78,6 +78,9 @@ class QueryParser:
         
         # Store processed query files
         self.query_files: list[str] = []
+        
+        # Index build costs for Index Scan nodes (used in optimization phase)
+        self.index_build_costs: list[float] = []
 
     def natural_sort_key(self, s: str) -> list:
         """Generate a key for natural sorting of strings with numbers.
@@ -1164,6 +1167,12 @@ class QueryParser:
             # Store original subquery costs (from EXPLAIN JSON Total Cost)
             # These are already preserved in qm.original_subquery_costs during processing
             self.original_subquery_costs = self.qm.original_subquery_costs
+            
+            # Store index build costs for each node (same order as node_list)
+            # This is used in optimization phase to consider index creation cost
+            self.index_build_costs = [
+                self.qm.index_build_costs.get(node_id, 0.0) for node_id in node_list
+            ]
             
             # Compute and store parsing statistics
             self.parse_statistics = self._compute_parse_statistics()
