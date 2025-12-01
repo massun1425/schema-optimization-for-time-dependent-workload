@@ -68,6 +68,7 @@ class MaterializedView:
         size: Storage size of the view in bytes
         maintenance_cost: Cost of maintaining the view during updates
         usage_positions: List of [query_id, position] where this view is used
+        index_sql: SQL statement to create index on the MV (if needed)
     """
 
     view_id: str
@@ -76,6 +77,7 @@ class MaterializedView:
     size: int
     maintenance_cost: float
     usage_positions: list[list[int]] = field(default_factory=list)
+    index_sql: str | None = None  # CREATE INDEX statement if needed
 
 
 @dataclass
@@ -116,6 +118,7 @@ class OptimizationResult:
                     "view_id": mv.view_id,
                     "node_id": mv.node_id,
                     "create_sql": mv.create_sql,  # ← SQLを保存
+                    "index_sql": mv.index_sql,  # ← インデックスSQLを保存
                     "size": mv.size,
                     "size_mb": round(mv.size / (1024 * 1024), 2),
                     "maintenance_cost": mv.maintenance_cost,

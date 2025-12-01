@@ -263,6 +263,57 @@ class QueryParser:
         
         return conditions
 
+    def _extract_columns_from_condition(
+        self, condition: str, alias: str
+    ) -> list[str]:
+        """Extract column names from an Index Cond expression.
+        
+        Parses expressions like:
+        - "(movie_id = mc.movie_id)" -> ["movie_id"]
+        - "(id = 1)" -> ["id"]
+        - "((status_id = 1) AND (type_id = 2))" -> ["status_id", "type_id"]
+        
+        Args:
+            condition: Index Cond expression string
+            alias: Table alias for the current node
+            
+        Returns:
+            List of column names that should be indexed
+        """
+        import re
+        
+        columns = []
+        
+        # Pattern to match column = value or column = alias.column
+        # Left side column (without alias prefix or with our alias)
+        patterns = [
+            # (column = value) or (column = alias.column)
+            rf'\(({alias}\.)?([\w_]+)\s*=',
+            # = alias.column (for right side of join)
+            rf'=\s*{alias}\.([\w_]+)\)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, condition)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # Get the column name (last non-empty group)
+                    col = [m for m in match if m and not m.endswith('.')]
+                    if col:
+                        columns.append(col[-1])
+                else:
+                    columns.append(match)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_columns = []
+        for col in columns:
+            if col not in seen:
+                seen.add(col)
+                unique_columns.append(col)
+        
+        return unique_columns
+
     def convert_node(
         self,
         node: dict[str, Any],
@@ -422,6 +473,15 @@ class QueryParser:
             else:
                 table = node.get("Relation Name", "")
                 alias = node.get("Alias", "")
+            
+            # Extract index columns for Index Scan nodes
+            index_columns = []
+            if "Index" in node["Node Type"] and "Scan" in node["Node Type"]:
+                # Get Index Cond and extract column names
+                if "Index Cond" in node:
+                    index_columns = self._extract_columns_from_condition(
+                        node["Index Cond"], alias
+                    )
 
             subquery_list.append(
                 {
@@ -434,6 +494,7 @@ class QueryParser:
                     "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
                     "size": node.get("Plan Rows", 0) * width,
                     "width": width,
+                    "index_columns": index_columns,  # インデックス対象カラム
                 }
             )
             order_list.append(order)

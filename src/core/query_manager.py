@@ -68,6 +68,10 @@ class QueryManager:
         # This is used for optimization phase to consider index creation cost
         self.index_build_costs: dict[str, float] = {}  # node_id -> index build cost
         self.requires_index_build: dict[str, bool] = {}  # node_id -> whether index is needed
+        
+        # Index information for CREATE INDEX generation
+        # Stores the columns that should be indexed for each node
+        self.index_columns: dict[str, list[str]] = {}  # node_id -> list of column names
 
     def _generate_unique_id(self, prefix: str) -> str:
         """Generate a unique ID for a query node.
@@ -103,6 +107,7 @@ class QueryManager:
         width: int,
         rows: int = 0,  # 推定行数（index build cost計算用）
         index_build_cost_per_row: float = 1.0,  # 1行あたりのインデックス構築コスト
+        index_columns: list[str] | None = None,  # インデックス対象のカラム名リスト
     ) -> str:
         """Process a leaf node (table scan).
 
@@ -124,6 +129,7 @@ class QueryManager:
             width: Width of result tuples in bytes
             rows: Estimated number of rows (for index build cost calculation)
             index_build_cost_per_row: Cost to insert one row into index (default: 1.0)
+            index_columns: List of column names to index (for Index Scan nodes)
 
         Returns:
             Node ID for this leaf node
@@ -181,6 +187,10 @@ class QueryManager:
             # This models building an index as inserting all rows
             node_rows = self.subquery_rows[node_id]
             self.index_build_costs[node_id] = index_build_cost_per_row * node_rows
+            
+            # Store index columns for CREATE INDEX generation
+            if index_columns:
+                self.index_columns[node_id] = index_columns
         else:
             self.index_build_costs[node_id] = 0.0
 
@@ -364,6 +374,9 @@ class QueryManager:
             if rows == 0 and node["width"] > 0:
                 rows = node["size"] // node["width"]
             
+            # Get index columns for Index Scan nodes
+            index_columns = node.get("index_columns", None)
+            
             return self.process_leaf_node(
                 node["operator"],
                 node["table"],
@@ -375,6 +388,7 @@ class QueryManager:
                 node["size"],
                 node["width"],
                 rows=rows,
+                index_columns=index_columns,
             )
         elif node["type"] == "non_leaf":
             # Recursively process children

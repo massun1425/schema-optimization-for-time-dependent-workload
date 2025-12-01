@@ -489,21 +489,29 @@ def run_ilp_optimization(
             
             # 各MVのSQLを生成
             sql_generation_log = []
+            index_count = 0
             for mv in result.selected_views:
                 try:
-                    # SQL生成
-                    create_sql = mv_generator.generate_mv_sql(mv.node_id)
+                    # MV作成SQLとインデックスSQLを生成
+                    create_sql, index_sql = mv_generator.generate_mv_and_index_sql(mv.node_id)
                     mv.create_sql = create_sql
+                    mv.index_sql = index_sql
+                    
+                    if index_sql:
+                        index_count += 1
                     
                     sql_generation_log.append({
                         "view_id": mv.view_id,
                         "node_id": mv.node_id,
                         "status": "SUCCESS",
-                        "sql_length": len(create_sql)
+                        "sql_length": len(create_sql),
+                        "has_index": index_sql is not None
                     })
                     
                     if verbose:
                         logger.info(f"Generated SQL for {mv.view_id} ({len(create_sql)} chars)")
+                        if index_sql:
+                            logger.info(f"  + Index: {index_sql[:60]}...")
                         
                 except Exception as e:
                     logger.error(f"Failed to generate SQL for {mv.view_id}: {e}")
@@ -530,11 +538,16 @@ def run_ilp_optimization(
                     sql_file = sql_dir / f"{mv.view_id}.sql"
                     with open(sql_file, 'w', encoding='utf-8') as f:
                         f.write(mv.create_sql)
+                        # インデックスSQLがあれば追記
+                        if mv.index_sql:
+                            f.write("\n\n-- Index for MV\n")
+                            f.write(mv.index_sql)
             
             # 更新されたresultを保存
             result.save_to_json(str(optimization_dir / "result.json"))
             
             logger.info(f"Generated SQL for {len([log for log in sql_generation_log if log['status'] == 'SUCCESS'])} MVs")
+            logger.info(f"Generated {index_count} index creation statements")
             logger.info(f"SQL generation time: {phase_times['sql_generation']:.2f} seconds")
             logger.info(f"SQL files saved to {sql_dir}")
         else:

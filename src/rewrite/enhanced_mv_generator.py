@@ -57,6 +57,51 @@ class EnhancedMVGenerator:
         else:
             logger.warning(f"Unknown node type: {node_id}")
             return ""
+    
+    def generate_index_sql(self, node_id: str) -> str | None:
+        """Generate CREATE INDEX SQL for a node if it requires an index.
+        
+        For leaf nodes that use Index Scan, generates a CREATE INDEX statement
+        for the MV based on the columns used in the original Index Cond.
+        
+        Args:
+            node_id: Node ID (leaf_X or non_leaf_X)
+            
+        Returns:
+            CREATE INDEX statement if index is needed, None otherwise
+        """
+        # Check if this node requires an index
+        if not self.qm.requires_index_build.get(node_id, False):
+            return None
+        
+        # Get the index columns
+        index_columns = self.qm.index_columns.get(node_id, [])
+        if not index_columns:
+            logger.warning(f"Node {node_id} requires index but no columns found")
+            return None
+        
+        # Generate index name: idx_<mv_name>_<column1>_<column2>...
+        column_suffix = "_".join(index_columns[:3])  # Limit to avoid too long names
+        index_name = f"idx_{node_id}_{column_suffix}"
+        
+        # Generate CREATE INDEX statement
+        columns_str = ", ".join(index_columns)
+        sql = f"CREATE INDEX {index_name} ON {node_id} ({columns_str});"
+        
+        return sql
+    
+    def generate_mv_and_index_sql(self, node_id: str) -> tuple[str, str | None]:
+        """Generate both MV creation SQL and INDEX creation SQL for a node.
+        
+        Args:
+            node_id: Node ID (leaf_X or non_leaf_X)
+            
+        Returns:
+            Tuple of (CREATE MATERIALIZED VIEW statement, CREATE INDEX statement or None)
+        """
+        mv_sql = self.generate_mv_sql(node_id)
+        index_sql = self.generate_index_sql(node_id)
+        return mv_sql, index_sql
 
     def generate_leaf_mv_sql(self, node_id: str) -> str:
         """Generate leaf MV creation SQL (Chapter 4).
