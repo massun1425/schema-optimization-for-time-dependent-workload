@@ -17,6 +17,7 @@ def initialize_session_state():
         'experiment_history': [],
         'selected_algorithms': ['normal', 'bigsubs', 'frequency'],
         'storage_limit_mb': 50,
+        'insert_queries': 1000,
         'enabled_phases': {
             'query_parsing': True,
             'optimization': True,
