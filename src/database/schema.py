@@ -79,6 +79,25 @@ class IndexInfo:
     index_type: str
 
 
+@dataclass
+class TableStatistics:
+    """Statistics for maintenance cost calculation.
+
+    Attributes:
+        table_name: Name of the table
+        row_count: Estimated number of rows (from pg_class.reltuples)
+        page_count: Number of pages (from pg_class.relpages)
+        has_unique_index: Whether the table has a primary key or unique index
+        avg_row_width: Average row width in bytes
+    """
+
+    table_name: str
+    row_count: int
+    page_count: int
+    has_unique_index: bool
+    avg_row_width: int = 0
+
+
 class SchemaManager:
     """Manages database schema information.
 
@@ -541,3 +560,219 @@ class SchemaManager:
         size = self.db.fetch_value(sql, default=0)
 
         return int(size) if size else 0
+
+    def get_all_table_statistics(self, schema: str | None = None) -> dict[str, TableStatistics]:
+        """Get statistics for all tables in a single query.
+
+        This method fetches row count, page count, and index information
+        for all tables at once, which is efficient for maintenance cost calculation.
+
+        Args:
+            schema: Schema name (defaults to instance schema)
+
+        Returns:
+            Dictionary mapping table names to TableStatistics objects
+
+        Examples:
+            >>> stats = schema_mgr.get_all_table_statistics()
+            >>> for name, stat in stats.items():
+            ...     print(f"{name}: {stat.row_count} rows, index={stat.has_unique_index}")
+        """
+        schema = schema or self.schema
+
+        sql = """
+            SELECT 
+                c.relname AS table_name,
+                GREATEST(c.reltuples::bigint, 0) AS row_count,
+                GREATEST(c.relpages, 0) AS page_count,
+                COALESCE(
+                    (SELECT TRUE FROM pg_index i 
+                     WHERE i.indrelid = c.oid 
+                     AND (i.indisprimary OR i.indisunique) 
+                     LIMIT 1), 
+                    FALSE
+                ) AS has_unique_index,
+                COALESCE(
+                    (SELECT AVG(a.attlen)::int 
+                     FROM pg_attribute a 
+                     WHERE a.attrelid = c.oid 
+                     AND a.attnum > 0 
+                     AND NOT a.attisdropped),
+                    8
+                ) AS avg_row_width
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = %s
+            AND c.relkind = 'r'
+        """
+
+        results = self.db.fetch_all(sql, (schema,))
+
+        table_stats = {}
+        for row in results:
+            table_name = row[0]
+            table_stats[table_name] = TableStatistics(
+                table_name=table_name,
+                row_count=int(row[1]) if row[1] else 0,
+                page_count=int(row[2]) if row[2] else 0,
+                has_unique_index=bool(row[3]),
+                avg_row_width=int(row[4]) if row[4] else 8
+            )
+
+        logger.debug(f"Fetched statistics for {len(table_stats)} tables")
+        return table_stats
+
+    def calculate_point_query_cost(
+        self, 
+        table_name: str, 
+        table_stats: dict[str, "TableStatistics"] | None = None,
+        random_page_cost: float = 4.0,
+        seq_page_cost: float = 1.0
+    ) -> float:
+        """Calculate the cost of identifying a single record in a table.
+
+        This estimates the cost of a point query (finding one row by key).
+        Uses index scan cost if a unique index exists, otherwise seq scan cost.
+
+        Args:
+            table_name: Name of the table
+            table_stats: Pre-fetched table statistics (optional)
+            random_page_cost: Cost of random page access (PostgreSQL default: 4.0)
+            seq_page_cost: Cost of sequential page access (PostgreSQL default: 1.0)
+
+        Returns:
+            Estimated cost for identifying one record
+
+        Examples:
+            >>> stats = schema_mgr.get_all_table_statistics()
+            >>> cost = schema_mgr.calculate_point_query_cost("users", stats)
+        """
+        import math
+
+        # Get statistics
+        if table_stats is None:
+            table_stats = self.get_all_table_statistics()
+
+        stats = table_stats.get(table_name)
+        if stats is None:
+            logger.warning(f"No statistics found for table {table_name}, using default")
+            return 1.0
+
+        rows = max(1, stats.row_count)
+        pages = max(1, stats.page_count)
+
+        if stats.has_unique_index:
+            # Index Scan: O(log n) with random I/O
+            # Cost = tree depth * random_page_cost + 1 (tuple access)
+            tree_depth = math.log2(rows) if rows > 1 else 1
+            return tree_depth * random_page_cost + 1.0
+        else:
+            # Sequential Scan: O(n) with sequential I/O
+            # Cost = pages * seq_page_cost
+            return pages * seq_page_cost
+
+    def get_table_update_frequencies(self, schema: str | None = None) -> dict[str, dict[str, int]]:
+        """Get update statistics for all tables from pg_stat_user_tables.
+
+        This fetches INSERT, UPDATE, DELETE counts since the last statistics reset.
+        These can be used to estimate relative update frequencies for maintenance cost.
+
+        Args:
+            schema: Schema name (defaults to instance schema)
+
+        Returns:
+            Dictionary mapping table names to update statistics:
+            {
+                'table_name': {
+                    'inserts': int,
+                    'updates': int,
+                    'deletes': int,
+                    'total': int  # sum of all operations
+                }
+            }
+
+        Examples:
+            >>> freq = schema_mgr.get_table_update_frequencies()
+            >>> for name, stats in freq.items():
+            ...     print(f"{name}: {stats['total']} total updates")
+        """
+        schema = schema or self.schema
+
+        sql = """
+            SELECT 
+                relname AS table_name,
+                COALESCE(n_tup_ins, 0) AS inserts,
+                COALESCE(n_tup_upd, 0) AS updates,
+                COALESCE(n_tup_del, 0) AS deletes
+            FROM pg_stat_user_tables
+            WHERE schemaname = %s
+        """
+
+        results = self.db.fetch_all(sql, (schema,))
+
+        update_freq = {}
+        for row in results:
+            table_name = row[0]
+            inserts = int(row[1])
+            updates = int(row[2])
+            deletes = int(row[3])
+            update_freq[table_name] = {
+                'inserts': inserts,
+                'updates': updates,
+                'deletes': deletes,
+                'total': inserts + updates + deletes
+            }
+
+        logger.debug(f"Fetched update frequencies for {len(update_freq)} tables")
+        return update_freq
+
+    def get_normalized_update_frequencies(
+        self, 
+        schema: str | None = None,
+        default_frequency: float = 1.0
+    ) -> dict[str, float]:
+        """Get normalized update frequencies for maintenance cost calculation.
+
+        Normalizes update counts so that the average frequency is 1.0.
+        Tables with no updates get the default_frequency.
+
+        Args:
+            schema: Schema name (defaults to instance schema)
+            default_frequency: Frequency to use for tables with no statistics
+
+        Returns:
+            Dictionary mapping table names to normalized frequencies
+
+        Examples:
+            >>> freq = schema_mgr.get_normalized_update_frequencies()
+            >>> # freq['orders'] might be 2.5 (2.5x average updates)
+            >>> # freq['products'] might be 0.3 (0.3x average updates)
+        """
+        raw_freq = self.get_table_update_frequencies(schema)
+
+        if not raw_freq:
+            return {}
+
+        # Calculate total updates
+        totals = [stats['total'] for stats in raw_freq.values()]
+        
+        if not totals or sum(totals) == 0:
+            # No update statistics, use default for all
+            return {name: default_frequency for name in raw_freq}
+
+        # Normalize: average = 1.0
+        avg_updates = sum(totals) / len(totals)
+        
+        normalized = {}
+        for table_name, stats in raw_freq.items():
+            if avg_updates > 0:
+                normalized[table_name] = stats['total'] / avg_updates
+            else:
+                normalized[table_name] = default_frequency
+            
+            # Ensure minimum frequency for tables with some updates
+            if normalized[table_name] == 0 and stats['total'] > 0:
+                normalized[table_name] = 0.01
+
+        logger.debug(f"Normalized update frequencies: {normalized}")
+        return normalized

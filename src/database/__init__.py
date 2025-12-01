@@ -34,7 +34,7 @@ Example:
 
 from .connection import DatabaseConnection, DatabaseConnectionPool
 from .mv_manager import MaterializedViewManager, ViewInfo
-from .schema import ColumnInfo, IndexInfo, SchemaManager, TableInfo
+from .schema import ColumnInfo, IndexInfo, SchemaManager, TableInfo, TableStatistics
 
 __all__ = [
     # Connection management
@@ -48,4 +48,5 @@ __all__ = [
     "TableInfo",
     "ColumnInfo",
     "IndexInfo",
+    "TableStatistics",
 ]
