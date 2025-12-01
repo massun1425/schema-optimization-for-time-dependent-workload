@@ -70,8 +70,16 @@ class EnhancedMVGenerator:
         Returns:
             CREATE INDEX statement if index is needed, None otherwise
         """
+        # Check if requires_index_build attribute exists (for backward compatibility with old cache)
+        if not hasattr(self.qm, 'requires_index_build'):
+            return None
+        
         # Check if this node requires an index
         if not self.qm.requires_index_build.get(node_id, False):
+            return None
+        
+        # Check if index_columns attribute exists (for backward compatibility with old cache)
+        if not hasattr(self.qm, 'index_columns'):
             return None
         
         # Get the index columns
