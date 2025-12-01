@@ -327,6 +327,27 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all 
 
 ---
 
+### 最適化以降の一括実行 (Post-Optimization)
+
+Phase 6（最適化）から Phase 9（ベンチマーク）までを一括実行します。
+コスト見積もり修正後の再最適化や、Static/Dynamicモードの比較に便利です。
+
+```bash
+# 最適化以降を動的モードで実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode dynamic
+
+# または静的モードで実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static
+```
+
+**実行されるフェーズ**:
+- Phase 6: MV最適化
+- Phase 7: MV生成SQL作成
+- Phase 8: クエリ書き換え
+- Phase 9: ベンチマーク実行
+
+---
+
 ## 入力ファイル
 
 時間依存最適化に必要な入力ファイルは以下の通りです：

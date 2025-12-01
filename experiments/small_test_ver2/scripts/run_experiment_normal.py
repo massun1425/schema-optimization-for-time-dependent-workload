@@ -528,7 +528,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self):
+    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=False):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -542,12 +542,24 @@ class NormalModeExperiment:
             return False
         
         try:
-            from experiments.small_test_ver2.migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
+            if use_neurocard:
+                from experiments.small_test_ver2.migration.neurocard_migration_cost_calculator import NeuroCardMigrationCostCalculator
+                CalculatorClass = NeuroCardMigrationCostCalculator
+                self.print_info("NeuroCardを使用してサイズ推定を行います")
+            elif use_sampling:
+                from experiments.small_test_ver2.migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
+                CalculatorClass = SamplingMigrationCostCalculator
+                self.print_info("サンプリングを使用してサイズ推定を行います")
+            else:
+                from experiments.small_test_ver2.migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
+                CalculatorClass = SimpleMigrationCostCalculator
+
             
             self.print_info("マイグレーションコストを計算中...")
             
-            # SimpleMigrationCostCalculatorのインスタンスを作成
-            calculator = SimpleMigrationCostCalculator(
+            # CostCalculatorのインスタンスを作成
+            calculator = CalculatorClass(
+
                 settings=self.settings,
                 query_set=self.query_set
             )
@@ -678,11 +690,15 @@ class NormalModeExperiment:
             self.print_info(f"  フェーズ実行時間: {self.phase_times['phase6_optimization']:.2f} 秒")
             
             # 結果を保存（run_time_dependent_with_migration.pyと同じディレクトリ構造）
+            # z_by_timestep と y_by_timestep は Phase 7以降で不要なので除外してファイルサイズを削減
+            result_to_save = {k: v for k, v in enhanced_result.items() 
+                            if k not in ('z_by_timestep', 'y_by_timestep')}
+            
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
             result_file = result_dir / "td_mv_optimization_result.json"
             with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(enhanced_result, f, indent=2, ensure_ascii=False)
+                json.dump(result_to_save, f, indent=2, ensure_ascii=False)
             self.print_success(f"結果を {result_file} に保存")
             
             # 結果をインスタンス変数に保存（後続フェーズで使用）
@@ -1031,6 +1047,14 @@ class NormalModeExperiment:
             output_dir = self.exp_dir / "time_dependent_output" / self.query_set
             output_dir.mkdir(parents=True, exist_ok=True)
             
+            # 既存のマイグレーションSQLファイルを削除
+            existing_sql_files = list(output_dir.glob("timestep_*.sql"))
+            if existing_sql_files:
+                self.print_info(f"既存のマイグレーションSQLファイルを削除中: {len(existing_sql_files)}個")
+                for sql_file in existing_sql_files:
+                    sql_file.unlink()
+                self.print_success("既存ファイルを削除完了")
+            
             # 各タイムステップについて処理
             migration_analysis = self.result['migration_analysis']
             timesteps = self.result['timesteps']
@@ -1171,8 +1195,15 @@ class NormalModeExperiment:
                         created_count += 1
             
             # SQLファイルを保存
-            sql_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_initial_mvs.sql"
-            sql_file.parent.mkdir(parents=True, exist_ok=True)
+            output_dir = self.exp_dir / "time_dependent_output" / self.query_set
+            output_dir.mkdir(parents=True, exist_ok=True)
+            sql_file = output_dir / "static_initial_mvs.sql"
+            
+            # 既存の静的MVファイルを削除
+            if sql_file.exists():
+                self.print_info("既存の静的MV SQLファイルを削除中")
+                sql_file.unlink()
+            
             with open(sql_file, 'w', encoding='utf-8') as f:
                 f.write("\n".join(sql_statements))
             
@@ -1509,7 +1540,11 @@ class NormalModeExperiment:
         # rewritten_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" # This line is now handled by rewritten_queries_base_dir
         
         # 元のクエリファイルリストを取得（クエリ名のリストとして使用）
-        original_query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", str(s))]
+            
+        original_query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: natural_sort_key(x.name))
         
         if not original_query_files:
             self.print_error("クエリファイルが見つかりません")
@@ -1772,6 +1807,16 @@ def main():
         choices=['static', 'dynamic'],
         help='最適化モード (static: 初期タイムステップのみ, dynamic: 時間依存型最適化)'
     )
+    parser.add_argument(
+        '--use-neurocard',
+        action='store_true',
+        help='NeuroCardを使用してコスト推定を行う'
+    )
+    parser.add_argument(
+        '--use-sampling',
+        action='store_true',
+        help='サンプリングを使用してコスト推定を行う'
+    )
     
     args = parser.parse_args()
     
@@ -1792,7 +1837,7 @@ def main():
     elif args.phase == '4':
         success = exp.phase4_enumerate_migration_plans()
     elif args.phase == '5':
-        success = exp.phase5_calculate_migration_costs()
+        success = exp.phase5_calculate_migration_costs(use_neurocard=args.use_neurocard, use_sampling=args.use_sampling)
     elif args.phase == '6':
         success = exp.phase6_optimize(mode=args.optimization_mode)
     elif args.phase == '6.5':

@@ -100,8 +100,13 @@ def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -
     if queries_data:
         logger.info(f"Loading frequencies from new format (queries-based)")
         
+        # Helper for natural sort (to match QueryParser's behavior)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", s)]
+        
         # Get all query names sorted naturally
-        query_names = sorted(queries_data.keys())
+        query_names = sorted(queries_data.keys(), key=natural_sort_key)
         
         # Get number of timesteps from first query's frequency list
         if not query_names:
