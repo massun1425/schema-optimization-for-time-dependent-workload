@@ -66,6 +66,8 @@ def test_optimization(algorithm: str = "bigsubs"):
             "X": qp.X,
             "q_s_list": qp.q_s_list,
             "settings": settings,
+            # インデックス作成コストを追加
+            "index_build_costs": getattr(qp, 'index_build_costs', None),
         }
         
         # BigSubs固有のパラメータを追加

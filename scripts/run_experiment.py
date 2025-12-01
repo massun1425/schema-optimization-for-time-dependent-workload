@@ -398,6 +398,8 @@ def run_ilp_optimization(
                 "q_s_list": qp.q_s_list,
                 "query_files": getattr(qp, 'query_files', []),  # Pass query files list
                 "settings": settings,
+                # インデックス作成コストを追加（Index Scanノードで使用）
+                "index_build_costs": getattr(qp, 'index_build_costs', None),
             }
             
             # 近傍探索を使うアルゴリズムの場合、追加パラメータを渡す

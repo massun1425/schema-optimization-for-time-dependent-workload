@@ -51,6 +51,8 @@ def test_mv_sql_generation(algorithm: str = "bigsubs", max_mvs: int = 10):
             "X": qp.X,
             "q_s_list": qp.q_s_list,
             "settings": settings,
+            # インデックス作成コストを追加
+            "index_build_costs": getattr(qp, 'index_build_costs', None),
         }
         
         if algorithm == "bigsubs":
