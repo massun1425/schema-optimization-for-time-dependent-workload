@@ -11,12 +11,19 @@
 
 import argparse
 import json
+import logging
 import pickle
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+# ロギング設定（プルーニングのログを表示するため）
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(levelname)s - %(name)s - %(message)s'
+)
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent.parent
@@ -588,11 +595,12 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
-    def phase6_optimize(self, mode='dynamic'):
+    def phase6_optimize(self, mode='dynamic', use_pruning=False):
         """フェーズ6: MV最適化
         
         Args:
             mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+            use_pruning: プルーニングを使用するかどうか (デフォルト: False)
         """
         # 最初にモードで分岐
         if mode == 'static':
@@ -617,6 +625,8 @@ class NormalModeExperiment:
                 return False
         
         self.print_info("時間依存型最適化（マイグレーションコスト考慮）を実行")
+        if use_pruning:
+            self.print_info("  プルーニングを使用します")
         
         # フェーズ時間計測開始
         phase_start = time.time()
@@ -656,6 +666,49 @@ class NormalModeExperiment:
             self.print_success(f"  {len(recipes)}個のMVのレシピを読み込み完了")
             self.print_success(f"  サイズデータをPhase 5のEXPLAIN結果から読み込み完了")
             
+            # プルーニングを実行（オプション）
+            pruning_info = None
+            candidate_filter = None
+            if use_pruning:
+                from experiments.small_test_ver2.core.cf_pruner import CFPruner
+                
+                self.print_info("CF Pruningを実行中...")
+                pruning_start = time.time()
+                
+                pruner = CFPruner(
+                    node_list=self.qp.node_list,
+                    u_ij=self.qp.u_ij,
+                    X=self.qp.X,
+                    b_j=b_j_from_migration,
+                    B_max=B_max,
+                    timesteps=timesteps,
+                    migration_recipes=recipes,
+                    query_frequency_by_timestep=frequencies,
+                    gurobi_output=0,  # プルーニング中は静かに
+                )
+                
+                promising_mvs = pruner.prune_candidates()
+                pruning_time = time.time() - pruning_start
+                
+                pruning_info = pruner.get_filtering_info(promising_mvs)
+                candidate_filter = promising_mvs
+                
+                self.print_success(
+                    f"  プルーニング完了 ({pruning_time:.2f}秒): "
+                    f"{pruning_info['promising_candidates']}/{pruning_info['total_candidates']} MVが有望 "
+                    f"({pruning_info['reduction_rate']*100:.1f}% 削減)"
+                )
+                
+                # 結果ディレクトリを準備
+                result_dir = self.exp_dir / "time_dependent_output" / self.query_set
+                result_dir.mkdir(parents=True, exist_ok=True)
+                
+                # プルーニング結果を保存
+                pruning_result_file = result_dir / "pruning_result.json"
+                with open(pruning_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(pruning_info, f, indent=2, ensure_ascii=False)
+                self.print_success(f"  プルーニング結果を {pruning_result_file} に保存")
+            
             # オプティマイザを初期化
             self.print_info("オプティマイザを初期化中...")
             optimizer = TimeDependentOptimizer(
@@ -670,6 +723,17 @@ class NormalModeExperiment:
                 gurobi_output=1,
             )
             
+            # プルーニング結果を適用（候補フィルタリング）
+            if candidate_filter is not None:
+                # TimeDependentOptimizerはinitialize_candidates()で候補を絞るが、
+                # その後にさらにフィルタリングすることはできない
+                # そのため、プルーニング結果をcand_jに直接適用
+                original_cand = optimizer.cand_j.copy()
+                optimizer.cand_j = [j for j in optimizer.cand_j if j in candidate_filter]
+                self.print_info(
+                    f"  候補をフィルタリング: {len(original_cand)} -> {len(optimizer.cand_j)}"
+                )
+            
             # 最適化を実行
             self.print_info("最適化を実行中...")
             result = optimizer.optimize(time_limit=300)
@@ -678,16 +742,25 @@ class NormalModeExperiment:
             self.print_info("マイグレーション分析を実行中...")
             enhanced_result = self._analyze_migration_transitions(result, recipes, b_j_from_migration, B_max)
             
+            # プルーニング情報を結果に追加
+            if pruning_info:
+                enhanced_result['pruning_info'] = pruning_info
+                enhanced_result['pruning_time_sec'] = pruning_time
+            
             # フェーズ時間を記録
-            self.phase_times['phase6_optimization'] = time.time() - phase_start
+            phase_time = time.time() - phase_start
+            self.phase_times['phase6_optimization'] = phase_time
+            enhanced_result['phase_time_sec'] = phase_time
             
             # 結果を表示
             self.print_success("最適化完了")
             self.print_info(f"  総目的関数値: {enhanced_result['objective']:.4f}")
             self.print_info(f"  ワークロードコスト: {enhanced_result['workload_cost']:.4f}")
             self.print_info(f"  マイグレーションコスト: {enhanced_result['migration_cost']:.4f}")
-            self.print_info(f"  実行時間: {enhanced_result['solve_time_sec']:.2f} 秒")
-            self.print_info(f"  フェーズ実行時間: {self.phase_times['phase6_optimization']:.2f} 秒")
+            self.print_info(f"  ILP求解時間: {enhanced_result['solve_time_sec']:.2f} 秒")
+            if pruning_info:
+                self.print_info(f"  プルーニング時間: {pruning_time:.2f} 秒")
+            self.print_info(f"  フェーズ総実行時間: {phase_time:.2f} 秒")
             
             # 結果を保存（run_time_dependent_with_migration.pyと同じディレクトリ構造）
             # z_by_timestep と y_by_timestep は Phase 7以降で不要なので除外してファイルサイズを削減
@@ -1817,6 +1890,11 @@ def main():
         action='store_true',
         help='サンプリングを使用してコスト推定を行う'
     )
+    parser.add_argument(
+        '--use-pruning',
+        action='store_true',
+        help='CF Pruningを使用してMV候補を削減する（大きなタイムステップ数の場合に推奨）'
+    )
     
     args = parser.parse_args()
     
@@ -1839,7 +1917,7 @@ def main():
     elif args.phase == '5':
         success = exp.phase5_calculate_migration_costs(use_neurocard=args.use_neurocard, use_sampling=args.use_sampling)
     elif args.phase == '6':
-        success = exp.phase6_optimize(mode=args.optimization_mode)
+        success = exp.phase6_optimize(mode=args.optimization_mode, use_pruning=args.use_pruning)
     elif args.phase == '6.5':
         success = exp.phase6b_optimize_static()
     elif args.phase == '7':

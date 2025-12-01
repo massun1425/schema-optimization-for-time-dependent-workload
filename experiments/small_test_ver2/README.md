@@ -226,6 +226,58 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --
 **生成されるファイル**:
 - `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 動的最適化結果
 - `time_dependent_output/{query_set}/static_mv_optimization_result.json`: 静的最適化結果
+- `time_dependent_output/{query_set}/pruning_result.json`: プルーニング結果（`--use-pruning`使用時）
+
+#### CF Pruning（候補削減）オプション
+
+大量のタイムステップ（20以上）を扱う場合、ILP最適化の計算時間が指数的に増加します。この問題を解決するため、**CF Pruning（Workload Summary Tree）**機能を使用できます。
+
+**CF Pruningとは**:
+- 論文Section 4.3で提案されている手法
+- 全タイムステップを階層的な二分木として表現
+- 各ノードで3タイムステップのみの小さなILPを解く
+- 全ノードで選ばれたMVの和集合を「有望な候補」として抽出
+- メイン最適化では有望な候補のみを使用（計算量を大幅削減）
+
+**使用方法**:
+```bash
+# プルーニングを使用（推奨: タイムステップ数 >= 20）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+    --phase 6 --query-set job --use-pruning
+
+# プルーニングなし（デフォルト: タイムステップ数 < 20）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+    --phase 6 --query-set job
+```
+
+**プルーニング結果の確認**:
+```bash
+# プルーニング統計を確認
+cat time_dependent_output/job/pruning_result.json
+```
+
+**出力例**:
+```json
+{
+  "total_candidates": 1256,
+  "promising_candidates": 320,
+  "filtered_out": 936,
+  "retention_rate": 0.255,
+  "reduction_rate": 0.745,
+  "promising_mv_names": ["node_123", "node_456", ...]
+}
+```
+
+**パフォーマンス**:
+- 5タイムステップ: プルーニングの効果は小さい（数秒の削減）
+- 20タイムステップ: 数分の削減が期待できる
+- 50タイムステップ: プルーニングなしでは実行不可能 → プルーニングで実行可能に
+
+**技術詳細**:
+- 新規ファイル: `core/workload_summary_tree.py`, `core/local_ilp_optimizer.py`, `core/cf_pruner.py`
+- ツリーノード数: 約 `2T - 1`（Tはタイムステップ数）
+- 各ノードの最適化: 3タイムステップのみ（高速）
+- 境界制約: 親ノードの解を子ノードに伝搬（整合性を保証）
 
 ---
 
@@ -377,6 +429,9 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post
 experiments/small_test_ver2/
 ├── core/                          # コア機能（必須）
 │   ├── time_dependent_optimizer.py    # ILP最適化クラス
+│   ├── workload_summary_tree.py       # Workload Summary Tree（プルーニング用）
+│   ├── local_ilp_optimizer.py         # Local ILP最適化（プルーニング用）
+│   ├── cf_pruner.py                   # CF Prunerクラス（プルーニング本体）
 │   ├── io_loaders.py                  # データロード
 │   └── small_test_schema_provider.py  # スキーマプロバイダー
 ├── migration/                     # マイグレーション関連
@@ -444,6 +499,9 @@ experiments/small_test_ver2/
 | ファイル名 | 場所 | 役割 |
 |-----------|------|------|
 | `time_dependent_optimizer.py` | `core/` | 時間依存ILP最適化クラス（変数・制約・目的関数の定義） |
+| `workload_summary_tree.py` | `core/` | Workload Summary Tree（プルーニング用二分木構造） |
+| `local_ilp_optimizer.py` | `core/` | Local ILP最適化（3タイムステップ限定、プルーニング用） |
+| `cf_pruner.py` | `core/` | CF Prunerクラス（候補削減アルゴリズムの実装） |
 | `io_loaders.py` | `core/` | データロードユーティリティ（pickle/JSONの読み込み） |
 | `small_test_schema_provider.py` | `core/` | スキーマ情報プロバイダー |
 
