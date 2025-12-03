@@ -31,6 +31,7 @@ class BaseILPOptimizer(ABC):
         u_ij: Utility matrix [query_id][node_id]
         X: Inclusive dependency matrix
         q_s_list: Binary matrix of query-to-subquery relationships
+        index_build_costs: Index build cost for each node (0 for non-Index Scan nodes)
         model: Gurobi optimization model
     """
 
@@ -47,6 +48,7 @@ class BaseILPOptimizer(ABC):
         q_s_list: list[list[int]],
         query_files: list[str] | None = None,
         settings: Settings | None = None,
+        index_build_costs: list[float] | None = None,
     ) -> None:
         """Initialize the optimizer.
 
@@ -62,6 +64,8 @@ class BaseILPOptimizer(ABC):
             q_s_list: Query-subquery relationship matrix
             query_files: List of query IDs corresponding to u_ij rows
             settings: Configuration settings (optional)
+            index_build_costs: Index build cost for each node (optional)
+                              Non-zero for Index Scan nodes that require index creation
         """
         self.qm = qm
         self.settings = settings or Settings()
@@ -75,6 +79,8 @@ class BaseILPOptimizer(ABC):
         self.q_s_list = q_s_list
         self.query_files = query_files or []
         self.model: gp.Model | None = None
+        # インデックス作成コスト（未指定の場合は全て0）
+        self.index_build_costs = index_build_costs or [0.0] * s_num
 
     def build_ilp_model(self, cand_i: list[int], cand_j: list[int]) -> tuple[dict, dict]:
         """Build the ILP model with decision variables and constraints.
@@ -276,7 +282,10 @@ class BaseILPOptimizer(ABC):
     def set_objective(self, y: dict, z: dict, cand_i: list[int], cand_j: list[int]) -> None:
         """Set the optimization objective function.
 
-        Maximizes: total utility - maintenance cost
+        Maximizes: total utility - maintenance cost - index build cost
+        
+        目的関数:
+          maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
 
         Args:
             y: Query-MV usage variables
@@ -286,11 +295,19 @@ class BaseILPOptimizer(ABC):
         """
         # Use full index ranges since y and z are defined for all i,j
         # The ILP solver will automatically handle variables with zero coefficients
+        utility_terms = gp.quicksum(
+            self.u_ij[i][j] * y[i, j] for i in range(len(self.u_ij)) for j in range(len(self.b_j))
+        )
+        
+        maintenance_terms = gp.quicksum(z[j] * self.m_cost[j] for j in range(len(self.b_j)))
+        
+        # インデックス作成コスト
+        index_build_terms = gp.quicksum(
+            z[j] * self.index_build_costs[j] for j in range(len(self.b_j))
+        )
+        
         self.model.setObjective(
-            gp.quicksum(
-                self.u_ij[i][j] * y[i, j] for i in range(len(self.u_ij)) for j in range(len(self.b_j))
-            )
-            - gp.quicksum(z[j] * self.m_cost[j] for j in range(len(self.b_j))),
+            utility_terms - maintenance_terms - index_build_terms,
             gp.GRB.MAXIMIZE,
         )
 
@@ -299,8 +316,14 @@ class BaseILPOptimizer(ABC):
     ) -> None:
         """Set objective function using candidate indices (original code behavior).
 
-        Maximizes: total utility - maintenance cost
+        Maximizes: total utility - maintenance cost - index build cost
         Only considers candidate queries and subqueries.
+        
+        目的関数:
+          maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
+        
+        インデックス作成コストは、MVがマテリアライズされる場合(z_j=1)に
+        そのMVがIndex Scanを使用する場合に発生する初期構築コスト。
 
         Args:
             y: Query-MV usage variables (indexed by candidate positions)
@@ -319,8 +342,17 @@ class BaseILPOptimizer(ABC):
         maintenance_terms = gp.quicksum(
             z[j] * self.m_cost[cand_j[j]] for j in range(len(cand_j))
         )
+        
+        # Build index build cost component using candidate indices
+        # インデックス作成コストは、MVをマテリアライズする際に一度だけ発生する初期コスト
+        index_build_terms = gp.quicksum(
+            z[j] * self.index_build_costs[cand_j[j]] for j in range(len(cand_j))
+        )
 
-        self.model.setObjective(utility_terms - maintenance_terms, gp.GRB.MAXIMIZE)
+        self.model.setObjective(
+            utility_terms - maintenance_terms - index_build_terms, 
+            gp.GRB.MAXIMIZE
+        )
 
     def solve_ilp(self, y: dict, z: dict) -> tuple[list[list[int]], list[int], float]:
         """Solve the ILP model and extract results.

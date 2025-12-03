@@ -51,6 +51,8 @@ def test_query_rewriting(algorithm: str = "bigsubs", num_queries: int = 3):
             "X": qp.X,
             "q_s_list": qp.q_s_list,
             "settings": settings,
+            # インデックス作成コストを追加
+            "index_build_costs": getattr(qp, 'index_build_costs', None),
         }
         
         if algorithm == "bigsubs":

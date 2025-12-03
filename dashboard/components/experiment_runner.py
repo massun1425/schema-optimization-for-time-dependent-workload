@@ -47,7 +47,7 @@ class ExperimentRunner:
             algorithms: List of algorithm names to run
             storage_limit_mb: Storage limit in MB
             phases: Dictionary of phase names to boolean (enabled/disabled)
-            settings: Additional settings dictionary
+            settings: Additional settings dictionary (includes 'insert_queries', 'output_dir', 'verbose')
             on_progress: Callback for progress updates
             on_complete: Callback for completion
             on_error: Callback for errors
@@ -84,6 +84,7 @@ class ExperimentRunner:
             self.log_queue.put(f"[INFO] Starting experiment...\n")
             self.log_queue.put(f"[INFO] Algorithms: {', '.join(algorithms)}\n")
             self.log_queue.put(f"[INFO] Storage limit: {storage_limit_mb} MB\n")
+            self.log_queue.put(f"[INFO] Insert queries: {settings.get('insert_queries', 1000)}\n")
             self.log_queue.put(f"[INFO] Enabled phases: {', '.join([k for k, v in phases.items() if v])}\n")
             self.log_queue.put(f"[DEBUG] Command: {' '.join(cmd)}\n")
             
@@ -150,6 +151,9 @@ class ExperimentRunner:
         # Add other settings
         if settings.get('output_dir'):
             cmd.extend(["--output", settings['output_dir']])
+            
+        if settings.get('insert_queries'):
+            cmd.extend(["--insert-queries", str(settings['insert_queries'])])
             
         if settings.get('verbose'):
             cmd.append("--verbose")

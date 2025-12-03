@@ -135,6 +135,13 @@ def parse_args():
     )
     
     parser.add_argument(
+        "--insert-queries",
+        type=int,
+        default=None,  # Will use config file value if not specified
+        help="Number of insert queries for maintenance cost calculation (overrides config file)"
+    )
+    
+    parser.add_argument(
         "--config",
         type=str,
         help="Path to configuration YAML file (overrides default)"
@@ -271,12 +278,41 @@ def run_ilp_optimization(
             logger.info("[1/6] Parsing queries...")
             pickle_path = Path(output_dir) / "qp_class.pkl"
             
+            # Check if we need to regenerate the cache
+            # Cache is invalidated if insert_queries setting has changed
+            cache_valid = False
+            cache_metadata_path = Path(output_dir) / "qp_class_metadata.json"
+            current_insert_queries = settings.optimization.insert_queries
+            
             if pickle_path.exists():
+                # Check if metadata exists and insert_queries matches
+                if cache_metadata_path.exists():
+                    try:
+                        import json
+                        with open(cache_metadata_path, 'r') as f:
+                            metadata = json.load(f)
+                        cached_insert_queries = metadata.get('insert_queries', 1000)
+                        if cached_insert_queries == current_insert_queries:
+                            cache_valid = True
+                            logger.info(f"Cache valid: insert_queries={current_insert_queries}")
+                        else:
+                            logger.info(f"Cache invalidated: insert_queries changed from {cached_insert_queries} to {current_insert_queries}")
+                    except Exception as e:
+                        logger.warning(f"Failed to read cache metadata: {e}")
+                else:
+                    logger.info("No cache metadata found, regenerating...")
+            
+            if cache_valid:
                 logger.info(f"Loading query parser from {pickle_path}")
                 import pickle
                 with open(pickle_path, 'rb') as f:
                     qp = pickle.load(f)
             else:
+                # Remove old cache if exists
+                if pickle_path.exists():
+                    pickle_path.unlink()
+                    logger.info(f"Removed old cache: {pickle_path}")
+                
                 logger.info("Creating QueryParser using src/ modules...")
                 qp = QueryParser(settings)
                 
@@ -290,6 +326,12 @@ def run_ilp_optimization(
                 import pickle
                 with open(pickle_path, 'wb') as f:
                     pickle.dump(qp, f)
+                
+                # Save cache metadata
+                import json
+                with open(cache_metadata_path, 'w') as f:
+                    json.dump({'insert_queries': current_insert_queries}, f)
+                logger.info(f"Saved cache metadata: insert_queries={current_insert_queries}")
                 
                 # Save parsing statistics
                 parse_stats = qp.get_parse_statistics()
@@ -356,6 +398,8 @@ def run_ilp_optimization(
                 "q_s_list": qp.q_s_list,
                 "query_files": getattr(qp, 'query_files', []),  # Pass query files list
                 "settings": settings,
+                # インデックス作成コストを追加（Index Scanノードで使用）
+                "index_build_costs": getattr(qp, 'index_build_costs', None),
             }
             
             # 近傍探索を使うアルゴリズムの場合、追加パラメータを渡す
@@ -445,21 +489,29 @@ def run_ilp_optimization(
             
             # 各MVのSQLを生成
             sql_generation_log = []
+            index_count = 0
             for mv in result.selected_views:
                 try:
-                    # SQL生成
-                    create_sql = mv_generator.generate_mv_sql(mv.node_id)
+                    # MV作成SQLとインデックスSQLを生成
+                    create_sql, index_sql = mv_generator.generate_mv_and_index_sql(mv.node_id)
                     mv.create_sql = create_sql
+                    mv.index_sql = index_sql
+                    
+                    if index_sql:
+                        index_count += 1
                     
                     sql_generation_log.append({
                         "view_id": mv.view_id,
                         "node_id": mv.node_id,
                         "status": "SUCCESS",
-                        "sql_length": len(create_sql)
+                        "sql_length": len(create_sql),
+                        "has_index": index_sql is not None
                     })
                     
                     if verbose:
                         logger.info(f"Generated SQL for {mv.view_id} ({len(create_sql)} chars)")
+                        if index_sql:
+                            logger.info(f"  + Index: {index_sql[:60]}...")
                         
                 except Exception as e:
                     logger.error(f"Failed to generate SQL for {mv.view_id}: {e}")
@@ -486,11 +538,16 @@ def run_ilp_optimization(
                     sql_file = sql_dir / f"{mv.view_id}.sql"
                     with open(sql_file, 'w', encoding='utf-8') as f:
                         f.write(mv.create_sql)
+                        # インデックスSQLがあれば追記
+                        if mv.index_sql:
+                            f.write("\n\n-- Index for MV\n")
+                            f.write(mv.index_sql)
             
             # 更新されたresultを保存
             result.save_to_json(str(optimization_dir / "result.json"))
             
             logger.info(f"Generated SQL for {len([log for log in sql_generation_log if log['status'] == 'SUCCESS'])} MVs")
+            logger.info(f"Generated {index_count} index creation statements")
             logger.info(f"SQL generation time: {phase_times['sql_generation']:.2f} seconds")
             logger.info(f"SQL files saved to {sql_dir}")
         else:
@@ -835,6 +892,10 @@ def main():
 
     # Use storage_limit from command line if specified, otherwise use config
     storage_limit = args.storage_limit if args.storage_limit is not None else settings.optimization.storage_limit_bytes
+    
+    # Use insert_queries from command line if specified, otherwise use config
+    if args.insert_queries is not None:
+        settings.optimization.insert_queries = args.insert_queries
 
     logger.info("=" * 60)
     logger.info("MV Query Optimization Experiment")
@@ -842,6 +903,7 @@ def main():
     logger.info(f"Algorithms: {', '.join(args.algorithms)}")
     logger.info(f"Output: {args.output}")
     logger.info(f"Storage Limit: {storage_limit / (1024*1024):.2f} MB")
+    logger.info(f"Insert Queries: {settings.optimization.insert_queries}")
     
     # Display execution phases
     phases_status = []

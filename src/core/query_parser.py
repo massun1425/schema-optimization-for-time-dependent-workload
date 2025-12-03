@@ -78,6 +78,9 @@ class QueryParser:
         
         # Store processed query files
         self.query_files: list[str] = []
+        
+        # Index build costs for Index Scan nodes (used in optimization phase)
+        self.index_build_costs: list[float] = []
 
     def natural_sort_key(self, s: str) -> list:
         """Generate a key for natural sorting of strings with numbers.
@@ -260,6 +263,57 @@ class QueryParser:
         
         return conditions
 
+    def _extract_columns_from_condition(
+        self, condition: str, alias: str
+    ) -> list[str]:
+        """Extract column names from an Index Cond expression.
+        
+        Parses expressions like:
+        - "(movie_id = mc.movie_id)" -> ["movie_id"]
+        - "(id = 1)" -> ["id"]
+        - "((status_id = 1) AND (type_id = 2))" -> ["status_id", "type_id"]
+        
+        Args:
+            condition: Index Cond expression string
+            alias: Table alias for the current node
+            
+        Returns:
+            List of column names that should be indexed
+        """
+        import re
+        
+        columns = []
+        
+        # Pattern to match column = value or column = alias.column
+        # Left side column (without alias prefix or with our alias)
+        patterns = [
+            # (column = value) or (column = alias.column)
+            rf'\(({alias}\.)?([\w_]+)\s*=',
+            # = alias.column (for right side of join)
+            rf'=\s*{alias}\.([\w_]+)\)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, condition)
+            for match in matches:
+                if isinstance(match, tuple):
+                    # Get the column name (last non-empty group)
+                    col = [m for m in match if m and not m.endswith('.')]
+                    if col:
+                        columns.append(col[-1])
+                else:
+                    columns.append(match)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_columns = []
+        for col in columns:
+            if col not in seen:
+                seen.add(col)
+                unique_columns.append(col)
+        
+        return unique_columns
+
     def convert_node(
         self,
         node: dict[str, Any],
@@ -419,6 +473,15 @@ class QueryParser:
             else:
                 table = node.get("Relation Name", "")
                 alias = node.get("Alias", "")
+            
+            # Extract index columns for Index Scan nodes
+            index_columns = []
+            if "Index" in node["Node Type"] and "Scan" in node["Node Type"]:
+                # Get Index Cond and extract column names
+                if "Index Cond" in node:
+                    index_columns = self._extract_columns_from_condition(
+                        node["Index Cond"], alias
+                    )
 
             subquery_list.append(
                 {
@@ -431,6 +494,7 @@ class QueryParser:
                     "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
                     "size": node.get("Plan Rows", 0) * width,
                     "width": width,
+                    "index_columns": index_columns,  # インデックス対象カラム
                 }
             )
             order_list.append(order)
@@ -582,6 +646,258 @@ class QueryParser:
             m_cost[i + len_leaf] *= insert_times
 
         return m_cost
+
+    def calculate_maintenance_cost_v2(
+        self,
+        table_stats: dict[str, Any],
+        update_frequency: dict[str, float] | None = None,
+        random_page_cost: float = 4.0,
+        seq_page_cost: float = 1.0,
+        write_cost_per_row: float = 1.0,
+    ) -> list[float]:
+        """Calculate maintenance cost using the three-component model from the paper.
+
+        This implements the IVM (Incremental View Maintenance) cost model:
+        1. Computing changes (差分計算コスト): cost(A ⋈ ΔB) ≈ cost_read(A ⋈ B) × |ΔB|/|B|
+        2. Identifying records (特定コスト): cost(σ_ΔV(V)) ≈ cost_read(σ_ΔB(B)) × fanout
+        3. Applying changes (適用コスト): cost(V - ΔV) ≈ cost_write(-ΔB) × fanout
+
+        The model assumes |ΔB| = 1 (single row update) and multiplies by update_frequency.
+
+        Args:
+            table_stats: Pre-fetched table statistics from SchemaManager.get_all_table_statistics()
+            update_frequency: Dict mapping table names to normalized update frequency
+                              (from SchemaManager.get_normalized_update_frequencies())
+            random_page_cost: PostgreSQL random_page_cost (default: 4.0)
+            seq_page_cost: PostgreSQL seq_page_cost (default: 1.0)
+            write_cost_per_row: Cost to write one row (default: 1.0)
+
+        Returns:
+            List of maintenance costs for each node (leaf nodes first, then non-leaf)
+        """
+        import math
+
+        len_leaf = len(self.qm.leaf_nodes_map)
+        len_non_leaf = len(self.qm.non_leaf_nodes_map)
+        m_cost = [0.0] * (len_leaf + len_non_leaf)
+
+        # Get all table names
+        all_tables = set()
+        for node_id in self.qm.relation_tables:
+            all_tables.add(self.qm.relation_tables[node_id])
+        
+        # Default: uniform update frequency
+        if update_frequency is None:
+            update_frequency = {t: 1.0 for t in all_tables}
+
+        # Calculate cost for leaf nodes
+        for i in range(len_leaf):
+            node_id = f"leaf_{i + 1}"
+            table_name = self.qm.relation_tables.get(node_id)
+            
+            if not table_name or table_name not in table_stats:
+                continue
+
+            stats = table_stats[table_name]
+            freq = update_frequency.get(table_name, 1.0)
+            
+            if freq == 0:
+                continue
+
+            # For leaf nodes (single table), fanout = 1
+            base_rows = max(1, stats.row_count)
+            
+            # |ΔB| = 1 (single row update per the paper's model)
+            delta_rows = 1
+
+            # 1. Computing changes: cost_read(query) × |ΔB|/|B|
+            full_cost = self.qm.subquery_costs.get(node_id, 1.0)
+            compute_cost = full_cost * (delta_rows / base_rows)
+
+            # 2. Identifying records: cost to find the row to update
+            # For leaf nodes, this is just the point query cost (no fanout needed)
+            if stats.has_unique_index:
+                tree_depth = math.log2(base_rows) if base_rows > 1 else 1
+                identify_cost = tree_depth * random_page_cost + 1.0
+            else:
+                identify_cost = stats.page_count * seq_page_cost
+
+            # 3. Applying changes: write cost for 1 row
+            apply_cost = write_cost_per_row
+
+            # Total = single update cost × update frequency
+            single_update_cost = compute_cost + identify_cost + apply_cost
+            m_cost[i] = single_update_cost * freq
+
+        # Calculate cost for non-leaf nodes (joins)
+        for i in range(len_non_leaf):
+            node_id = f"non_leaf_{i + 1}"
+            involved_tables = self.search_leaf_node(node_id)
+            
+            if not involved_tables:
+                continue
+
+            total_cost = 0.0
+            
+            # For each base table that could be updated
+            for table_name in involved_tables:
+                if table_name not in table_stats:
+                    continue
+
+                stats = table_stats[table_name]
+                freq = update_frequency.get(table_name, 1.0)
+                
+                if freq == 0:
+                    continue
+
+                base_rows = max(1, stats.row_count)
+                
+                # |ΔB| = 1 (single row update)
+                delta_rows = 1
+
+                # Calculate fanout: |V| / |B|
+                # How many view rows are affected by updating 1 row in base table
+                view_rows = self.qm.subquery_rows.get(node_id, base_rows)
+                fanout = max(1.0, view_rows / base_rows)
+
+                # 1. Computing changes: cost(A ⋈ ΔB) ≈ cost_read(A ⋈ B) × |ΔB|/|B|
+                full_join_cost = self.qm.subquery_costs.get(node_id, 1.0)
+                compute_cost = full_join_cost * (delta_rows / base_rows)
+
+                # 2. Identifying records: cost_read(σ_ΔB(B)) × fanout
+                # Point query cost on base table, multiplied by fanout
+                if stats.has_unique_index:
+                    tree_depth = math.log2(base_rows) if base_rows > 1 else 1
+                    base_identify_cost = tree_depth * random_page_cost + 1.0
+                else:
+                    base_identify_cost = stats.page_count * seq_page_cost
+                
+                identify_cost = base_identify_cost * fanout
+
+                # 3. Applying changes: cost_write(-ΔB) × fanout
+                # Write cost for fanout rows (1 base row affects fanout view rows)
+                apply_cost = write_cost_per_row * fanout
+
+                # Single update cost for this table
+                single_update_cost = compute_cost + identify_cost + apply_cost
+                
+                # Multiply by update frequency for this table
+                total_cost += single_update_cost * freq
+
+            m_cost[i + len_leaf] = total_cost
+
+        return m_cost
+
+    def get_maintenance_cost_breakdown(
+        self,
+        node_id: str,
+        table_stats: dict[str, Any],
+        update_frequency: dict[str, float] | None = None,
+        random_page_cost: float = 4.0,
+        seq_page_cost: float = 1.0,
+        write_cost_per_row: float = 1.0,
+    ) -> dict[str, dict[str, float]]:
+        """Get detailed breakdown of maintenance cost for a specific node.
+
+        This follows the paper's model with |ΔB| = 1 (single row update).
+
+        Args:
+            node_id: Node ID (e.g., 'leaf_1', 'non_leaf_3')
+            table_stats: Pre-fetched table statistics
+            update_frequency: Dict mapping table names to update frequency
+            random_page_cost: PostgreSQL random_page_cost
+            seq_page_cost: PostgreSQL seq_page_cost
+            write_cost_per_row: Cost per row write
+
+        Returns:
+            Dictionary with breakdown per table:
+            {
+                'table_name': {
+                    'compute_cost': float,
+                    'identify_cost': float,
+                    'apply_cost': float,
+                    'fanout': float,
+                    'update_frequency': float,
+                    'single_update_cost': float,
+                    'total': float  (single_update_cost × update_frequency)
+                }
+            }
+        """
+        import math
+
+        result = {}
+        
+        # Default frequency
+        if update_frequency is None:
+            update_frequency = {}
+        
+        if node_id.startswith('leaf_'):
+            table_name = self.qm.relation_tables.get(node_id)
+            if table_name and table_name in table_stats:
+                stats = table_stats[table_name]
+                base_rows = max(1, stats.row_count)
+                freq = update_frequency.get(table_name, 1.0)
+
+                # |ΔB| = 1
+                full_cost = self.qm.subquery_costs.get(node_id, 1.0)
+                compute_cost = full_cost * (1 / base_rows)
+
+                if stats.has_unique_index:
+                    tree_depth = math.log2(base_rows) if base_rows > 1 else 1
+                    identify_cost = tree_depth * random_page_cost + 1.0
+                else:
+                    identify_cost = stats.page_count * seq_page_cost
+
+                apply_cost = write_cost_per_row
+                single_update_cost = compute_cost + identify_cost + apply_cost
+
+                result[table_name] = {
+                    'compute_cost': compute_cost,
+                    'identify_cost': identify_cost,
+                    'apply_cost': apply_cost,
+                    'fanout': 1.0,
+                    'update_frequency': freq,
+                    'single_update_cost': single_update_cost,
+                    'total': single_update_cost * freq
+                }
+        else:
+            involved_tables = self.search_leaf_node(node_id)
+            view_rows = self.qm.subquery_rows.get(node_id, 1)
+            
+            for table_name in involved_tables:
+                if table_name not in table_stats:
+                    continue
+
+                stats = table_stats[table_name]
+                base_rows = max(1, stats.row_count)
+                fanout = max(1.0, view_rows / base_rows)
+                freq = update_frequency.get(table_name, 1.0)
+
+                # |ΔB| = 1
+                full_join_cost = self.qm.subquery_costs.get(node_id, 1.0)
+                compute_cost = full_join_cost * (1 / base_rows)
+
+                if stats.has_unique_index:
+                    tree_depth = math.log2(base_rows) if base_rows > 1 else 1
+                    base_identify = tree_depth * random_page_cost + 1.0
+                else:
+                    base_identify = stats.page_count * seq_page_cost
+
+                identify_cost = base_identify * fanout
+                apply_cost = write_cost_per_row * fanout
+                single_update_cost = compute_cost + identify_cost + apply_cost
+
+                result[table_name] = {
+                    'compute_cost': compute_cost,
+                    'identify_cost': identify_cost,
+                    'apply_cost': apply_cost,
+                    'fanout': fanout,
+                    'update_frequency': freq,
+                    'single_update_cost': single_update_cost,
+                    'total': single_update_cost * freq
+                }
+
+        return result
 
     def set_inclusive_dependency(
         self, X: list[list[int]] | None, j: int, parent: str | None = None
@@ -912,6 +1228,12 @@ class QueryParser:
             # Store original subquery costs (from EXPLAIN JSON Total Cost)
             # These are already preserved in qm.original_subquery_costs during processing
             self.original_subquery_costs = self.qm.original_subquery_costs
+            
+            # Store index build costs for each node (same order as node_list)
+            # This is used in optimization phase to consider index creation cost
+            self.index_build_costs = [
+                self.qm.index_build_costs.get(node_id, 0.0) for node_id in node_list
+            ]
             
             # Compute and store parsing statistics
             self.parse_statistics = self._compute_parse_statistics()

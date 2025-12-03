@@ -107,6 +107,22 @@ with tab1:
     
     st.markdown("---")
     
+    # Insert Query configuration
+    st.markdown("### 📝 Insert Query Configuration")
+    insert_queries = st.slider(
+        "Number of Insert Queries",
+        min_value=100,
+        max_value=10000,
+        value=get_session_value('insert_queries', 1000),
+        step=100,
+        help="Number of insert queries for maintenance cost calculation"
+    )
+    set_session_value('insert_queries', insert_queries)
+    
+    st.info(f"📝 Insert queries set to: **{insert_queries:,}** queries")
+    
+    st.markdown("---")
+    
     # Phase selection
     st.markdown("### 🔧 Execution Phases")
     st.markdown("Select which phases to execute:")
@@ -186,6 +202,7 @@ with tab1:
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'algorithms': selected_algorithms,
                     'storage_limit': storage_limit_mb,
+                    'insert_queries': get_session_value('insert_queries', 1000),
                     'phases': enabled_phases,
                     'status': 'running'
                 }
@@ -210,7 +227,8 @@ with tab1:
                 # Start experiment in background
                 settings_dict = {
                     'output_dir': output_dir,
-                    'verbose': verbose
+                    'verbose': verbose,
+                    'insert_queries': get_session_value('insert_queries', 1000)
                 }
                 
                 try:
@@ -237,6 +255,7 @@ with tab1:
             config = {
                 'algorithms': selected_algorithms,
                 'storage_limit_mb': storage_limit_mb,
+                'insert_queries': get_session_value('insert_queries', 1000),
                 'enabled_phases': enabled_phases,
                 'output_dir': output_dir,
                 'verbose': verbose
@@ -263,6 +282,9 @@ with tab1:
                     if 'storage_limit_mb' in config:
                         set_session_value('storage_limit_mb', config['storage_limit_mb'])
                         loaded_items.append(f"Storage: {config['storage_limit_mb']}MB")
+                    if 'insert_queries' in config:
+                        set_session_value('insert_queries', config['insert_queries'])
+                        loaded_items.append(f"Insert Queries: {config['insert_queries']:,}")
                     if 'enabled_phases' in config:
                         set_session_value('enabled_phases', config['enabled_phases'])
                         enabled_count = sum(config['enabled_phases'].values())
@@ -378,9 +400,11 @@ with tab3:
                 col1, col2 = st.columns(2)
                 
                 with col1:
+                    insert_q = exp.get('insert_queries', 1000)
                     st.markdown(f"""
                     **Algorithms:** {', '.join(exp['algorithms'])}  
                     **Storage Limit:** {exp['storage_limit']} MB  
+                    **Insert Queries:** {insert_q:,}  
                     **Status:** {exp['status']}
                     """)
                 
