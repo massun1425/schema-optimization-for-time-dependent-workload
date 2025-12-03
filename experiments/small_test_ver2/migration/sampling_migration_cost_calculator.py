@@ -20,7 +20,7 @@ class SamplingMigrationCostCalculator:
         ("name", "n")
     ]
 
-    SAMPLING_RATE = 0.005
+    SAMPLING_RATE = 0.001
     SCALE_FACTOR = 1.0 / SAMPLING_RATE
     OVERHEAD_MULTIPLIER = 1.2
 

@@ -127,34 +127,78 @@ class LocalILPOptimizer:
         return candidates
     
     def _build_variables(self) -> None:
-        """Create all Gurobi variables."""
+        """Create all Gurobi variables, handling fixed MVs as constants."""
         m = self.model
         assert m is not None
         
         logger.debug("Building variables for LocalILP...")
         
+        # Track counts
+        var_count = 0
+        fixed_count = 0
+        
         # Create variables in same order as TimeDependentOptimizer
         for t in range(self.T):
-            for j in self.cand_j:
-                # z[j,t]: MV j exists at time t
-                self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
-                
-                # c[j,t]: MV j is created at time t
-                self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
-                
-                # a[j,t,k]: recipe k is used for MV j at time t
-                recipes = self.recipes.get(j, [(tuple(), 0.0)])
-                for k_idx in range(len(recipes)):
-                    self.a[j, t, k_idx] = m.addVar(vtype=gp.GRB.BINARY, name=f"a_{j}_{t}_{k_idx}")
+            # Check if this timestep is fixed
+            global_t = self.timestep_indices[t]
+            is_fixed_t = global_t in self.fixed_mvs
+            fixed_set = self.fixed_mvs.get(global_t, set())
             
-            # y[i,j,t]: query i uses MV j at time t
-            for i in range(self.I):
-                for j in self.cand_j:
-                    self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
+            for j in self.cand_j:
+                # Determine z[j,t]
+                z_val = None
+                if is_fixed_t:
+                    # If fixed, z is 1 if in set, else 0
+                    z_val = 1 if j in fixed_set else 0
+                    self.z[j, t] = z_val
+                    fixed_count += 1
+                else:
+                    # Variable
+                    self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
+                    var_count += 1
+                
+                # Determine c[j,t], a[j,t,k], y[i,j,t]
+                # Optimization: If z[j,t] is fixed to 0, then c, a, y must be 0
+                if z_val == 0:
+                    self.c[j, t] = 0
+                    recipes = self.recipes.get(j, [(tuple(), 0.0)])
+                    for k_idx in range(len(recipes)):
+                        self.a[j, t, k_idx] = 0
+                    for i in range(self.I):
+                        self.y[i, j, t] = 0
+                else:
+                    # If z is 1 or variable, we generally need variables for c, a, y
+                    # (c could be fixed if z[t-1] is known, but let's keep logic simple)
+                    
+                    # c[j,t]
+                    self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
+                    var_count += 1
+                    
+                    # a[j,t,k]
+                    recipes = self.recipes.get(j, [(tuple(), 0.0)])
+                    for k_idx in range(len(recipes)):
+                        self.a[j, t, k_idx] = m.addVar(vtype=gp.GRB.BINARY, name=f"a_{j}_{t}_{k_idx}")
+                        var_count += 1
+                    
+                    # y[i,j,t]
+                    for i in range(self.I):
+                        self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
+                        var_count += 1
         
         m.update()
-        logger.debug(f"Created {len(self.y) + len(self.z) + len(self.c) + len(self.a)} variables")
-    
+        logger.debug(f"Created {var_count} variables (skipped {fixed_count} fixed z-vars + associated y/c/a)")
+
+    def _add_safe_constr(self, constr, name: str) -> None:
+        """Add constraint to model only if it's not trivially True."""
+        # If constraint evaluates to bool (e.g. 0 <= 1), it's a constant check
+        if isinstance(constr, bool):
+            if not constr:
+                logger.error(f"Infeasible constant constraint: {name}")
+            return
+        
+        # Otherwise it's a Gurobi TempConstr
+        self.model.addConstr(constr, name=name)
+
     def _add_usage_and_storage_constraints(self) -> None:
         """Add constraints for MV usage, storage budget, and overlap exclusion."""
         m = self.model
@@ -164,35 +208,36 @@ class LocalILPOptimizer:
         constraint_count = 0
         
         for t in range(self.T):
-            # Removed: "at most one MV per query" constraint (not needed per time_dependent_optimizer)
-            
             for i in range(self.I):
                 for j in self.cand_j:
                     # Usage implies materialization (y[i,j,t] <= z[j,t])
-                    m.addConstr(
+                    # If y=0 and z=0, 0<=0 (True). If y var and z=1, y<=1.
+                    self._add_safe_constr(
                         self.y[i, j, t] <= self.z[j, t],
                         name=f"use_le_mat_{i}_{j}_{t}"
                     )
                     constraint_count += 1
                     
                     # Inclusion/overlap exclusion
-                    m.addConstr(
-                        self.y[i, j, t] + gp.quicksum(
-                            self.y[i, u, t] * self.X[j][u] 
-                            for u in self.cand_j if u != j
-                        ) <= 1,
+                    # y[i, j, t] + sum(...) <= 1
+                    lhs = self.y[i, j, t] + gp.quicksum(
+                        self.y[i, u, t] * self.X[j][u] 
+                        for u in self.cand_j if u != j
+                    )
+                    self._add_safe_constr(
+                        lhs <= 1,
                         name=f"inclusive_excl_{i}_{j}_{t}"
                     )
                     constraint_count += 1
             
             # Storage budget constraint
-            m.addConstr(
+            self._add_safe_constr(
                 gp.quicksum(self.b_j[j] * self.z[j, t] for j in self.cand_j) <= self.B_max,
                 name=f"storage_{t}"
             )
             constraint_count += 1
         
-        logger.debug(f"Added {constraint_count} usage/storage constraints")
+        logger.debug(f"Added usage/storage constraints")
     
     def _add_creation_and_recipe_constraints(self) -> None:
         """Add constraints for MV creation flags and recipe selection."""
@@ -200,89 +245,67 @@ class LocalILPOptimizer:
         assert m is not None
         
         logger.debug("Adding creation and recipe constraints...")
-        constraint_count = 0
         
         for t in range(self.T):
             for j in self.cand_j:
                 recipes = self.recipes.get(j, [(tuple(), 0.0)])
                 
                 # Exactly one recipe if created
-                m.addConstr(
+                # sum(a) == c
+                self._add_safe_constr(
                     gp.quicksum(self.a[j, t, k] for k in range(len(recipes))) == self.c[j, t],
                     name=f"one_recipe_{j}_{t}"
                 )
-                constraint_count += 1
                 
                 # Recipe dependencies must be satisfied
                 for k_idx, (deps, _) in enumerate(recipes):
                     if t > 0:
-                        # Dependencies from previous timestep
                         if deps:
-                            m.addConstr(
-                                len(deps) * self.a[j, t, k_idx] <=
-                                gp.quicksum(self.z[dep, t-1] for dep in deps if dep in self.cand_j),
+                            # If deps exist, check them
+                            # sum(z_dep)
+                            # Note: z[dep, t-1] might be int or Var. quicksum handles both.
+                            lhs = len(deps) * self.a[j, t, k_idx]
+                            rhs = gp.quicksum(self.z[dep, t-1] for dep in deps if dep in self.cand_j)
+                            
+                            self._add_safe_constr(
+                                lhs <= rhs,
                                 name=f"recipe_dep_{j}_{t}_{k_idx}"
                             )
-                            constraint_count += 1
                 
                 # Creation logic
                 if t == 0:
                     # First timestep: created if exists
-                    m.addConstr(
+                    self._add_safe_constr(
                         self.c[j, t] == self.z[j, t],
                         name=f"create_t0_{j}"
                     )
-                    constraint_count += 1
                 else:
                     # Later timesteps: created if exists now but didn't exist before
-                    m.addConstr(
+                    # c >= z[t] - z[t-1]
+                    self._add_safe_constr(
                         self.c[j, t] >= self.z[j, t] - self.z[j, t-1],
                         name=f"create_after_{j}_{t}"
                     )
-                    constraint_count += 1
                     
-                    m.addConstr(
+                    # c <= z[t]
+                    self._add_safe_constr(
                         self.c[j, t] <= self.z[j, t],
                         name=f"create_only_if_exist_{j}_{t}"
                     )
-                    constraint_count += 1
                     
-                    m.addConstr(
+                    # c <= 1 - z[t-1]
+                    self._add_safe_constr(
                         self.c[j, t] <= 1 - self.z[j, t-1],
                         name=f"create_only_if_new_{j}_{t}"
                     )
-                    constraint_count += 1
-        
-        logger.debug(f"Added {constraint_count} creation/recipe constraints")
     
     def _add_fixed_mv_constraints(self) -> None:
         """Add constraints to fix specific MVs at specific timesteps.
         
-        This is used to propagate parent node solutions to child nodes.
+        Optimized: This is now handled in _build_variables by setting variables to constants.
+        No explicit constraints needed.
         """
-        m = self.model
-        assert m is not None
-        
-        constraint_count = 0
-        
-        for t_idx, mv_set in self.fixed_mvs.items():
-            # Find which local timestep index this corresponds to
-            if t_idx not in self.timestep_indices:
-                continue
-            
-            local_t = self.timestep_indices.index(t_idx)
-            
-            for j in mv_set:
-                if j in self.cand_j:
-                    m.addConstr(
-                        self.z[j, local_t] == 1,
-                        name=f"fixed_mv_{j}_{local_t}"
-                    )
-                    constraint_count += 1
-                    logger.debug(f"Fixed MV {self.node_list[j]} at timestep {local_t}")
-        
-        if constraint_count > 0:
-            logger.debug(f"Added {constraint_count} fixed MV constraints")
+        pass
     
     def _build_objective(self) -> None:
         """Build the objective function (minimize workload + migration cost)."""
@@ -319,53 +342,64 @@ class LocalILPOptimizer:
         logger.debug(f"Starting LocalILP optimization for timesteps {self.timesteps}")
         
         self.model = gp.Model("LocalILP")
-        self.model.Params.OutputFlag = self.gurobi_output
-        self.model.Params.TimeLimit = time_limit
-        
-        # Build model
-        self._build_variables()
-        self._add_usage_and_storage_constraints()
-        self._add_creation_and_recipe_constraints()
-        self._add_fixed_mv_constraints()  # Add fixed MV constraints
-        self._build_objective()
-        
-        # Solve
-        t0 = time.time()
-        self.model.optimize()
-        elapsed = time.time() - t0
-        
-        # Check status
-        if self.model.status != gp.GRB.OPTIMAL:
-            logger.warning(f"LocalILP optimization not optimal: status={self.model.status}")
-            if self.model.status == gp.GRB.INFEASIBLE:
-                logger.error("Model is infeasible")
-                # Return empty solution with original indices
-                return {
-                    "selected_mvs_by_timestep": {idx: set() for idx in self.timestep_indices_original},
-                    "objective": float("inf"),
-                    "solve_time_sec": elapsed,
-                }
-        
-        # Extract solution from unique timesteps
-        selected_mvs_unique = {}
-        for t_local, t_global in enumerate(self.timestep_indices):
-            selected = set()
-            for j in self.cand_j:
-                if self.z[j, t_local].X > 0.5:
-                    selected.add(j)
-            selected_mvs_unique[t_global] = selected
-        
-        # Map back to original 3 indices (handle duplicates)
-        selected_mvs_by_timestep = {}
-        for orig_idx in self.timestep_indices_original:
-            selected_mvs_by_timestep[orig_idx] = selected_mvs_unique[orig_idx]
-        
-        obj = float(self.model.objVal) if self.model.status == gp.GRB.OPTIMAL else float("inf")
-        
-        logger.debug(f"LocalILP completed: T={self.T}, obj={obj:.4f}, time={elapsed:.2f}s")
-        
-        return {
-            "selected_mvs_by_timestep": selected_mvs_by_timestep,
-            "objective": obj,
-            "solve_time_sec": elapsed,
-        }
+        try:
+            self.model.Params.OutputFlag = self.gurobi_output
+            self.model.Params.TimeLimit = time_limit
+            
+            # Build model
+            self._build_variables()
+            self._add_usage_and_storage_constraints()
+            self._add_creation_and_recipe_constraints()
+            self._add_fixed_mv_constraints()  # Add fixed MV constraints
+            self._build_objective()
+            
+            # Solve
+            t0 = time.time()
+            self.model.optimize()
+            elapsed = time.time() - t0
+            
+            # Check status
+            if self.model.status != gp.GRB.OPTIMAL:
+                logger.warning(f"LocalILP optimization not optimal: status={self.model.status}")
+                if self.model.status == gp.GRB.INFEASIBLE:
+                    logger.error("Model is infeasible")
+                    # Return empty solution with original indices
+                    return {
+                        "selected_mvs_by_timestep": {idx: set() for idx in self.timestep_indices_original},
+                        "objective": float("inf"),
+                        "solve_time_sec": elapsed,
+                    }
+            
+            # Extract solution from unique timesteps
+            selected_mvs_unique = {}
+            for t_local, t_global in enumerate(self.timestep_indices):
+                selected = set()
+                for j in self.cand_j:
+                    z_obj = self.z[j, t_local]
+                    # Handle both Gurobi Var and constant int
+                    if isinstance(z_obj, gp.Var):
+                        val = z_obj.X
+                    else:
+                        val = z_obj
+                    
+                    if val > 0.5:
+                        selected.add(j)
+                selected_mvs_unique[t_global] = selected
+            
+            # Map back to original 3 indices (handle duplicates)
+            selected_mvs_by_timestep = {}
+            for orig_idx in self.timestep_indices_original:
+                selected_mvs_by_timestep[orig_idx] = selected_mvs_unique[orig_idx]
+            
+            obj = float(self.model.objVal) if self.model.status == gp.GRB.OPTIMAL else float("inf")
+            
+            logger.debug(f"LocalILP completed: T={self.T}, obj={obj:.4f}, time={elapsed:.2f}s")
+            
+            return {
+                "selected_mvs_by_timestep": selected_mvs_by_timestep,
+                "objective": obj,
+                "solve_time_sec": elapsed,
+            }
+        finally:
+            self.model.dispose()
+            self.model = None

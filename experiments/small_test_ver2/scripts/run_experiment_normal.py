@@ -38,15 +38,17 @@ from src.utils.legacy import get_all_job_queries, natural_sort_key
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job"):
+    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = ""):
         """初期化
         
         Args:
             exp_dir: 実験ディレクトリのパス
             query_set: 使用するクエリセット名 (例: job, job_like, explicit_join)
+            exp_suffix: 実験識別用サフィックス (例: _16_2, _16_4)
         """
         self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
+        self.exp_suffix = exp_suffix  # サフィックスを保存
         
         # config.yamlを使わず、settings.pyのデフォルト値を使用
         # デフォルト値:
@@ -312,6 +314,11 @@ class NormalModeExperiment:
             
             def custom_get_all_job_queries(path):
                 """カスタム関数: 指定ディレクトリから直接JSONファイルを取得"""
+                import re
+                
+                def natural_sort_key(s):
+                    return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", str(s))]
+                
                 query_paths = []
                 query_count = {}
                 
@@ -322,12 +329,15 @@ class NormalModeExperiment:
                 if not job_dir.exists():
                     return [], {}
                 
-                for json_file in sorted(job_dir.glob("*.json")):
+                # 自然順でソート
+                json_files = sorted(job_dir.glob("*.json"), key=lambda x: natural_sort_key(x.name))
+                
+                for json_file in json_files:
                     query_path = str(json_file)
                     query_paths.append(query_path)
                     query_count[query_path] = 1
                 
-                print(f"  [DEBUG] Found {len(query_paths)} JSON files")
+                print(f"  [DEBUG] Found {len(query_paths)} JSON files (sorted naturally)")
                 return query_paths, query_count
             
             # query_parser モジュール内の参照を置き換え
@@ -535,7 +545,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=False):
+    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=True):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -643,7 +653,7 @@ class NormalModeExperiment:
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
-            timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set)
+            timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
             self.print_success(f"  タイムステップ数: {len(timesteps)}")
             
             # 頻度の次元を検証・調整
@@ -704,7 +714,7 @@ class NormalModeExperiment:
                 result_dir.mkdir(parents=True, exist_ok=True)
                 
                 # プルーニング結果を保存
-                pruning_result_file = result_dir / "pruning_result.json"
+                pruning_result_file = result_dir / f"pruning_result{self.exp_suffix}.json"
                 with open(pruning_result_file, 'w', encoding='utf-8') as f:
                     json.dump(pruning_info, f, indent=2, ensure_ascii=False)
                 self.print_success(f"  プルーニング結果を {pruning_result_file} に保存")
@@ -736,7 +746,7 @@ class NormalModeExperiment:
             
             # 最適化を実行
             self.print_info("最適化を実行中...")
-            result = optimizer.optimize(time_limit=300)
+            result = optimizer.optimize()
             
             # マイグレーション分析
             self.print_info("マイグレーション分析を実行中...")
@@ -769,7 +779,7 @@ class NormalModeExperiment:
             
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
-            result_file = result_dir / "td_mv_optimization_result.json"
+            result_file = result_dir / f"td_mv_optimization_result{self.exp_suffix}.json"
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result_to_save, f, indent=2, ensure_ascii=False)
             self.print_success(f"結果を {result_file} に保存")
@@ -955,7 +965,7 @@ class NormalModeExperiment:
             B_max = float(50*1024*1024)
             
             # タイムステップと頻度を読み込み
-            timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set)
+            timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
             
             if not timesteps:
                 self.print_error("タイムステップ情報がありません")
@@ -1031,7 +1041,7 @@ class NormalModeExperiment:
             # 結果保存
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
-            result_file = result_dir / "static_mv_optimization_result.json"
+            result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
             
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(static_result, f, indent=2, ensure_ascii=False)
@@ -1079,7 +1089,7 @@ class NormalModeExperiment:
         
         if self.result is None:
             # Load time-dependent optimization result
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "td_mv_optimization_result.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
             
             if not result_file.exists():
                 self.print_error("時間依存型最適化結果が見つかりません")
@@ -1225,7 +1235,7 @@ class NormalModeExperiment:
         """静的最適化結果からMV作成SQLを生成"""
         try:
             # 静的最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
             if not result_file.exists():
                 self.print_error(f"静的最適化結果が見つかりません: {result_file}")
                 self.print_info("先にフェーズ6.5を実行してください")
@@ -1301,7 +1311,7 @@ class NormalModeExperiment:
             # Static mode
             self.print_header("クエリ書き換え（静的モード）", 8)
             
-            static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
             if not static_result_file.exists():
                 self.print_error("静的最適化結果が見つかりません")
                 self.print_info("先にフェーズ6を --optimization-mode static で実行してください")
@@ -1334,11 +1344,11 @@ class NormalModeExperiment:
                 self.qp = pickle.load(f)
         
         # Load time-dependent optimization result
-        result_file = self.exp_dir / "time_dependent_output" / self.query_set / "td_mv_optimization_result.json"
+        result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
         
         if not result_file.exists():
             self.print_error("時間依存型最適化結果が見つかりません")
-            self.print_info("先にフェーズ3を実行してください")
+            self.print_info("先にフェーズ6を実行してください")
             return False
         
         with open(result_file, 'r', encoding='utf-8') as f:
@@ -1558,7 +1568,7 @@ class NormalModeExperiment:
         
         if mode == 'dynamic':
             # 最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "td_mv_optimization_result.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
             
             if not result_file.exists():
                 self.print_error("時間依存型最適化結果が見つかりません")
@@ -1573,7 +1583,7 @@ class NormalModeExperiment:
             
         elif mode == 'static':
             # 静的最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / "static_mv_optimization_result.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
             
             if not result_file.exists():
                 self.print_error("静的最適化結果が見つかりません")
@@ -1630,7 +1640,8 @@ class NormalModeExperiment:
         try:
             timesteps, frequencies_by_timestep = load_timesteps_and_frequencies(
                 str(self.exp_dir), 
-                self.query_set
+                self.query_set,
+                freq_suffix=self.exp_suffix
             )
             self.print_success(f"  タイムステップ数: {len(timesteps)}")
         except Exception as e:
@@ -1683,7 +1694,7 @@ class NormalModeExperiment:
             # 結果を保存
             output_dir = self.exp_dir / "time_dependent_output" / self.query_set
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_file = output_dir / f"benchmark_results_{mode}.json"
+            output_file = output_dir / f"benchmark_results_{mode}{self.exp_suffix}.json"
             
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
@@ -1716,11 +1727,12 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic'):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False):
         """最適化以降のフェーズを実行 (Phase 6-9)
         
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+            use_pruning: CF Pruningを使用するか (デフォルト: False)
         """
         self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
         
@@ -1730,7 +1742,7 @@ class NormalModeExperiment:
         total_start_time = time.time()
         
         # 最適化フェーズ（モードに応じて選択）
-        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode))
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode, use_pruning=use_pruning))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
@@ -1767,11 +1779,12 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic'):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False):
         """全フェーズを順次実行
         
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+            use_pruning: CF Pruningを使用するか (デフォルト: False)
         """
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
         
@@ -1791,7 +1804,7 @@ class NormalModeExperiment:
         ]
         
         # 最適化フェーズ（モードに応じて選択）
-        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode))
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode, use_pruning=use_pruning))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
@@ -1895,15 +1908,21 @@ def main():
         action='store_true',
         help='CF Pruningを使用してMV候補を削減する（大きなタイムステップ数の場合に推奨）'
     )
+    parser.add_argument(
+        '--exp-suffix',
+        type=str,
+        default='',
+        help='実験識別用サフィックス（例：_16_2, _16_4）。頻度ファイルと最適化結果ファイルに適用'
+    )
     
     args = parser.parse_args()
     
-    exp = NormalModeExperiment(exp_dir=args.config, query_set=args.query_set)
+    exp = NormalModeExperiment(exp_dir=args.config, query_set=args.query_set, exp_suffix=args.exp_suffix)
     
     if args.phase == 'all':
-        success = exp.run_all_phases(optimization_mode=args.optimization_mode)
+        success = exp.run_all_phases(optimization_mode=args.optimization_mode, use_pruning=args.use_pruning)
     elif args.phase == 'post-opt':
-        success = exp.run_post_optimization_phases(optimization_mode=args.optimization_mode)
+        success = exp.run_post_optimization_phases(optimization_mode=args.optimization_mode, use_pruning=args.use_pruning)
     elif args.phase == '0':
         success = exp.phase0_setup()
     elif args.phase == '1':

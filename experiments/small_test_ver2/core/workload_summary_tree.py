@@ -72,16 +72,31 @@ class WorkloadSummaryTree:
     The tree is used for CF pruning: by solving local ILPs at each node
     with only 3 timesteps, we can identify promising MVs efficiently.
     
+    Nodes are split only if:
+    - The range is >= 3 (i.e., 4 or more timesteps)
+    - Child nodes would have >= 3 timesteps (range >= 2)
+    
+    This prevents creating 2-timestep nodes that add no new information.
+    
     Example:
         For T=8 timesteps [0,1,2,3,4,5,6,7]:
         
-        Root: (0, 4, 7)
-        ├─ Left:  (0, 2, 4)
-        │  ├─ Left:  (0, 1, 2) [leaf]
-        │  └─ Right: (2, 3, 4) [leaf]
-        └─ Right: (4, 5, 7)
-           ├─ Left:  (4, 4, 5) [leaf]
+        Root: (0, 3, 7)
+        ├─ Left:  (0, 1, 3)
+        │  └─ Right: (1, 2, 3) [leaf]  # (0,0,1) not created (range=1)
+        └─ Right: (3, 5, 7)
+           ├─ Left:  (3, 4, 5) [leaf]
            └─ Right: (5, 6, 7) [leaf]
+        
+        Total: 5 nodes (not 7)
+        
+        For T=5 timesteps [0,1,2,3,4]:
+        
+        Root: (0, 2, 4)
+        ├─ Left:  (0, 1, 2) [leaf]  # range=2, don't split
+        └─ Right: (2, 3, 4) [leaf]  # range=2, don't split
+        
+        Total: 3 nodes
     """
     
     def __init__(self, timestep_count: int):
@@ -121,11 +136,9 @@ class WorkloadSummaryTree:
             node: Node to split
         """
         # Check if we should split further
-        # Stop if the range is <= 2 (i.e., 3 or fewer timesteps)
-        # This means nodes with exactly 3 timesteps are leaf nodes
-        if node.max_idx - node.min_idx <= 2:
-            # Range is [min, max] with max-min <= 2, so 3 or fewer timesteps
-            # This is optimal for Local ILP (3 timesteps), don't split further
+        # Stop if the range is too small (< 3 means 3 or fewer timesteps)
+        if node.max_idx - node.min_idx < 3:
+            # 3 or fewer timesteps - don't split further
             return
         
         # Create left child: [min, median]
@@ -138,8 +151,9 @@ class WorkloadSummaryTree:
         right_max = node.max_idx
         right_median = (right_min + right_max) // 2
         
-        # Only create children if they have valid ranges
-        if left_max > left_min:
+        # Only create left child if it has at least 3 distinct timesteps
+        # Check: left_max - left_min >= 2 (range of at least 2 = 3 timesteps)
+        if left_max - left_min >= 2:
             node.left_child = TreeNode(
                 left_min, left_median, left_max,
                 depth=node.depth + 1
@@ -147,7 +161,8 @@ class WorkloadSummaryTree:
             node.is_leaf = False
             self._split_node(node.left_child)
         
-        if right_max > right_min:
+        # Only create right child if it has at least 3 distinct timesteps
+        if right_max - right_min >= 2:
             node.right_child = TreeNode(
                 right_min, right_median, right_max,
                 depth=node.depth + 1
