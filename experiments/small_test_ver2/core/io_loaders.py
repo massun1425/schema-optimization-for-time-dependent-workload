@@ -70,7 +70,7 @@ def load_qp_inputs(base_dir: str, query_set: str = "job_like") -> dict:
     }
 
 
-def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -> Tuple[List[str], Dict[str, List[float]]]:
+def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like", freq_suffix: str = "") -> Tuple[List[str], Dict[str, List[float]]]:
     """
     Extract timesteps and query frequencies from frequency_time_dependent.json.
     
@@ -81,13 +81,15 @@ def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -
     Args:
         base_dir: Base directory (e.g., experiments/small_test_ver2)
         query_set: Query set name (e.g., "job", "job_like", "explicit_join")
+        freq_suffix: Frequency file suffix (e.g., "_16_2", "_16_4")
 
     Returns:
         Tuple of (timestep_names, frequency_dict)
         - timestep_names: List of timestep IDs (e.g., ["0", "1", "2"])
         - frequency_dict: Dict mapping timestep ID to list of query frequencies
     """
-    freq_path = os.path.join(base_dir, "01_queries", query_set, "frequency_time_dependent.json")
+    freq_filename = f"frequency_time_dependent{freq_suffix}.json"
+    freq_path = os.path.join(base_dir, "01_queries", query_set, freq_filename)
     if not os.path.exists(freq_path):
         logger.warning(f"frequency_time_dependent.json not found in {freq_path}, using defaults")
         return ["0", "1"], {"0": [1.0], "1": [1.0]}
@@ -100,8 +102,13 @@ def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like") -
     if queries_data:
         logger.info(f"Loading frequencies from new format (queries-based)")
         
+        # Helper for natural sort (to match QueryParser's behavior)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", s)]
+        
         # Get all query names sorted naturally
-        query_names = sorted(queries_data.keys())
+        query_names = sorted(queries_data.keys(), key=natural_sort_key)
         
         # Get number of timesteps from first query's frequency list
         if not query_names:

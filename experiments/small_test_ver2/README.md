@@ -112,6 +112,29 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --
 - `05_mv_sql/{query_set}/`: MV生成SQL
 - `06_rewritten/{query_set}/`: 書き換えクエリ
 
+### 実験サフィックス（異なる頻度設定の区別）
+
+複数の頻度パターンや周期で実験を行う場合、`--exp-suffix` オプションを使用して実験結果を区別できます：
+
+```bash
+# 周期8の実験（frequency_time_dependent_16_2.jsonを使用）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --exp-suffix _16_2
+
+# 周期4の実験（frequency_time_dependent_16_4.jsonを使用）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --exp-suffix _16_4
+
+# サフィックスなし（デフォルト: frequency_time_dependent.jsonを使用）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all
+```
+
+**ファイル命名規則**：
+- **入力**: `01_queries/{query_set}/frequency_time_dependent{suffix}.json`
+- **Phase 6出力**: `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json`
+- **Phase 9出力**: `time_dependent_output/{query_set}/benchmark_results_{mode}{suffix}.json`
+- **Phase 7/8出力**: サフィックスなし（最新の最適化結果に基づく）
+
+詳細は「実験サフィックスの使い方」セクションを参照してください。
+
 ### ステップ1: データベースのセットアップとクエリ実行計画の取得
 
 **前提条件**: 実験を開始する前に、データベースのセットアップを完了させてください。
@@ -223,9 +246,61 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --
 python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
 ```
 
-**生成されるファイル**:
-- `time_dependent_output/{query_set}/td_mv_optimization_result.json`: 動的最適化結果
-- `time_dependent_output/{query_set}/static_mv_optimization_result.json`: 静的最適化結果
+**生成されるファイル**：
+- `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json`: 動的最適化結果
+- `time_dependent_output/{query_set}/static_mv_optimization_result{suffix}.json`: 静的最適化結果
+- `time_dependent_output/{query_set}/pruning_result{suffix}.json`: プルーニング結果（`--use-pruning`使用時）
+
+**注**: `{suffix}` は `--exp-suffix` オプションで指定した値（例: `_16_2`）。省略時は空文字列。
+
+#### CF Pruning（候補削減）オプション
+
+大量のタイムステップ（20以上）を扱う場合、ILP最適化の計算時間が指数的に増加します。この問題を解決するため、**CF Pruning（Workload Summary Tree）**機能を使用できます。
+
+**CF Pruningとは**:
+- 論文Section 4.3で提案されている手法
+- 全タイムステップを階層的な二分木として表現
+- 各ノードで3タイムステップのみの小さなILPを解く
+- 全ノードで選ばれたMVの和集合を「有望な候補」として抽出
+- メイン最適化では有望な候補のみを使用（計算量を大幅削減）
+
+**使用方法**:
+```bash
+# プルーニングを使用（推奨: タイムステップ数 >= 20）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+
+# プルーニングなし（デフォルト: タイムステップ数 < 20）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job
+```
+
+**プルーニング結果の確認**:
+```bash
+# プルーニング統計を確認
+cat time_dependent_output/job/pruning_result.json
+```
+
+**出力例**:
+```json
+{
+  "total_candidates": 1256,
+  "promising_candidates": 320,
+  "filtered_out": 936,
+  "retention_rate": 0.255,
+  "reduction_rate": 0.745,
+  "promising_mv_names": ["node_123", "node_456", ...]
+}
+```
+
+**パフォーマンス**:
+- 5タイムステップ: プルーニングの効果は小さい（数秒の削減）
+- 20タイムステップ: 数分の削減が期待できる
+- 50タイムステップ: プルーニングなしでは実行不可能 → プルーニングで実行可能に
+
+**技術詳細**:
+- 新規ファイル: `core/workload_summary_tree.py`, `core/local_ilp_optimizer.py`, `core/cf_pruner.py`
+- ツリーノード数: 約 `2T - 1`（Tはタイムステップ数）
+- 各ノードの最適化: 3タイムステップのみ（高速）
+- 境界制約: 親ノードの解を子ノードに伝搬（整合性を保証）
 
 ---
 
@@ -292,10 +367,10 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --
 - `static`: 静的MV - 最初のタイムステップのMVのみを作成し、全タイムステップで使用  
 - `baseline`: ベースライン - MVを使用せず元のクエリを実行
 
-**生成されるファイル**:
-- `time_dependent_output/{query_set}/benchmark_results_dynamic.json`: 動的MVモードのベンチマーク結果
-- `time_dependent_output/{query_set}/benchmark_results_static.json`: 静的MVモードの結果
-- `time_dependent_output/{query_set}/benchmark_results_baseline.json`: ベースラインの結果
+**生成されるファイル**：
+- `time_dependent_output/{query_set}/benchmark_results_{mode}{suffix}.json`: ベンチマーク結果
+  - `{mode}`: `dynamic`, `static`, `baseline`
+  - `{suffix}`: `--exp-suffix` オプションで指定した値（省略時は空文字列）
 
 **ベンチマーク結果の内容**:
 - 各タイムステップでの全クエリの実行時間（ミリ秒）
@@ -327,6 +402,93 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all 
 
 ---
 
+## 実験サフィックスの使い方
+
+異なる頻度設定や周期の実験を同時に管理するため、`--exp-suffix` オプションでサフィックスを指定できます。
+
+### 基本的な使い方
+
+```bash
+# 周期8の実験（16タイムステップ、周期8）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase all \
+  --query-set job \
+  --exp-suffix _16_2
+
+# 周期4の実験（16タイムステップ、周期4）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase all \
+  --query-set job \
+  --exp-suffix _16_4
+```
+
+### 必要なファイル準備
+
+サフィックスを使用する場合、対応する頻度ファイルを準備してください：
+
+```bash
+01_queries/job/
+├── frequency_time_dependent.json          # デフォルト
+├── frequency_time_dependent_16_2.json     # --exp-suffix _16_2 で使用
+└── frequency_time_dependent_16_4.json     # --exp-suffix _16_4 で使用
+```
+
+### 生成されるファイル
+
+サフィックスは以下のファイル名に適用されます：
+
+```bash
+time_dependent_output/job/
+├── td_mv_optimization_result.json              # デフォルト
+├── td_mv_optimization_result_16_2.json         # _16_2 の最適化結果
+├── td_mv_optimization_result_16_4.json         # _16_4 の最適化結果
+├── pruning_result_16_2.json                    # プルーニング結果
+├── benchmark_results_dynamic_16_2.json         # ベンチマーク結果
+└── benchmark_results_dynamic_16_4.json
+```
+
+### 個別フェーズでの使用
+
+```bash
+# Phase 6のみ実行（最適化結果にサフィックス付加）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase 6 \
+  --query-set job \
+  --exp-suffix _16_2
+
+# Phase 7実行（サフィックス付き最適化結果を読み込む）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase 7 \
+  --query-set job \
+  --exp-suffix _16_2
+```
+
+**注意**: Phase 7とPhase 8は、サフィックス付きの最適化結果を読み込みますが、出力ファイル（SQLや書き換えクエリ）にはサフィックスは付きません（最後に実行した最適化結果で上書きされます）。
+
+---
+
+
+### 最適化以降の一括実行 (Post-Optimization)
+
+Phase 6（最適化）から Phase 9（ベンチマーク）までを一括実行します。
+コスト見積もり修正後の再最適化や、Static/Dynamicモードの比較に便利です。
+
+```bash
+# 最適化以降を動的モードで実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode dynamic
+
+# または静的モードで実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static
+```
+
+**実行されるフェーズ**:
+- Phase 6: MV最適化
+- Phase 7: MV生成SQL作成
+- Phase 8: クエリ書き換え
+- Phase 9: ベンチマーク実行
+
+---
+
 ## 入力ファイル
 
 時間依存最適化に必要な入力ファイルは以下の通りです：
@@ -339,8 +501,9 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all 
 2. **クエリパーサの出力**:
    - `03_parsed/{query_set}/qp_class.pkl`: MV候補の効用行列 u_ij、包含関係 X、ストレージサイズ b_j などを含む
 
-3. **クエリ頻度設定**:
-   - `01_queries/{query_set}/frequency_time_dependent.json`: 各タイムステップでの各クエリの実行頻度
+3. **クエリ頻度設定**：
+   - `01_queries/{query_set}/frequency_time_dependent{suffix}.json`: 各タイムステップでの各クエリの実行頻度
+   - `{suffix}` は `--exp-suffix` で指定（省略時は空文字列）
 
 4. **マイグレーションコスト**:
    - `04_migration/{query_set}/migration_costs.json`: 各MV候補の作成レシピとコスト
@@ -356,6 +519,9 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all 
 experiments/small_test_ver2/
 ├── core/                          # コア機能（必須）
 │   ├── time_dependent_optimizer.py    # ILP最適化クラス
+│   ├── workload_summary_tree.py       # Workload Summary Tree（プルーニング用）
+│   ├── local_ilp_optimizer.py         # Local ILP最適化（プルーニング用）
+│   ├── cf_pruner.py                   # CF Prunerクラス（プルーニング本体）
 │   ├── io_loaders.py                  # データロード
 │   └── small_test_schema_provider.py  # スキーマプロバイダー
 ├── migration/                     # マイグレーション関連
@@ -423,6 +589,9 @@ experiments/small_test_ver2/
 | ファイル名 | 場所 | 役割 |
 |-----------|------|------|
 | `time_dependent_optimizer.py` | `core/` | 時間依存ILP最適化クラス（変数・制約・目的関数の定義） |
+| `workload_summary_tree.py` | `core/` | Workload Summary Tree（プルーニング用二分木構造） |
+| `local_ilp_optimizer.py` | `core/` | Local ILP最適化（3タイムステップ限定、プルーニング用） |
+| `cf_pruner.py` | `core/` | CF Prunerクラス（候補削減アルゴリズムの実装） |
 | `io_loaders.py` | `core/` | データロードユーティリティ（pickle/JSONの読み込み） |
 | `small_test_schema_provider.py` | `core/` | スキーマ情報プロバイダー |
 
@@ -581,3 +750,48 @@ B_max = float(102400)  # バイト単位（例: 100KB）
 
 - ILP定式化の詳細: `small_docs/explain/time_dependent_optimizer.md`
 - プロジェクト全体の概要: プロジェクトルートの `docs/` ディレクトリ
+
+
+PostgreSQL で **現在データベース内にある実体化ビュー (Materialized Views)** の **サイズ一覧と合計サイズ** を確認するには、`pg_class` / `pg_namespace` / `pg_matviews` と `pg_total_relation_size()` を組み合わせて取得できます。
+
+---
+
+# ✅ **実体化ビューのサイズ一覧（個別）を取得する SQL**
+
+```sql
+SELECT
+    matviewname AS mv_name,
+    pg_size_pretty(pg_total_relation_size(pg_class.oid)) AS total_size,
+    pg_total_relation_size(pg_class.oid) AS total_size_bytes
+FROM pg_matviews
+JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
+JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+WHERE pg_class.relkind = 'm'
+ORDER BY pg_total_relation_size(pg_class.oid) DESC;
+```
+
+---
+
+# ✅ **実体化ビューの合計サイズを取得する SQL**
+
+```sql
+SELECT
+    pg_size_pretty(SUM(pg_total_relation_size(pg_class.oid))) AS total_mv_size,
+    SUM(pg_total_relation_size(pg_class.oid)) AS total_mv_size_bytes
+FROM pg_matviews
+JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
+JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+WHERE pg_class.relkind = 'm';
+```
+
+---
+
+# 📌 補足
+
+* `pg_matviews` は materialized view 一覧が入っているシステムカタログ
+* `pg_total_relation_size(oid)` は **テーブル / MV の本体 + インデックス + TOAST を含む総サイズ**
+* `pg_size_pretty()` は読みやすい形式（MB / GB）に変換
+
+---
+
+全ての実体化ビューのサイズの合計は焼く70GB

@@ -473,7 +473,12 @@ class TimeDependentQueryExecutor:
                 logger.error(f"Rewritten queries directory not found: {rewritten_queries_dir}")
                 return {'error': f'Rewritten queries directory not found for timestep {timestep_name}'}
             
-            query_files_for_timestep = sorted(rewritten_queries_dir.glob("*.sql"), key=lambda x: x.name)
+            # Helper for natural sort (to match io_loaders.py behavior)
+            import re
+            def natural_sort_key(s):
+                return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", str(s))]
+            
+            query_files_for_timestep = sorted(rewritten_queries_dir.glob("*.sql"), key=lambda x: natural_sort_key(x.name))
             
             if not query_files_for_timestep:
                 logger.error(f"No query files found in {rewritten_queries_dir}")
@@ -728,7 +733,12 @@ class TimeDependentQueryExecutor:
             logger.error(f"Initial rewritten queries directory not found: {initial_rewritten_queries_dir}")
             return {'error': f'Initial rewritten queries directory not found'}
         
-        static_query_files = sorted(initial_rewritten_queries_dir.glob("*.sql"), key=lambda x: x.name)
+        # Helper for natural sort (to match io_loaders.py behavior)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split("([0-9]+)", str(s))]
+        
+        static_query_files = sorted(initial_rewritten_queries_dir.glob("*.sql"), key=lambda x: natural_sort_key(x.name))
         
         if not static_query_files:
             logger.error(f"No query files found in {initial_rewritten_queries_dir}")

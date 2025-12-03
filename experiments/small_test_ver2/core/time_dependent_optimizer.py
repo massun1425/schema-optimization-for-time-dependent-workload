@@ -290,80 +290,84 @@ class TimeDependentOptimizer:
         logger.info("Starting optimization...")
 
         self.model = gp.Model("TD-MV")
-        self.model.Params.OutputFlag = self.gurobi_output
-        if time_limit is not None:
-            self.model.Params.TimeLimit = time_limit
+        try:
+            self.model.Params.OutputFlag = self.gurobi_output
+            if time_limit is not None:
+                self.model.Params.TimeLimit = time_limit
 
-        # Build model
-        self.build_variables()
-        self.add_usage_and_storage_constraints()
-        self.add_creation_and_recipe_constraints()
-        self.build_objective()
+            # Build model
+            self.build_variables()
+            self.add_usage_and_storage_constraints()
+            self.add_creation_and_recipe_constraints()
+            self.build_objective()
 
-        # Solve
-        t0 = time.time()
-        self.model.optimize()
-        elapsed = time.time() - t0
+            # Solve
+            t0 = time.time()
+            self.model.optimize()
+            elapsed = time.time() - t0
 
-        logger.info(f"Optimization completed in {elapsed:.2f} seconds")
+            logger.info(f"Optimization completed in {elapsed:.2f} seconds")
 
-        # Check status
-        if self.model.status != gp.GRB.OPTIMAL:
-            logger.error(f"Optimization failed with status {self.model.status}")
-            if self.model.status == gp.GRB.INFEASIBLE:
-                logger.error("Model is infeasible, computing IIS...")
-                self.model.computeIIS()
-                iis_file = "model_infeasible.ilp"
-                self.model.write(iis_file)
-                logger.error(f"IIS written to {iis_file}")
-            raise RuntimeError(f"Gurobi optimization failed with status: {self.model.status}")
+            # Check status
+            if self.model.status != gp.GRB.OPTIMAL:
+                logger.error(f"Optimization failed with status {self.model.status}")
+                if self.model.status == gp.GRB.INFEASIBLE:
+                    logger.error("Model is infeasible, computing IIS...")
+                    self.model.computeIIS()
+                    iis_file = "model_infeasible.ilp"
+                    self.model.write(iis_file)
+                    logger.error(f"IIS written to {iis_file}")
+                raise RuntimeError(f"Gurobi optimization failed with status: {self.model.status}")
 
-        # Extract solution
-        # Initialize full arrays with zeros for all nodes
-        z_by_t = [[0] * self.J for _ in range(self.T)]
-        y_by_t = [[[0] * self.J for _ in range(self.I)] for _ in range(self.T)]
-        
-        # Fill in candidate values
-        for t in range(self.T):
-            for j in self.cand_j:
-                z_by_t[t][j] = int(round(self.z[j, t].X))
-                for i in range(self.I):
-                    y_by_t[t][i][j] = int(round(self.y[i, j, t].X))
-        
-        obj = float(self.model.objVal)
+            # Extract solution
+            # Initialize full arrays with zeros for all nodes
+            z_by_t = [[0] * self.J for _ in range(self.T)]
+            y_by_t = [[[0] * self.J for _ in range(self.I)] for _ in range(self.T)]
+            
+            # Fill in candidate values
+            for t in range(self.T):
+                for j in self.cand_j:
+                    z_by_t[t][j] = int(round(self.z[j, t].X))
+                    for i in range(self.I):
+                        y_by_t[t][i][j] = int(round(self.y[i, j, t].X))
+            
+            obj = float(self.model.objVal)
 
-        # Calculate objective breakdown
-        workload_val = float(
-            gp.quicksum(
-                -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
-                for t in range(self.T)
-                for i in range(self.I)
-                for j in self.cand_j  # Only sum over candidates
-            ).getValue()
-        )
-        migration_val = float(
-            gp.quicksum(
-                float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
-                for t in range(self.T)
-                for j in self.cand_j  # Only sum over candidates
-                for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
-            ).getValue()
-        )
+            # Calculate objective breakdown
+            workload_val = float(
+                gp.quicksum(
+                    -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
+                    for t in range(self.T)
+                    for i in range(self.I)
+                    for j in self.cand_j  # Only sum over candidates
+                ).getValue()
+            )
+            migration_val = float(
+                gp.quicksum(
+                    float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
+                    for t in range(self.T)
+                    for j in self.cand_j  # Only sum over candidates
+                    for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
+                ).getValue()
+            )
 
-        logger.info(f"Objective: {obj:.4f} (Workload: {workload_val:.4f}, Migration: {migration_val:.4f})")
+            logger.info(f"Objective: {obj:.4f} (Workload: {workload_val:.4f}, Migration: {migration_val:.4f})")
 
-        # Log selected MVs per timestep
-        for t, ts_name in enumerate(self.timesteps):
-            selected = [self.node_list[j] for j in range(self.J) if z_by_t[t][j] == 1]
-            logger.info(f"Timestep {ts_name}: {len(selected)} MVs selected: {selected}")
+            # Log selected MVs per timestep
+            for t, ts_name in enumerate(self.timesteps):
+                selected = [self.node_list[j] for j in range(self.J) if z_by_t[t][j] == 1]
+                logger.info(f"Timestep {ts_name}: {len(selected)} MVs selected: {selected}")
 
-        return {
-            "timesteps": self.timesteps,
-            "node_list": self.node_list,
-            "z_by_timestep": z_by_t,
-            "y_by_timestep": y_by_t,
-            "objective": obj,
-            "workload_cost": workload_val,
-            "migration_cost": migration_val,
-            "solve_time_sec": elapsed,
-        }
+            return {
+                "timesteps": self.timesteps,
+                "node_list": self.node_list,
+                "z_by_timestep": z_by_t,
+                "y_by_timestep": y_by_t,
+                "objective": obj,
+                "workload_cost": workload_val,
+                "migration_cost": migration_val,
+                "solve_time_sec": elapsed,
+            }
+        finally:
+            self.model.dispose()
+            self.model = None
