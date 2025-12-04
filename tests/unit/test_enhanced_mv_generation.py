@@ -330,3 +330,103 @@ class TestEnhancedMVGenerator:
         # Should still generate SQL (using fallback)
         assert 'CREATE MATERIALIZED VIEW' in sql
         assert node_id in sql
+
+
+class TestAddTableAliasToFilter:
+    """Test _add_table_alias_to_filter method functionality."""
+
+    @pytest.fixture
+    def generator(self):
+        """Create EnhancedMVGenerator with mock dependencies."""
+        qm = Mock()
+        qm.leaf_nodes_map_r = {}
+        qm.non_leaf_nodes_info = {}
+        qm.non_leaf_nodes_map_r = {}
+        return EnhancedMVGenerator(qm)
+
+    def test_is_null_pattern(self, generator):
+        """Test adding alias to IS NULL pattern."""
+        result = generator._add_table_alias_to_filter(
+            "(note IS NULL)",
+            "ci"
+        )
+        assert "ci.note" in result
+        assert "IS NULL" in result
+
+    def test_is_not_null_pattern(self, generator):
+        """Test adding alias to IS NOT NULL pattern."""
+        result = generator._add_table_alias_to_filter(
+            "(note IS NOT NULL)",
+            "pi"
+        )
+        assert "pi.note" in result
+        assert "IS NOT NULL" in result
+
+    def test_cast_pattern(self, generator):
+        """Test adding alias to cast pattern."""
+        result = generator._add_table_alias_to_filter(
+            "((info)::text = 'mini biography'::text)",
+            "it"
+        )
+        assert "(it.info)::text" in result
+
+    def test_multiple_patterns(self, generator):
+        """Test adding alias to multiple patterns in same condition."""
+        result = generator._add_table_alias_to_filter(
+            "(note IS NOT NULL) AND ((info)::text = 'test'::text)",
+            "t"
+        )
+        assert "t.note" in result
+        assert "(t.info)::text" in result
+
+    def test_already_qualified_column(self, generator):
+        """Test that already qualified columns are not modified."""
+        result = generator._add_table_alias_to_filter(
+            "(t.name IS NOT NULL)",
+            "other_alias"
+        )
+        # Should remain as t.name, not other_alias.t.name
+        assert "t.name" in result
+        assert "other_alias.t.name" not in result
+
+    def test_sql_keywords_not_modified(self, generator):
+        """Test that SQL keywords are not treated as column names."""
+        result = generator._add_table_alias_to_filter(
+            "(status IS NOT NULL)",
+            "t"
+        )
+        assert "t.status" in result
+        # NULL keyword should not be prefixed
+        assert "t.NULL" not in result
+        assert "t.NOT" not in result
+
+    def test_complex_imdb_filter(self, generator):
+        """Test complex filter from IMDB database."""
+        filter_condition = (
+            "(note IS NOT NULL) AND ((name)::text ~~ '%a%'::text) "
+            "AND ((info)::text = 'mini biography'::text)"
+        )
+        result = generator._add_table_alias_to_filter(filter_condition, "pi")
+        
+        assert "pi.note" in result
+        assert "(pi.name)::text" in result
+        assert "(pi.info)::text" in result
+
+    def test_empty_filter(self, generator):
+        """Test with empty filter condition."""
+        result = generator._add_table_alias_to_filter("", "t")
+        assert result == ""
+
+    def test_none_filter(self, generator):
+        """Test with None filter condition."""
+        result = generator._add_table_alias_to_filter(None, "t")
+        assert result is None
+
+    def test_comparison_operators(self, generator):
+        """Test with various comparison operators."""
+        result = generator._add_table_alias_to_filter(
+            "year > 2000 AND score <= 100",
+            "t"
+        )
+        assert "t.year" in result
+        assert "t.score" in result

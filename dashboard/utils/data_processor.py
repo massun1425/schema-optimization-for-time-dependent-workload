@@ -52,16 +52,21 @@ class DataProcessor:
     def calculate_speedup(original_cost: float, rewritten_cost: float) -> float:
         """Calculate speedup factor
         
+        This is the SINGLE SOURCE OF TRUTH for speedup calculation.
+        Used by both the sidebar navigator and the query performance table.
+        
         Args:
-            original_cost: Original query cost
-            rewritten_cost: Rewritten query cost
+            original_cost: Original query cost (from 'none' algorithm baseline)
+            rewritten_cost: Rewritten query cost (optimized)
             
         Returns:
-            Speedup factor (>1 means improvement)
+            Speedup factor (>1 means improvement, 1.0 for edge cases)
         """
-        if rewritten_cost == 0:
-            return float('inf')
-        return original_cost / rewritten_cost
+        # Both must be positive for meaningful speedup
+        if rewritten_cost > 0 and original_cost > 0:
+            return original_cost / rewritten_cost
+        # Edge cases: return 1.0 (no change) to avoid inf or misleading values
+        return 1.0
     
     @staticmethod
     def categorize_speedup(speedup: float) -> str:
@@ -97,15 +102,20 @@ class DataProcessor:
         
         df = pd.DataFrame(query_perf)
         
-        # Add computed columns
-        if 'original_cost' in df.columns and 'rewritten_cost' in df.columns:
-            df['speedup'] = df.apply(
-                lambda row: DataProcessor.calculate_speedup(
-                    row['original_cost'], 
-                    row['rewritten_cost']
-                ),
-                axis=1
-            )
+        # Only calculate speedup if not already present
+        # This ensures consistency with the source data from result_loader
+        if 'speedup' not in df.columns:
+            if 'original_cost' in df.columns and 'rewritten_cost' in df.columns:
+                df['speedup'] = df.apply(
+                    lambda row: DataProcessor.calculate_speedup(
+                        row['original_cost'], 
+                        row['rewritten_cost']
+                    ),
+                    axis=1
+                )
+        
+        # Add category based on speedup
+        if 'speedup' in df.columns:
             df['category'] = df['speedup'].apply(DataProcessor.categorize_speedup)
         
         return df

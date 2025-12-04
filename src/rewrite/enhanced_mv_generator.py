@@ -395,6 +395,14 @@ FROM {from_clause}{where_clause};"""
         
         import re
         
+        # SQLキーワードとリテラルパターン（除外対象）
+        sql_keywords = {
+            'AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'IS', 'NULL', 'TRUE', 'FALSE',
+            'LIKE', 'ILIKE', 'BETWEEN', 'EXISTS', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END',
+            'ASC', 'DESC', 'NULLS', 'FIRST', 'LAST', 'AS', 'CAST', 'text', 'integer',
+            'varchar', 'boolean', 'date', 'timestamp', 'numeric', 'float', 'double'
+        }
+        
         # カラム参照のパターンを検出: (カラム名):: の形式
         # 既にエイリアスが付いている場合はスキップ（alias.column の形式）
         def replace_column_cast(match):
@@ -403,30 +411,63 @@ FROM {from_clause}{where_clause};"""
             # 既にエイリアスが付いているかチェック
             if '.' in column_name:
                 return full_match  # そのまま返す
+            # SQLキーワードはスキップ
+            if column_name.upper() in sql_keywords:
+                return full_match
             # エイリアスを追加: (カラム名):: → (alias.カラム名)::
             return f"({table_alias}.{column_name})::"
         
         # パターン1: (カラム名):: → (alias.カラム名)::
         result = re.sub(r'\((\w+)\)::', replace_column_cast, filter_condition)
         
-        # パターン2: WHERE句などで単独で使われるカラム名
-        # 例: "note = 'something'" → "it.note = 'something'"
+        # パターン2: (カラム名 IS NOT NULL) または (カラム名 IS NULL) の形式
+        # 例: "(note IS NOT NULL)" → "(alias.note IS NOT NULL)"
+        def replace_is_null_pattern(match):
+            prefix = match.group(1)  # 前の括弧やスペース
+            column_name = match.group(2)
+            rest = match.group(3)  # "IS NOT NULL" または "IS NULL" など
+            
+            # 既にエイリアスが付いている場合はスキップ
+            if '.' in column_name:
+                return match.group(0)
+            # SQLキーワードはスキップ
+            if column_name.upper() in sql_keywords:
+                return match.group(0)
+            
+            return f"{prefix}{table_alias}.{column_name}{rest}"
+        
+        # (column IS NULL) / (column IS NOT NULL) パターン
+        result = re.sub(
+            r'(\(|\s)(\w+)(\s+IS\s+(?:NOT\s+)?NULL)',
+            replace_is_null_pattern,
+            result,
+            flags=re.IGNORECASE
+        )
+        
+        # パターン3: WHERE句などで単独で使われるカラム名
+        # 例: "note = 'something'" → "alias.note = 'something'"
         # ただし、関数名や既にエイリアスが付いているものは除外
         def replace_bare_column(match):
             prefix = match.group(1)  # 前の文字（スペースや括弧）
             column_name = match.group(2)
             suffix = match.group(3)  # 後ろの文字（演算子など）
             
-            # 既にエイリアスが付いている、または関数名の可能性がある場合はスキップ
-            if '.' in column_name or column_name.upper() in ['AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL']:
+            # 既にエイリアスが付いている場合はスキップ
+            if '.' in column_name:
+                return match.group(0)
+            # SQLキーワードはスキップ
+            if column_name.upper() in sql_keywords:
                 return match.group(0)
             
             return f"{prefix}{table_alias}.{column_name}{suffix}"
         
         # 単語境界で囲まれたカラム名を検出（演算子の前など）
-        # (?<![.]) で「直前がドットでない」ことを確認
-        result = re.sub(r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY))', 
-                       replace_bare_column, result, flags=re.IGNORECASE)
+        result = re.sub(
+            r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY))',
+            replace_bare_column,
+            result,
+            flags=re.IGNORECASE
+        )
         
         return result
     

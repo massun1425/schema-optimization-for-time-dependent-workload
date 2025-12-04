@@ -140,7 +140,7 @@ with col1:
 
 with col2:
     if st.button("⚙️ Configure Settings"):
-        st.switch_page("pages/5_⚙️_Settings.py")
+        st.switch_page("pages/3_⚙️_Settings.py")
 
 # Recent activity
 st.markdown("---")
