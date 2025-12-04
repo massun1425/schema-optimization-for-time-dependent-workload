@@ -129,11 +129,51 @@ class QueryExecutor:
                 'error': str(e)
             }
     
+    def _warmup_queries(
+        self,
+        query_files: list,
+        timeout_minutes: int = 30,
+        verbose: bool = False
+    ) -> float:
+        """キャッシュウォームアップのためクエリを事前実行
+        
+        Args:
+            query_files: クエリファイルのリスト
+            timeout_minutes: タイムアウト時間（分）
+            verbose: 詳細ログを出力するか
+            
+        Returns:
+            ウォームアップにかかった時間（秒）
+        """
+        logger.info("=" * 50)
+        logger.info("Starting cache warmup (results will not be counted)...")
+        logger.info("=" * 50)
+        
+        warmup_start = time.time()
+        
+        for idx, query_file in enumerate(query_files, 1):
+            if verbose:
+                logger.info(f"  [Warmup {idx}/{len(query_files)}] {query_file.name}")
+            else:
+                # 進捗を10%ごとに表示
+                if idx == 1 or idx == len(query_files) or idx % max(1, len(query_files) // 10) == 0:
+                    logger.info(f"  [Warmup] {idx}/{len(query_files)} ({idx * 100 // len(query_files)}%)")
+            
+            # クエリを実行（結果は記録しない）
+            self.execute_query_file(query_file, timeout_minutes)
+        
+        warmup_elapsed = time.time() - warmup_start
+        logger.info(f"✓ Warmup completed in {warmup_elapsed:.2f}s")
+        logger.info("=" * 50)
+        
+        return warmup_elapsed
+
     def execute_benchmark(
         self, 
         query_dir: Path,
         timeout_minutes: int = 30,
-        verbose: bool = False
+        verbose: bool = False,
+        warmup: bool = True
     ) -> dict:
         """ベンチマークを実行
         
@@ -141,6 +181,7 @@ class QueryExecutor:
             query_dir: クエリファイルが格納されているディレクトリ
             timeout_minutes: 各クエリのタイムアウト時間（分）
             verbose: 詳細ログを出力するか
+            warmup: ウォームアップを実行するか（デフォルト: True）
             
         Returns:
             ベンチマーク結果の辞書
@@ -167,11 +208,17 @@ class QueryExecutor:
         
         logger.info(f"Found {len(query_files)} queries to execute")
         
+        # ウォームアップ実行（総実行時間には含めない）
+        warmup_time = 0.0
+        if warmup:
+            warmup_time = self._warmup_queries(query_files, timeout_minutes, verbose)
+        
         results = []
         successful = 0
         failed = 0
         total_time = 0
         
+        logger.info("Starting actual benchmark measurement...")
         benchmark_start = time.time()
         
         for idx, query_file in enumerate(query_files, 1):
@@ -206,6 +253,8 @@ class QueryExecutor:
         # サマリーを表示
         logger.info("")
         logger.info("Benchmark Summary:")
+        if warmup:
+            logger.info(f"  Warmup time: {warmup_time:.2f}s (not included in total)")
         logger.info(f"  Total queries: {len(query_files)}")
         logger.info(f"  ✓ Successful: {successful}")
         logger.info(f"  ✗ Failed: {failed}")
@@ -220,5 +269,7 @@ class QueryExecutor:
             'total_time': round(total_time, 2),
             'benchmark_elapsed': round(benchmark_elapsed, 2),
             'avg_time_per_query': round(total_time / len(query_files), 2) if query_files else 0,
+            'warmup_enabled': warmup,
+            'warmup_time': round(warmup_time, 2) if warmup else 0,
             'queries': results
         }

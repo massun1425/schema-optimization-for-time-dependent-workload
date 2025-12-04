@@ -146,6 +146,12 @@ def parse_args():
         type=str,
         help="Path to configuration YAML file (overrides default)"
     )
+    
+    parser.add_argument(
+        "--no-warmup",
+        action="store_true",
+        help="Disable cache warmup before benchmark (warmup is enabled by default)"
+    )
 
     return parser.parse_args()
 
@@ -225,6 +231,7 @@ def run_ilp_optimization(
     settings,  # Settings object with execution phase config
     storage_limit: int = 50 * 1024 * 1024,
     verbose: bool = False,
+    warmup: bool = True,
 ) -> None:
     """ILP最適化を実行（src/ モジュールのみ使用）
 
@@ -234,6 +241,7 @@ def run_ilp_optimization(
         settings: Settings object with execution configuration
         storage_limit: ストレージ上限（バイト）
         verbose: 詳細出力
+        warmup: ベンチマーク前にキャッシュウォームアップを行うか
     """
     logger.info(f"\n{'='*60}")
     logger.info(f"Running ILP: {ilp_type}")
@@ -574,6 +582,7 @@ def run_ilp_optimization(
             failed_count = 0
             mv_creation_log = []
             total_mvs = len(sorted_mvs)
+            index_created_count = 0
             
             for idx, mv in enumerate(sorted_mvs, 1):
                 mv_start = time.time()
@@ -585,10 +594,22 @@ def run_ilp_optimization(
                     success = mv_manager.create_view_from_model(mv, replace=True)
                     mv_time = time.time() - mv_start
                     
+                    index_created = False
                     if success:
                         created_count += 1
                         status = "SUCCESS"
                         logger.info(f"  ✓ {mv.view_id} created successfully ({mv_time:.2f}s)")
+                        
+                        # Create index if index_sql is provided
+                        if mv.index_sql:
+                            try:
+                                logger.info(f"    Creating index for {mv.view_id}...")
+                                mv_manager.db.execute(mv.index_sql)
+                                index_created = True
+                                index_created_count += 1
+                                logger.info(f"    ✓ Index created successfully")
+                            except Exception as idx_e:
+                                logger.warning(f"    ⚠ Failed to create index: {str(idx_e)[:50]}")
                     else:
                         failed_count += 1
                         status = "FAILED"
@@ -600,6 +621,7 @@ def run_ilp_optimization(
                         "status": status,
                         "creation_time": round(mv_time, 2),
                         "size_mb": round(mv.size / (1024 * 1024), 2),
+                        "index_created": index_created,
                     })
                 except Exception as e:
                     failed_count += 1
@@ -617,6 +639,7 @@ def run_ilp_optimization(
                         "status": "ERROR",
                         "creation_time": round(mv_time, 2),
                         "error": str(e),
+                        "index_created": False,
                     })
                     
                     if verbose:
@@ -631,6 +654,7 @@ def run_ilp_optimization(
             logger.info(f"MV Creation Summary:")
             logger.info(f"  ✓ Success: {created_count}/{total_mvs} ({success_rate:.1f}%)")
             logger.info(f"  ✗ Failed:  {failed_count}/{total_mvs} ({failed_count/total_mvs*100:.1f}%)")
+            logger.info(f"  🔍 Indexes: {index_created_count} created")
             logger.info(f"  ⏱  Total time: {phase_times['mv_creation']:.2f} seconds")
             logger.info(f"  ⚡ Avg time per MV: {phase_times['mv_creation']/total_mvs:.2f} seconds")
             
@@ -792,11 +816,12 @@ def run_ilp_optimization(
                 # QueryExecutorを初期化
                 executor = QueryExecutor(settings)
                 
-                # ベンチマークを実行
+                # ベンチマークを実行（warmupオプション付き）
                 benchmark_results = executor.execute_benchmark(
                     rewritten_dir,
                     timeout_minutes=30,
-                    verbose=verbose
+                    verbose=verbose,
+                    warmup=warmup
                 )
                 
                 phase_times['benchmark'] = time.time() - phase_start
@@ -927,6 +952,7 @@ def main():
                 settings=settings,
                 storage_limit=storage_limit,
                 verbose=args.verbose,
+                warmup=not args.no_warmup,
             )
         except Exception as e:
             logger.error(f"\n✗ Error running {ilp_type}: {e}")

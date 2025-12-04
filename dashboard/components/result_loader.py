@@ -13,12 +13,19 @@ import sys
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+from dashboard.utils.data_processor import DataProcessor
+
 
 class ResultLoader:
     """Loads experiment results from various file formats"""
     
     def __init__(self, output_dir: str = "Output"):
-        self.output_dir = Path(output_dir)
+        # Handle relative paths - make them relative to project root
+        output_path = Path(output_dir)
+        if not output_path.is_absolute():
+            output_path = project_root / output_dir
+        self.output_dir = output_path
+        print(f"[DEBUG] ResultLoader initialized with output_dir: {self.output_dir}")
         
     def list_experiments(self) -> List[Dict]:
         """List all available experiments
@@ -148,6 +155,42 @@ class ResultLoader:
         
         return results if results else None
     
+    def _load_baseline_times(self) -> Dict[str, float]:
+        """Load baseline execution times from 'none' algorithm (no optimization)
+        
+        Returns:
+            Dictionary mapping query_id to original execution time
+        """
+        baseline_times = {}
+        none_benchmark = self.output_dir / 'none' / 'benchmark' / 'benchmark_results.json'
+        
+        if not none_benchmark.exists():
+            print(f"[DEBUG] Baseline file not found: {none_benchmark}")
+            return baseline_times
+        
+        try:
+            with open(none_benchmark, 'r') as f:
+                baseline_data = json.load(f)
+            
+            if 'queries' in baseline_data:
+                for q in baseline_data['queries']:
+                    query_id = q.get('query_id', '')
+                    exec_time = q.get('execution_time', 0)
+                    success = q.get('success', False)
+                    # Include all successful queries, even with 0 execution time
+                    if success:
+                        baseline_times[query_id] = exec_time
+                
+                print(f"[DEBUG] Loaded {len(baseline_times)} baseline times from 'none' algorithm")
+                # Print a few examples
+                sample_keys = list(baseline_times.keys())[:5]
+                for k in sample_keys:
+                    print(f"[DEBUG]   {k}: {baseline_times[k]}")
+        except Exception as e:
+            print(f"Error loading baseline times: {e}")
+        
+        return baseline_times
+    
     def load_query_performance(self, algorithm: str) -> Optional[List[Dict]]:
         """Load query performance data
         
@@ -159,6 +202,9 @@ class ResultLoader:
         """
         algo_dir = self.output_dir / algorithm
         
+        # Load baseline times from 'none' algorithm (original, no optimization)
+        baseline_times = self._load_baseline_times()
+        
         # Try benchmark results first
         benchmark_file = algo_dir / 'benchmark' / 'benchmark_results.json'
         if benchmark_file.exists():
@@ -169,36 +215,26 @@ class ResultLoader:
             if 'queries' in benchmark_data and isinstance(benchmark_data['queries'], list):
                 performance = []
                 
-                # Try to load baseline (normal algorithm) for comparison
-                baseline_times = {}
-                normal_benchmark = self.output_dir / 'normal' / 'benchmark' / 'benchmark_results.json'
-                if normal_benchmark.exists() and algorithm != 'normal':
-                    try:
-                        with open(normal_benchmark, 'r') as f:
-                            baseline_data = json.load(f)
-                        if 'queries' in baseline_data:
-                            for q in baseline_data['queries']:
-                                baseline_times[q.get('query_id', '')] = q.get('execution_time', 0)
-                    except:
-                        pass
-                
                 for query in benchmark_data['queries']:
                     query_id = query.get('query_id', '')
                     exec_time = query.get('execution_time', 0)
                     
-                    # Use baseline for comparison if available
-                    baseline_time = baseline_times.get(query_id, exec_time * 1.2)  # Default to 20% slower
+                    # Get original execution time from 'none' algorithm
+                    original_time = baseline_times.get(query_id, 0)
                     
-                    if baseline_time > 0 and exec_time > 0:
-                        speedup = baseline_time / exec_time
-                    else:
+                    # Use DataProcessor.calculate_speedup for consistent speedup calculation
+                    # This is the SINGLE SOURCE OF TRUTH
+                    speedup = DataProcessor.calculate_speedup(original_time, exec_time)
+                    
+                    # For 'none' algorithm, speedup should be 1.0 (comparing to itself)
+                    if algorithm == 'none':
                         speedup = 1.0
                     
                     perf = {
                         'query_id': query_id,
-                        'original_cost': baseline_time,
-                        'rewritten_cost': exec_time,
-                        'improvement': baseline_time - exec_time,
+                        'original_cost': original_time,  # Original execution time (from 'none')
+                        'rewritten_cost': exec_time,     # Rewritten query execution time
+                        'improvement': original_time - exec_time if original_time > 0 else 0,
                         'speedup': speedup,
                         'execution_time': exec_time,
                         'success': query.get('success', True)
@@ -213,7 +249,7 @@ class ResultLoader:
                 if isinstance(data, dict) and query_id not in ['total_queries', 'successful', 'failed', 'total_time', 'benchmark_elapsed', 'avg_time_per_query']:
                     original_cost = data.get('original_cost', 0)
                     rewritten_cost = data.get('rewritten_cost', 0)
-                    speedup = original_cost / rewritten_cost if rewritten_cost > 0 else 1.0
+                    speedup = DataProcessor.calculate_speedup(original_cost, rewritten_cost)
                     
                     perf = {
                         'query_id': query_id,
@@ -334,6 +370,79 @@ class ResultLoader:
                         comparison['queries'][query_id][algo] = qp
         
         return comparison
+    
+    def load_execution_summary(self, algorithm: str) -> Optional[Dict]:
+        """Load comprehensive execution summary for an algorithm
+        
+        This includes timing for all phases, benchmark results summary,
+        and MV creation statistics.
+        
+        Args:
+            algorithm: Algorithm name
+            
+        Returns:
+            Comprehensive execution summary or None
+        """
+        algo_dir = self.output_dir / algorithm
+        summary = {}
+        
+        # Load summary.json (phase timings)
+        summary_file = algo_dir / 'summary.json'
+        if summary_file.exists():
+            try:
+                with open(summary_file, 'r') as f:
+                    summary_data = json.load(f)
+                summary['total_execution_time'] = summary_data.get('total_execution_time', 0)
+                summary['phases'] = summary_data.get('phases', {})
+                summary['timestamp'] = summary_data.get('timestamp', '')
+            except Exception as e:
+                print(f"Error loading summary.json: {e}")
+        
+        # Load benchmark results
+        benchmark_file = algo_dir / 'benchmark' / 'benchmark_results.json'
+        if benchmark_file.exists():
+            try:
+                with open(benchmark_file, 'r') as f:
+                    benchmark_data = json.load(f)
+                summary['benchmark'] = {
+                    'total_queries': benchmark_data.get('total_queries', 0),
+                    'successful': benchmark_data.get('successful', 0),
+                    'failed': benchmark_data.get('failed', 0),
+                    'total_time': benchmark_data.get('total_time', 0),
+                    'benchmark_elapsed': benchmark_data.get('benchmark_elapsed', 0),
+                    'avg_time_per_query': benchmark_data.get('avg_time_per_query', 0),
+                }
+                # Get failed query details
+                if 'queries' in benchmark_data:
+                    failed_queries = [q for q in benchmark_data['queries'] if not q.get('success', True)]
+                    summary['benchmark']['failed_queries'] = failed_queries
+            except Exception as e:
+                print(f"Error loading benchmark results: {e}")
+        
+        # Load MV creation log
+        creation_log_file = algo_dir / 'mv_creation' / 'creation_log.json'
+        if creation_log_file.exists():
+            try:
+                with open(creation_log_file, 'r') as f:
+                    creation_data = json.load(f)
+                summary['mv_creation'] = {
+                    'total_mvs': creation_data.get('total_mvs', 0),
+                    'created': creation_data.get('created', 0),
+                    'failed': creation_data.get('failed', 0),
+                    'total_time': creation_data.get('total_time', 0),
+                }
+                # Get failed MV details
+                if 'mvs' in creation_data:
+                    failed_mvs = [mv for mv in creation_data['mvs'] if mv.get('status') != 'SUCCESS']
+                    summary['mv_creation']['failed_mvs'] = failed_mvs
+                    
+                    # Calculate total size of created MVs
+                    total_size_mb = sum(mv.get('size_mb', 0) for mv in creation_data['mvs'] if mv.get('status') == 'SUCCESS')
+                    summary['mv_creation']['total_size_mb'] = total_size_mb
+            except Exception as e:
+                print(f"Error loading MV creation log: {e}")
+        
+        return summary if summary else None
     
     def load_execution_plan(self, algorithm: str, query_id: str, plan_type: str = 'rewritten') -> Optional[Dict]:
         """Load execution plan for a query
