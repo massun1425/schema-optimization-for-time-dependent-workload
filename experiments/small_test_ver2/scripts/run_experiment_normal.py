@@ -34,21 +34,30 @@ from src.core.query_parser import QueryParser
 from src.optimization.factory import OptimizerFactory
 from src.utils.legacy import get_all_job_queries, natural_sort_key
 
+# Docker/Local switching helper
+experiment_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(experiment_dir))
+from utils.postgres_executor import PostgresExecutor, add_docker_args
+
 
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = ""):
+    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None):
         """初期化
         
         Args:
             exp_dir: 実験ディレクトリのパス
             query_set: 使用するクエリセット名 (例: job, job_like, explicit_join)
             exp_suffix: 実験識別用サフィックス (例: _16_2, _16_4)
+            use_docker: Dockerを使用するかどうか (None: 環境変数から判定)
         """
         self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
         self.exp_suffix = exp_suffix  # サフィックスを保存
+        
+        # PostgreSQL Executorを初期化
+        self.pg_executor = PostgresExecutor(use_docker=use_docker)
         
         # config.yamlを使わず、settings.pyのデフォルト値を使用
         # デフォルト値:
@@ -202,9 +211,9 @@ class NormalModeExperiment:
             # 失敗しても続行（警告のみ）
         
         # ベーステーブルのANALYZEを実行
-        self.print_info("ベーステーブルの統計情報を更新中...")
-        if not self._analyze_base_tables():
-            self.print_error("ベーステーブルのANALYZEに失敗しました")
+        # self.print_info("ベーステーブルの統計情報を更新中...")
+        # if not self._analyze_base_tables():
+        #     self.print_error("ベーステーブルのANALYZEに失敗しました")
             # 失敗しても続行（警告のみ）
         # クリーンアップが完了してから計測開始
         phase_start = time.time()
@@ -245,20 +254,12 @@ class NormalModeExperiment:
             
             # EXPLAIN JSON を実行（Bitmap Scanを無効化）
             # SET文とEXPLAINを分けて実行し、EXPLAIN結果のみを取得
-            explain_sql = f"EXPLAIN (FORMAT JSON, COSTS TRUE, VERBOSE FALSE) {query_sql}"
             
             try:
-                result = subprocess.run(
-                    ["psql", "-U", "postgres", "-d", self.settings.database.database,
-                     "-t", "-A", 
-                     "-c", "SET enable_bitmapscan = off;",
-                     "-c", explain_sql],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    encoding='utf-8',
-                    errors='replace',
-                    env={**subprocess.os.environ, 'PGPASSWORD': ''}
+                result = self.pg_executor.run_explain_json(
+                    query_sql,
+                    database=self.settings.database.database,
+                    set_options=["SET enable_bitmapscan = off;"]
                 )
                 
                 # 出力から最後のJSON部分のみを抽出（SET文の出力を除外）
@@ -1915,9 +1916,20 @@ def main():
         help='実験識別用サフィックス（例：_16_2, _16_4）。頻度ファイルと最適化結果ファイルに適用'
     )
     
+    # Docker/Local switching arguments
+    add_docker_args(parser)
+    
     args = parser.parse_args()
     
-    exp = NormalModeExperiment(exp_dir=args.config, query_set=args.query_set, exp_suffix=args.exp_suffix)
+    exp = NormalModeExperiment(
+        exp_dir=args.config, 
+        query_set=args.query_set, 
+        exp_suffix=args.exp_suffix,
+        use_docker=args.use_docker
+    )
+    
+    # 接続モードを表示
+    print(f"\n[接続モード: {exp.pg_executor.get_mode_description()}]")
     
     if args.phase == 'all':
         success = exp.run_all_phases(optimization_mode=args.optimization_mode, use_pruning=args.use_pruning)
