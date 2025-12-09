@@ -327,11 +327,11 @@ class LocalILPOptimizer:
         
         self.model.setObjective(workload + migration, gp.GRB.MINIMIZE)
     
-    def optimize(self, time_limit: float = 60.0) -> dict:
+    def optimize(self, time_limit: float = None) -> dict:
         """Run the optimization and return results.
         
         Args:
-            time_limit: Time limit in seconds (default: 60s)
+            time_limit: Time limit in seconds (default: None = no limit)
         
         Returns:
             Dictionary containing:
@@ -344,7 +344,9 @@ class LocalILPOptimizer:
         self.model = gp.Model("LocalILP")
         try:
             self.model.Params.OutputFlag = self.gurobi_output
-            self.model.Params.TimeLimit = time_limit
+            if time_limit is not None:
+                self.model.Params.TimeLimit = time_limit
+            # self.model.Params.Threads = 4  # Multi-threaded for consistency
             
             # Build model
             self._build_variables()

@@ -606,16 +606,19 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
-    def phase6_optimize(self, mode='dynamic', use_pruning=False):
+    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
         """フェーズ6: MV最適化
         
         Args:
             mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
             use_pruning: プルーニングを使用するかどうか (デフォルト: False)
+            pruning_parallel: プルーニングを並列実行するかどうか (デフォルト: False)
+            pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
+            static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
         """
         # 最初にモードで分岐
         if mode == 'static':
-            return self.phase6b_optimize_static()
+            return self.phase6b_optimize_static(timestep_position=static_timestep)
         
         # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
@@ -637,7 +640,12 @@ class NormalModeExperiment:
         
         self.print_info("時間依存型最適化（マイグレーションコスト考慮）を実行")
         if use_pruning:
-            self.print_info("  プルーニングを使用します")
+            mode_str = "並列" if pruning_parallel else "逐次"
+            self.print_info(f"  プルーニングを使用します（{mode_str}実行）")
+            if pruning_parallel:
+                import multiprocessing
+                workers = pruning_workers or multiprocessing.cpu_count()
+                self.print_info(f"  ワーカー数: {workers}")
         
         # フェーズ時間計測開始
         phase_start = time.time()
@@ -696,6 +704,8 @@ class NormalModeExperiment:
                     migration_recipes=recipes,
                     query_frequency_by_timestep=frequencies,
                     gurobi_output=0,  # プルーニング中は静かに
+                    use_parallel=pruning_parallel,
+                    max_workers=pruning_workers,
                 )
                 
                 promising_mvs = pruner.prune_candidates()
@@ -935,9 +945,14 @@ class NormalModeExperiment:
         
         return enhanced
     
-    def phase6b_optimize_static(self):
-        """フェーズ6b: 静的最適化（時間依存なし・初期タイムステップのみ）"""
-        self.print_header("静的最適化（初期タイムステップ）", 6.5)
+    def phase6b_optimize_static(self, timestep_position='last'):
+        """フェーズ6b: 静的最適化（時間依存なし・単一タイムステップのみ）
+        
+        Args:
+            timestep_position: 使用するタイムステップ ('first': 最初, 'last': 最後)
+        """
+        position_name = "最初" if timestep_position == 'first' else "最終"
+        self.print_header(f"静的最適化（{position_name}タイムステップ）", 6.5)
         
         if not self.pickle_path.exists():
             self.print_error(f"{self.pickle_path} が見つかりません")
@@ -972,22 +987,27 @@ class NormalModeExperiment:
                 self.print_error("タイムステップ情報がありません")
                 return False
                 
-            # 初期タイムステップ（Timestep 0）の頻度を取得
-            initial_timestep = timesteps[0]
-            initial_frequencies = frequencies[initial_timestep]
-            self.print_info(f"初期タイムステップ: {initial_timestep}")
+            # タイムステップの選択
+            if timestep_position == 'first':
+                selected_timestep = timesteps[0]
+                self.print_info(f"使用タイムステップ: {selected_timestep} (最初)")
+            else:  # 'last'
+                selected_timestep = timesteps[-1]
+                self.print_info(f"使用タイムステップ: {selected_timestep} (最後)")
+            
+            selected_frequencies = frequencies[selected_timestep]
             
             # 頻度の次元調整
             query_count = len(self.qp.u_ij)
-            if len(initial_frequencies) < query_count:
-                initial_frequencies.extend([1.0] * (query_count - len(initial_frequencies)))
+            if len(selected_frequencies) < query_count:
+                selected_frequencies.extend([1.0] * (query_count - len(selected_frequencies)))
             else:
-                initial_frequencies = initial_frequencies[:query_count]
+                selected_frequencies = selected_frequencies[:query_count]
                 
             # 重み付き効用を計算 (u_ij * frequency)
             weighted_u_ij = []
             for i in range(len(self.qp.u_ij)):
-                freq = initial_frequencies[i]
+                freq = selected_frequencies[i]
                 weighted_row = [u * freq for u in self.qp.u_ij[i]]
                 weighted_u_ij.append(weighted_row)
             
@@ -1025,7 +1045,7 @@ class NormalModeExperiment:
             
             static_result = {
                 "algorithm": "static_normal",
-                "timestep": initial_timestep,
+                "timestep": selected_timestep,
                 "selected_mvs": selected_mvs,
                 "mv_count": len(selected_mvs),
                 "total_size": total_size,
@@ -1439,7 +1459,12 @@ class NormalModeExperiment:
             timestep_output_dir.mkdir(parents=True, exist_ok=True)
             
             # Rewrite queries using QueryRewriter with settings
-            rewriter = QueryRewriter(self.settings)
+            # settingsをコピーしてクエリディレクトリを指定
+            from copy import deepcopy
+            rewrite_settings = deepcopy(self.settings)
+            rewrite_settings.benchmark.sql_dir = str(self.queries_dir.parent)  # 01_queriesディレクトリを指定
+            
+            rewriter = QueryRewriter(rewrite_settings)
             rewritten_queries = rewriter.rewrite_queries(mv_objects)
             
             # Save rewritten queries
@@ -1522,7 +1547,12 @@ class NormalModeExperiment:
                 mv_objects.append(mv)
             
             # 書き換え実行
-            rewriter = QueryRewriter(self.settings)
+            # settingsをコピーしてクエリディレクトリを指定
+            from copy import deepcopy
+            rewrite_settings = deepcopy(self.settings)
+            rewrite_settings.benchmark.sql_dir = str(self.queries_dir.parent)  # 01_queriesディレクトリを指定
+            
+            rewriter = QueryRewriter(rewrite_settings)
             rewritten_queries = rewriter.rewrite_queries(mv_objects)
             
             # 保存先
@@ -1728,12 +1758,15 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
         """最適化以降のフェーズを実行 (Phase 6-9)
         
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
             use_pruning: CF Pruningを使用するか (デフォルト: False)
+            pruning_parallel: プルーニングを並列実行するか (デフォルト: False)
+            pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
+            static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
         """
         self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
         
@@ -1743,7 +1776,13 @@ class NormalModeExperiment:
         total_start_time = time.time()
         
         # 最適化フェーズ（モードに応じて選択）
-        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode, use_pruning=use_pruning))
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(
+            mode=optimization_mode, 
+            use_pruning=use_pruning,
+            pruning_parallel=pruning_parallel,
+            pruning_workers=pruning_workers,
+            static_timestep=static_timestep
+        ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
@@ -1780,12 +1819,15 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
         """全フェーズを順次実行
         
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
             use_pruning: CF Pruningを使用するか (デフォルト: False)
+            pruning_parallel: プルーニングを並列実行するか (デフォルト: False)
+            pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
+            static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
         """
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
         
@@ -1805,7 +1847,13 @@ class NormalModeExperiment:
         ]
         
         # 最適化フェーズ（モードに応じて選択）
-        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(mode=optimization_mode, use_pruning=use_pruning))
+        optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(
+            mode=optimization_mode, 
+            use_pruning=use_pruning,
+            pruning_parallel=pruning_parallel,
+            pruning_workers=pruning_workers,
+            static_timestep=static_timestep
+        ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
@@ -1910,10 +1958,28 @@ def main():
         help='CF Pruningを使用してMV候補を削減する（大きなタイムステップ数の場合に推奨）'
     )
     parser.add_argument(
+        '--pruning-parallel',
+        action='store_true',
+        help='CF Pruningを並列実行する（多コアサーバーで推奨）'
+    )
+    parser.add_argument(
+        '--pruning-workers',
+        type=int,
+        default=None,
+        help='並列実行時のワーカー数（デフォルト：CPUコア数）'
+    )
+    parser.add_argument(
         '--exp-suffix',
         type=str,
         default='',
         help='実験識別用サフィックス（例：_16_2, _16_4）。頻度ファイルと最適化結果ファイルに適用'
+    )
+    parser.add_argument(
+        '--static-timestep',
+        type=str,
+        default='last',
+        choices=['first', 'last'],
+        help='静的最適化で使用するタイムステップ (first: 最初, last: 最後)'
     )
     
     # Docker/Local switching arguments
@@ -1932,9 +1998,21 @@ def main():
     print(f"\n[接続モード: {exp.pg_executor.get_mode_description()}]")
     
     if args.phase == 'all':
-        success = exp.run_all_phases(optimization_mode=args.optimization_mode, use_pruning=args.use_pruning)
+        success = exp.run_all_phases(
+            optimization_mode=args.optimization_mode, 
+            use_pruning=args.use_pruning,
+            pruning_parallel=args.pruning_parallel,
+            pruning_workers=args.pruning_workers,
+            static_timestep=args.static_timestep
+        )
     elif args.phase == 'post-opt':
-        success = exp.run_post_optimization_phases(optimization_mode=args.optimization_mode, use_pruning=args.use_pruning)
+        success = exp.run_post_optimization_phases(
+            optimization_mode=args.optimization_mode, 
+            use_pruning=args.use_pruning,
+            pruning_parallel=args.pruning_parallel,
+            pruning_workers=args.pruning_workers,
+            static_timestep=args.static_timestep
+        )
     elif args.phase == '0':
         success = exp.phase0_setup()
     elif args.phase == '1':
@@ -1948,9 +2026,15 @@ def main():
     elif args.phase == '5':
         success = exp.phase5_calculate_migration_costs(use_neurocard=args.use_neurocard, use_sampling=args.use_sampling)
     elif args.phase == '6':
-        success = exp.phase6_optimize(mode=args.optimization_mode, use_pruning=args.use_pruning)
+        success = exp.phase6_optimize(
+            mode=args.optimization_mode, 
+            use_pruning=args.use_pruning,
+            pruning_parallel=args.pruning_parallel,
+            pruning_workers=args.pruning_workers,
+            static_timestep=args.static_timestep
+        )
     elif args.phase == '6.5':
-        success = exp.phase6b_optimize_static()
+        success = exp.phase6b_optimize_static(timestep_position=args.static_timestep)
     elif args.phase == '7':
         success = exp.phase7_generate_mv_sql(mode=args.optimization_mode)
     elif args.phase == '8':

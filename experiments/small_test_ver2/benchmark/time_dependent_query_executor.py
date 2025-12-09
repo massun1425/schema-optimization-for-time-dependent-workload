@@ -35,7 +35,13 @@ class TimeDependentQueryExecutor:
         self.connection = None
     
     def _get_connection(self):
-        """データベース接続を取得または作成"""
+        """データベース接続を取得または作成
+        
+        Note:
+            Docker環境でもlocalhost経由で接続（ポートフォワーディング使用）
+            Dockerコンテナは 0.0.0.0:5432->5432/tcp でマッピングされているため、
+            localhost:5432 で接続可能
+        """
         if self.connection is None or self.connection.closed:
             self.connection = psycopg2.connect(
                 host=self.db_config.host,
@@ -45,6 +51,7 @@ class TimeDependentQueryExecutor:
                 database=self.db_config.database
             )
         return self.connection
+
     
     def _execute_sql_file(
         self, 
@@ -685,7 +692,7 @@ class TimeDependentQueryExecutor:
         timesteps = optimization_result.get('timesteps', [])
         # 純粋な静的最適化の場合、timestepsが含まれていない可能性があるため、frequencies_by_timestepから取得
         if not timesteps and frequencies_by_timestep:
-            timesteps = sorted(frequencies_by_timestep.keys())
+            timesteps = sorted(frequencies_by_timestep.keys(), key=lambda x: int(x))
         
         if not migration_analysis and not is_pure_static:
             logger.error("No migration_analysis found in optimization result")

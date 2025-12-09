@@ -35,7 +35,9 @@ This "pin both ends, optimize the middle" approach ensures:
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Set, Tuple
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Dict, List, Set, Tuple, Optional
 
 from experiments.small_test_ver2.core.local_ilp_optimizer import LocalILPOptimizer
 from experiments.small_test_ver2.core.workload_summary_tree import (
@@ -68,6 +70,8 @@ class CFPruner:
         migration_recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
         query_frequency_by_timestep: Dict[str, List[float]],
         gurobi_output: int = 0,
+        use_parallel: bool = False,
+        max_workers: Optional[int] = 16,
     ):
         """Initialize the CF pruner.
         
@@ -81,6 +85,8 @@ class CFPruner:
             migration_recipes: Recipe costs for each MV
             query_frequency_by_timestep: Query frequencies for each timestep
             gurobi_output: Gurobi log level (0=off, 1=on)
+            use_parallel: Enable parallel processing (default: False)
+            max_workers: Maximum number of worker processes (default: CPU count)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -103,10 +109,18 @@ class CFPruner:
         # This is the same logic as TimeDependentOptimizer.initialize_candidates()
         self.cand_j = self._initialize_candidates()
         
+        # Parallel processing settings
+        self.use_parallel = use_parallel
+        if max_workers is None:
+            self.max_workers = multiprocessing.cpu_count()
+        else:
+            self.max_workers = max_workers
+        
         logger.info(
             f"CFPruner initialized: T={self.T}, J={self.J}, "
             f"candidates={len(self.cand_j)}, "
-            f"tree_depth={self.tree.get_depth()}, tree_nodes={len(self.tree.get_all_nodes())}"
+            f"tree_depth={self.tree.get_depth()}, tree_nodes={len(self.tree.get_all_nodes())}, "
+            f"parallel={self.use_parallel}, workers={self.max_workers if self.use_parallel else 'N/A'}"
         )
     
     def _initialize_candidates(self) -> List[int]:
@@ -144,8 +158,27 @@ class CFPruner:
         logger.info(f"Filtered candidates: {len(self.cand_j)}")
         logger.info(f"Tree depth: {self.tree.get_depth()}")
         logger.info(f"Tree nodes: {len(self.tree.get_all_nodes())}")
+        logger.info(f"Mode: {'Parallel' if self.use_parallel else 'Sequential'}")
+        if self.use_parallel:
+            logger.info(f"Workers: {self.max_workers}")
         logger.info("-" * 70)
         
+        # Choose parallel or sequential execution
+        if self.use_parallel:
+            promising_mvs = self._prune_candidates_parallel()
+        else:
+            promising_mvs = self._prune_candidates_sequential()
+        
+        logger.info("-" * 70)
+        logger.info(f"CF Pruning Completed!")
+        logger.info(f"Promising MVs: {len(promising_mvs)}/{self.J}")
+        logger.info(f"Reduction: {100.0 * (1 - len(promising_mvs) / self.J):.1f}%")
+        logger.info("=" * 70)
+        
+        return promising_mvs
+    
+    def _prune_candidates_sequential(self) -> Set[int]:
+        """Sequential (original) implementation of pruning."""
         # Collect promising MVs from all tree nodes
         promising_mvs: Set[int] = set()
         
@@ -157,18 +190,111 @@ class CFPruner:
         if self.tree.root:
             self._recursive_solve(
                 node=self.tree.root,
-                parent_min_mvs=set(),  # No parent constraints for root
-                parent_max_mvs=set(),  # No parent constraints for root
+                parent_min_mvs=set(),
+                parent_max_mvs=set(),
                 promising_mvs=promising_mvs,
                 is_left_child=False,
                 is_right_child=False,
             )
         
-        logger.info("-" * 70)
-        logger.info(f"CF Pruning Completed!")
-        logger.info(f"Promising MVs: {len(promising_mvs)}/{self.J}")
-        logger.info(f"Reduction: {100.0 * (1 - len(promising_mvs) / self.J):.1f}%")
-        logger.info("=" * 70)
+        return promising_mvs
+    
+    def _prune_candidates_parallel(self) -> Set[int]:
+        """Parallel implementation using level-by-level BFS approach.
+        
+        Processes all nodes at the same tree level in parallel, then proceeds
+        to the next level. This maintains parent-child dependency while
+        maximizing parallelism.
+        """
+        promising_mvs: Set[int] = set()
+        
+        if not self.tree.root:
+            return promising_mvs
+        
+        # Track statistics
+        self.node_count = 0
+        self.total_nodes = len(self.tree.get_all_nodes())
+        
+        # Level-by-level processing (BFS approach)
+        # Each level: (node, parent_min_mvs, parent_max_mvs, is_left, is_right)
+        current_level = [(self.tree.root, set(), set(), False, False)]
+        
+        while current_level:
+            next_level = []
+            
+            # Process all nodes at this level in parallel
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all tasks for this level
+                future_to_task = {}
+                for node, parent_min, parent_max, is_left, is_right in current_level:
+                    future = executor.submit(
+                        _solve_node_static,
+                        node,
+                        parent_min,
+                        parent_max,
+                        is_left,
+                        is_right,
+                        self.node_list,
+                        self.u_ij,
+                        self.X,
+                        self.b_j,
+                        self.B_max,
+                        self.timesteps,
+                        self.recipes,
+                        self.freq,
+                        self.cand_j,
+                        self.gurobi_output,
+                    )
+                    future_to_task[future] = node
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_task):
+                    node = future_to_task[future]
+                    try:
+                        result = future.result()
+                        
+                        # Update progress
+                        self.node_count += 1
+                        progress = f"[{self.node_count}/{self.total_nodes}]"
+                        
+                        # Collect promising MVs
+                        before_count = len(promising_mvs)
+                        promising_mvs.update(result['selected_mvs'])
+                        new_mvs = len(promising_mvs) - before_count
+                        
+                        logger.info(
+                            f"{progress} Processing node: timesteps {result['timestep_indices']}, depth={node.depth}"
+                        )
+                        logger.info(
+                            f"  ✓ Selected {len(result['selected_mvs'])} MVs "
+                            f"(+{new_mvs} new, total: {len(promising_mvs)})"
+                        )
+                        
+                        # Prepare children for next level
+                        if node.left_child:
+                            next_level.append((
+                                node.left_child,
+                                result['min_mvs'],
+                                result['median_mvs'],
+                                True,   # is_left_child
+                                False,  # is_right_child
+                            ))
+                        
+                        if node.right_child:
+                            next_level.append((
+                                node.right_child,
+                                result['median_mvs'],
+                                result['max_mvs'],
+                                False,  # is_left_child
+                                True,   # is_right_child
+                            ))
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing node: {e}")
+                        import traceback
+                        traceback.print_exc()
+            
+            current_level = next_level
         
         return promising_mvs
     
@@ -248,7 +374,7 @@ class CFPruner:
             gurobi_output=self.gurobi_output,
         )
         
-        result = local_optimizer.optimize(time_limit=60.0)
+        result = local_optimizer.optimize()
         
         # Extract selected MVs from all timesteps in this local solution
         selected_mvs_all_timesteps: Set[int] = set()
@@ -316,3 +442,108 @@ class CFPruner:
             "reduction_rate": 1.0 - (len(promising_mvs) / self.J) if self.J > 0 else 0.0,
             "promising_mv_names": [self.node_list[j] for j in sorted(promising_mvs)],
         }
+
+
+# ==============================================================================
+# Module-level function for parallel processing
+# ==============================================================================
+# This must be at module level (not a method) to be pickle-able for 
+# ProcessPoolExecutor
+
+def _solve_node_static(
+    node: TreeNode,
+    parent_min_mvs: Set[int],
+    parent_max_mvs: Set[int],
+    is_left_child: bool,
+    is_right_child: bool,
+    node_list: List[str],
+    u_ij: List[List[float]],
+    X: List[List[int]],
+    b_j: List[float],
+    B_max: float,
+    timesteps: List[str],
+    recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
+    freq: Dict[str, List[float]],
+    cand_j: List[int],
+    gurobi_output: int,
+) -> dict:
+    """Solve local ILP for a single tree node (static function for parallel processing).
+    
+    This is a module-level function (not a class method) so it can be pickled
+    and sent to worker processes.
+    
+    Args:
+        node: Current tree node
+        parent_min_mvs: MVs at parent's min boundary
+        parent_max_mvs: MVs at parent's max boundary
+        is_left_child: True if this is a left child
+        is_right_child: True if this is a right child
+        node_list: List of node IDs (MV candidates)
+        u_ij: Utility matrix
+        X: Inclusion matrix
+        b_j: Storage sizes
+        B_max: Storage budget
+        timesteps: All timestep names
+        recipes: Migration recipes
+        freq: Query frequencies by timestep
+        cand_j: Pre-filtered candidate indices
+        gurobi_output: Gurobi log level
+        
+    Returns:
+        Dictionary with solution info
+    """
+    # Prepare timestep indices for this node
+    timestep_indices = [node.min_idx, node.median_idx, node.max_idx]
+    
+    # Prepare fixed MV constraints based on parent boundaries
+    fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
+    
+    # Left child: fix min to parent's min, max to parent's median
+    if is_left_child:
+        if parent_min_mvs:
+            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+        if parent_max_mvs:
+            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+    
+    # Right child: fix min to parent's median, max to parent's max
+    if is_right_child:
+        if parent_min_mvs:
+            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+        if parent_max_mvs:
+            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+    
+    # Create and solve local ILP
+    local_optimizer = LocalILPOptimizer(
+        node_list=node_list,
+        u_ij=u_ij,
+        X=X,
+        b_j=b_j,
+        B_max=B_max,
+        timestep_indices=timestep_indices,
+        all_timesteps=timesteps,
+        migration_recipes=recipes,
+        query_frequency_by_timestep=freq,
+        fixed_mvs_by_timestep=fixed_mvs_by_timestep,
+        candidate_indices=cand_j,
+        gurobi_output=gurobi_output,
+    )
+    
+    result = local_optimizer.optimize()
+    
+    # Extract selected MVs from all timesteps in this local solution
+    selected_mvs_all_timesteps: Set[int] = set()
+    for t_idx, mvs in result["selected_mvs_by_timestep"].items():
+        selected_mvs_all_timesteps.update(mvs)
+    
+    # Extract MVs at each timestep for passing to children
+    min_mvs = result["selected_mvs_by_timestep"].get(node.min_idx, set())
+    median_mvs = result["selected_mvs_by_timestep"].get(node.median_idx, set())
+    max_mvs = result["selected_mvs_by_timestep"].get(node.max_idx, set())
+    
+    return {
+        "selected_mvs": selected_mvs_all_timesteps,
+        "min_mvs": min_mvs,
+        "median_mvs": median_mvs,
+        "max_mvs": max_mvs,
+        "timestep_indices": timestep_indices,
+    }

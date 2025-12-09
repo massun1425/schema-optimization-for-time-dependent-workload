@@ -100,6 +100,9 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py \
 | `--optimization-mode` | `dynamic`, `static` | `dynamic` | 最適化モード（Phase 6-8で使用） |
 | `--benchmark-mode` | `dynamic`, `static`, `baseline` | `dynamic` | ベンチマークモード（Phase 9で使用） |
 | `--use-pruning` | フラグ | - | CF Pruningを使用（大規模データ向け） |
+| `--pruning-parallel` | フラグ | - | プルーニングを並列実行 |
+| `--pruning-workers` | 整数 | `16` | プルーニング並列実行時のワーカー数 |
+| `--static-timestep` | `first`, `last` | `last` | 静的最適化で使用するタイムステップ |
 | `--exp-suffix` | 文字列 | 空 | 実験識別サフィックス（例: `_16_2`） |
 
 ### コスト推定引数
@@ -135,6 +138,12 @@ python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
 
 # 異なる頻度設定の実験
 python scripts/run_experiment_normal.py --phase all --query-set job --exp-suffix _16_4
+
+# 静的最適化（最初のタイムステップで全実行）
+python scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode static --static-timestep first
+
+# プルーニング並列実行（64ワーカー）
+python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 64
 
 # ローカルPostgreSQL使用
 python scripts/run_experiment_normal.py --phase 1 --query-set job --use-local
@@ -190,11 +199,17 @@ python scripts/run_experiment_normal.py --phase 5 --query-set job
 # 動的モード（デフォルト）
 python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode dynamic
 
-# 静的モード
+# 静的モード（最後のタイムステップ）
 python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
+
+# 静的モード（最初のタイムステップ）
+python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-timestep first
 
 # プルーニング使用（大規模データ向け）
 python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+
+# プルーニング並列実行（32ワーカー）
+python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 32
 ```
 
 **出力**: `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json`
@@ -339,6 +354,21 @@ docker logs mv_postgres | tail -20
 2. SQLファイルを配置
 3. `frequency_time_dependent.json` を作成
 4. `--query-set new_set` で実行
+
+### プルーニング並列化の推奨設定
+
+- **小規模データ（~100候補）**: `--pruning-workers 16`（デフォルト）
+- **中規模データ（~500候補）**: `--pruning-workers 32`
+- **大規模データ（1000+候補）**: `--pruning-workers 48-64`
+
+注意: Gurobiは各ILPを1スレッドで解くため、ワーカー数を増やしても線形にスケールしない場合があります。
+
+### 静的最適化のタイムステップ選択
+
+- `--static-timestep first`: 最初のタイムステップ（開始時点）のワークロードで最適化
+- `--static-timestep last`: 最後のタイムステップ（終了時点）のワークロードで最適化
+
+全フェーズ実行（`--phase all`）や部分実行（`--phase post-opt`）でも使用可能です。
 
 ---
 
