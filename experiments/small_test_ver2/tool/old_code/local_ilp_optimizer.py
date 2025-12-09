@@ -39,7 +39,7 @@ class LocalILPOptimizer:
         B_max: float,
         timestep_indices: List[int],  # [min_idx, median_idx, max_idx]
         all_timesteps: List[str],
-        migration_cost: Dict[int, float],
+        migration_recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
         query_frequency_by_timestep: Dict[str, List[float]],
         fixed_mvs_by_timestep: Dict[int, Set[int]] = None,
         candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
@@ -55,7 +55,7 @@ class LocalILPOptimizer:
             B_max: Storage budget
             timestep_indices: Exactly 3 timestep indices [min, median, max]
             all_timesteps: Full list of timestep names
-            migration_cost: Fixed migration cost for each MV {j: cost}
+            migration_recipes: Recipe costs for each MV
             query_frequency_by_timestep: Query frequencies for all timesteps
             fixed_mvs_by_timestep: Optional constraints {timestep_idx: set of MV indices to fix}
             candidate_indices: Optional pre-computed candidate indices (avoids redundant filtering)
@@ -81,7 +81,7 @@ class LocalILPOptimizer:
         self.timestep_indices = unique_indices
         self.timesteps = [all_timesteps[idx] for idx in unique_indices]
         
-        self.migration_cost = migration_cost
+        self.recipes = migration_recipes
         self.freq = query_frequency_by_timestep
         self.fixed_mvs = fixed_mvs_by_timestep or {}
         
@@ -105,7 +105,7 @@ class LocalILPOptimizer:
         self.y: Dict[tuple, gp.Var] = {}
         self.z: Dict[tuple, gp.Var] = {}
         self.c: Dict[tuple, gp.Var] = {}
-        # self.a removed
+        self.a: Dict[tuple, gp.Var] = {}
         
         self.gurobi_output = gurobi_output
         
@@ -157,19 +157,28 @@ class LocalILPOptimizer:
                     self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
                     var_count += 1
                 
-                # Determine c[j,t], y[i,j,t]
-                # Optimization: If z[j,t] is fixed to 0, then c, y must be 0
+                # Determine c[j,t], a[j,t,k], y[i,j,t]
+                # Optimization: If z[j,t] is fixed to 0, then c, a, y must be 0
                 if z_val == 0:
                     self.c[j, t] = 0
+                    recipes = self.recipes.get(j, [(tuple(), 0.0)])
+                    for k_idx in range(len(recipes)):
+                        self.a[j, t, k_idx] = 0
                     for i in range(self.I):
                         self.y[i, j, t] = 0
                 else:
-                    # If z is 1 or variable, we generally need variables for c, y
+                    # If z is 1 or variable, we generally need variables for c, a, y
                     # (c could be fixed if z[t-1] is known, but let's keep logic simple)
                     
                     # c[j,t]
                     self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
                     var_count += 1
+                    
+                    # a[j,t,k]
+                    recipes = self.recipes.get(j, [(tuple(), 0.0)])
+                    for k_idx in range(len(recipes)):
+                        self.a[j, t, k_idx] = m.addVar(vtype=gp.GRB.BINARY, name=f"a_{j}_{t}_{k_idx}")
+                        var_count += 1
                     
                     # y[i,j,t]
                     for i in range(self.I):
@@ -177,7 +186,7 @@ class LocalILPOptimizer:
                         var_count += 1
         
         m.update()
-        logger.debug(f"Created {var_count} variables (skipped {fixed_count} fixed z-vars + associated y/c)")
+        logger.debug(f"Created {var_count} variables (skipped {fixed_count} fixed z-vars + associated y/c/a)")
 
     def _add_safe_constr(self, constr, name: str) -> None:
         """Add constraint to model only if it's not trivially True."""
@@ -231,14 +240,38 @@ class LocalILPOptimizer:
         logger.debug(f"Added usage/storage constraints")
     
     def _add_creation_and_recipe_constraints(self) -> None:
-        """Add constraints for MV creation flags."""
+        """Add constraints for MV creation flags and recipe selection."""
         m = self.model
         assert m is not None
         
-        logger.debug("Adding creation constraints...")
+        logger.debug("Adding creation and recipe constraints...")
         
         for t in range(self.T):
             for j in self.cand_j:
+                recipes = self.recipes.get(j, [(tuple(), 0.0)])
+                
+                # Exactly one recipe if created
+                # sum(a) == c
+                self._add_safe_constr(
+                    gp.quicksum(self.a[j, t, k] for k in range(len(recipes))) == self.c[j, t],
+                    name=f"one_recipe_{j}_{t}"
+                )
+                
+                # Recipe dependencies must be satisfied
+                for k_idx, (deps, _) in enumerate(recipes):
+                    if t > 0:
+                        if deps:
+                            # If deps exist, check them
+                            # sum(z_dep)
+                            # Note: z[dep, t-1] might be int or Var. quicksum handles both.
+                            lhs = len(deps) * self.a[j, t, k_idx]
+                            rhs = gp.quicksum(self.z[dep, t-1] for dep in deps if dep in self.cand_j)
+                            
+                            self._add_safe_constr(
+                                lhs <= rhs,
+                                name=f"recipe_dep_{j}_{t}_{k_idx}"
+                            )
+                
                 # Creation logic
                 if t == 0:
                     # First timestep: created if exists
@@ -284,11 +317,12 @@ class LocalILPOptimizer:
             for j in self.cand_j
         )
         
-        # Migration cost: sum(fixed_cost * c_jt)
+        # Migration cost: sum(recipe_cost * a_jtk)
         migration = gp.quicksum(
-            float(self.migration_cost.get(j, 0.0)) * self.c[j, t]
+            float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
             for t in range(self.T)
             for j in self.cand_j
+            for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
         )
         
         self.model.setObjective(workload + migration, gp.GRB.MINIMIZE)
