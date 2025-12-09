@@ -692,7 +692,7 @@ class TimeDependentQueryExecutor:
         timesteps = optimization_result.get('timesteps', [])
         # 純粋な静的最適化の場合、timestepsが含まれていない可能性があるため、frequencies_by_timestepから取得
         if not timesteps and frequencies_by_timestep:
-            timesteps = sorted(frequencies_by_timestep.keys())
+            timesteps = sorted(frequencies_by_timestep.keys(), key=lambda x: int(x))
         
         if not migration_analysis and not is_pure_static:
             logger.error("No migration_analysis found in optimization result")
