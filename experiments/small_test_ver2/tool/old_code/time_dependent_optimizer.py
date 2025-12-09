@@ -24,14 +24,15 @@ class TimeDependentOptimizer:
 
     Objective (minimize):
         - Workload cost: -(benefit) weighted by query frequency
-        - Migration cost: Cost of creating MVs (fixed full-build cost)
+        - Migration cost: Cost of creating MVs using recipes
 
     Constraints:
         - Usage implies materialization
         - Storage budget per timestep
         - At most one MV per query
         - Inclusion/overlap exclusion
-        - Creation flags (c[j,t] = 1 if MV is created at t)
+        - Creation flags and recipe selection
+        - Recipe dependencies (MVs must exist in previous timestep)
     """
 
     def __init__(
@@ -42,7 +43,7 @@ class TimeDependentOptimizer:
         b_j: List[float],
         B_max: float,
         timesteps: List[str],
-        migration_cost: Dict[int, float],
+        migration_recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
         query_frequency_by_timestep: Dict[str, List[float]],
         gurobi_output: int = 0,
     ) -> None:
@@ -56,7 +57,8 @@ class TimeDependentOptimizer:
             b_j: Storage size for each MV candidate
             B_max: Storage budget
             timesteps: List of timestep names (e.g., ["morning", "evening"])
-            migration_cost: Fixed migration cost for each MV {j: cost}
+            migration_recipes: Recipe costs for each MV
+                {j: [(recipe_tuple, cost), ...]}
             query_frequency_by_timestep: Query frequencies for each timestep
                 {timestep_name: [freq_i, ...]}
             gurobi_output: Gurobi log level (0=off, 1=on)
@@ -67,7 +69,7 @@ class TimeDependentOptimizer:
         self.b_j = b_j
         self.B_max = B_max
         self.timesteps = timesteps
-        self.migration_cost = migration_cost
+        self.recipes = migration_recipes
         self.freq = query_frequency_by_timestep
 
         self.I = len(self.u_ij)  # Number of queries
@@ -81,7 +83,7 @@ class TimeDependentOptimizer:
         self.y: Dict[tuple, gp.Var] = {}  # y[i,j,t]: query i uses MV j at time t
         self.z: Dict[tuple, gp.Var] = {}  # z[j,t]: MV j exists at time t
         self.c: Dict[tuple, gp.Var] = {}  # c[j,t]: MV j is created at time t
-        # self.a removed (no recipe selection)
+        self.a: Dict[tuple, gp.Var] = {}  # a[j,t,k]: recipe k is used for MV j at time t
 
         self.gurobi_output = gurobi_output
 
@@ -117,12 +119,17 @@ class TimeDependentOptimizer:
                 self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
                 self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
 
+                # Recipe variables
+                recs = self.recipes.get(j, [(tuple(), 0.0)])
+                for k_idx, (_recipe, _cost) in enumerate(recs):
+                    self.a[j, t, k_idx] = m.addVar(vtype=gp.GRB.BINARY, name=f"a_{j}_{t}_{k_idx}")
+
             for i in range(self.I):
                 for j in self.cand_j:  # Only create variables for candidates
                     self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
 
         m.update()
-        logger.info(f"Created {len(self.y) + len(self.z) + len(self.c)} variables")
+        logger.info(f"Created {len(self.y) + len(self.z) + len(self.c) + len(self.a)} variables")
 
     def add_usage_and_storage_constraints(self) -> None:
         """Add constraints for MV usage, storage budget, and overlap exclusion."""
@@ -133,6 +140,14 @@ class TimeDependentOptimizer:
         constraint_count = 0
 
         for t in range(self.T):
+            # At most one MV per query
+            #for i in range(self.I): # いらない
+            #    m.addConstr(
+            #        gp.quicksum(self.y[i, j, t] for j in self.cand_j) <= 1,
+            #        name=f"at_most_one_mv_{i}_{t}",
+            #    )
+            #    constraint_count += 1
+
             for i in range(self.I):
                 for j in self.cand_j:  # Only iterate over candidates
                     # Usage implies materialization
@@ -143,8 +158,10 @@ class TimeDependentOptimizer:
                     constraint_count += 1
 
                     # Inclusion/overlap exclusion
+                    
                     m.addConstr(
                         self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in self.cand_j if u != j) <= 1,
+                        # / self.J <= 1 この割り算なくてもよさそう
                         name=f"inclusive_excl_{i}_{j}_{t}",
                     )
                     constraint_count += 1
@@ -159,11 +176,11 @@ class TimeDependentOptimizer:
         logger.info(f"Added {constraint_count} usage/storage constraints")
 
     def add_creation_and_recipe_constraints(self) -> None:
-        """Add constraints for MV creation flags."""
+        """Add constraints for MV creation flags and recipe selection."""
         m = self.model
         assert m is not None
 
-        logger.info("Adding creation constraints...")
+        logger.info("Adding creation and recipe constraints...")
         constraint_count = 0
 
         for t in range(self.T):
@@ -174,24 +191,57 @@ class TimeDependentOptimizer:
                     m.addConstr(self.c[j, 0] == self.z[j, 0], name=f"create_init_{j}")
                     constraint_count += 1
                 else:
-                    # Subsequent timesteps: c[j,t] >= z[j,t] - z[j,t-1]
+                    # Subsequent timesteps: c[j,t] >= z[j,t] - z[j,t-1], c[j,t] <= z[j,t]
                     m.addConstr(
                         self.c[j, t] >= self.z[j, t] - self.z[j, t - 1],
                         name=f"create_lb_{j}_{t}"
                     )
-                    # c[j,t] <= z[j,t]
                     m.addConstr(
                         self.c[j, t] <= self.z[j, t],
                         name=f"create_ub_{j}_{t}"
                     )
-                    # c[j,t] <= 1 - z[j,t-1] (if it existed before, not created now)
                     m.addConstr(
                         self.c[j, t] <= 1 - self.z[j, t-1],
                         name = f"create_not_cont_{j}_{t}"
-                    )
+                    ) # 追加の制約
                     constraint_count += 3
 
-        logger.info(f"Added {constraint_count} creation constraints")
+                # Recipe selection: exactly one recipe when creating
+                recs = self.recipes.get(j, [(tuple(), 0.0)])
+                m.addConstr(
+                    gp.quicksum(self.a[j, t, k_idx] for k_idx in range(len(recs))) == self.c[j, t],
+                    name=f"recipe_select_{j}_{t}",
+                )
+                constraint_count += 1
+
+                # Recipe dependency constraints
+                for k_idx, (recipe, _cost) in enumerate(recs):
+
+                    # 追加の制約 a_j_t_k <= c_j_t おそらく冗長
+                    #m.addConstr(
+                    #    self.a[j, t, k_idx] <= self.c[j,t],
+                    #    name = f"recipe_enable_{j}_{t}_{k_idx}"
+                    #)
+                    #constraint_count += 1
+
+                    if t == 0:
+                        # At t=0, only empty recipe is allowed (no dependencies available)
+                        if len(recipe) > 0:
+                            m.addConstr(
+                                self.a[j, t, k_idx] == 0,
+                                name=f"no_dep_at_t0_{j}_{k_idx}"
+                            )
+                            constraint_count += 1
+                    else:
+                        # At t>0, recipe dependencies must exist in previous timestep
+                        for dep in recipe:
+                            m.addConstr(
+                                self.a[j, t, k_idx] <= self.z[dep, t - 1],
+                                name=f"dep_{j}_{t}_{k_idx}_{dep}"
+                            )
+                            constraint_count += 1
+
+        logger.info(f"Added {constraint_count} creation/recipe constraints")
 
     def build_objective(self) -> None:
         """Build the objective function (minimize workload + migration cost)."""
@@ -208,11 +258,12 @@ class TimeDependentOptimizer:
             for j in self.cand_j  # Only sum over candidates
         )
 
-        # Migration cost: sum of fixed costs when creating MVs
+        # Migration cost: sum of recipe costs when creating MVs
         migration_cost = gp.quicksum(
-            float(self.migration_cost.get(j, 0.0)) * self.c[j, t]
+            float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
             for t in range(self.T)
             for j in self.cand_j  # Only sum over candidates
+            for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
         )
 
         m.setObjective(workload_cost + migration_cost, gp.GRB.MINIMIZE)
@@ -293,9 +344,10 @@ class TimeDependentOptimizer:
             )
             migration_val = float(
                 gp.quicksum(
-                    float(self.migration_cost.get(j, 0.0)) * self.c[j, t]
+                    float(self.recipes.get(j, [(tuple(), 0.0)])[k_idx][1]) * self.a[j, t, k_idx]
                     for t in range(self.T)
                     for j in self.cand_j  # Only sum over candidates
+                    for k_idx in range(len(self.recipes.get(j, [(tuple(), 0.0)])))
                 ).getValue()
             )
 

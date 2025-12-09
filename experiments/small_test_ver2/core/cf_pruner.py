@@ -67,7 +67,7 @@ class CFPruner:
         b_j: List[float],
         B_max: float,
         timesteps: List[str],
-        migration_recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
+        migration_cost: Dict[int, float],
         query_frequency_by_timestep: Dict[str, List[float]],
         gurobi_output: int = 0,
         use_parallel: bool = False,
@@ -82,7 +82,7 @@ class CFPruner:
             b_j: Storage size for each MV candidate
             B_max: Storage budget
             timesteps: List of timestep names
-            migration_recipes: Recipe costs for each MV
+            migration_cost: Fixed migration cost for each MV {j: cost}
             query_frequency_by_timestep: Query frequencies for each timestep
             gurobi_output: Gurobi log level (0=off, 1=on)
             use_parallel: Enable parallel processing (default: False)
@@ -94,7 +94,7 @@ class CFPruner:
         self.b_j = b_j
         self.B_max = B_max
         self.timesteps = timesteps
-        self.recipes = migration_recipes
+        self.migration_cost = migration_cost
         self.freq = query_frequency_by_timestep
         self.gurobi_output = gurobi_output
         
@@ -240,7 +240,7 @@ class CFPruner:
                         self.b_j,
                         self.B_max,
                         self.timesteps,
-                        self.recipes,
+                        self.migration_cost,
                         self.freq,
                         self.cand_j,
                         self.gurobi_output,
@@ -367,7 +367,7 @@ class CFPruner:
             B_max=self.B_max,
             timestep_indices=timestep_indices,
             all_timesteps=self.timesteps,
-            migration_recipes=self.recipes,
+            migration_cost=self.migration_cost,
             query_frequency_by_timestep=self.freq,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
             candidate_indices=self.cand_j,  # ★ 事前計算された候補を渡す
@@ -462,7 +462,7 @@ def _solve_node_static(
     b_j: List[float],
     B_max: float,
     timesteps: List[str],
-    recipes: Dict[int, List[Tuple[Tuple[int, ...], float]]],
+    migration_cost: Dict[int, float],
     freq: Dict[str, List[float]],
     cand_j: List[int],
     gurobi_output: int,
@@ -484,7 +484,7 @@ def _solve_node_static(
         b_j: Storage sizes
         B_max: Storage budget
         timesteps: All timestep names
-        recipes: Migration recipes
+        migration_cost: Fixed migration cost for each MV
         freq: Query frequencies by timestep
         cand_j: Pre-filtered candidate indices
         gurobi_output: Gurobi log level
@@ -521,7 +521,7 @@ def _solve_node_static(
         B_max=B_max,
         timestep_indices=timestep_indices,
         all_timesteps=timesteps,
-        migration_recipes=recipes,
+        migration_cost=migration_cost,
         query_frequency_by_timestep=freq,
         fixed_mvs_by_timestep=fixed_mvs_by_timestep,
         candidate_indices=cand_j,

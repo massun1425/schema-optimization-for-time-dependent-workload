@@ -685,6 +685,17 @@ class NormalModeExperiment:
             self.print_success(f"  {len(recipes)}個のMVのレシピを読み込み完了")
             self.print_success(f"  サイズデータをPhase 5のEXPLAIN結果から読み込み完了")
             
+            # レシピから固定マイグレーションコスト（フルビルドコスト）を抽出
+            migration_cost = {}
+            for j, mv_recipes in recipes.items():
+                # 依存関係なし（空タプル）のレシピを探す
+                full_build_cost = float("inf")
+                for deps, cost in mv_recipes:
+                    if len(deps) == 0:
+                        full_build_cost = cost
+                        break
+                migration_cost[j] = full_build_cost
+            
             # プルーニングを実行（オプション）
             pruning_info = None
             candidate_filter = None
@@ -701,7 +712,7 @@ class NormalModeExperiment:
                     b_j=b_j_from_migration,
                     B_max=B_max,
                     timesteps=timesteps,
-                    migration_recipes=recipes,
+                    migration_cost=migration_cost,
                     query_frequency_by_timestep=frequencies,
                     gurobi_output=0,  # プルーニング中は静かに
                     use_parallel=pruning_parallel,
@@ -739,7 +750,7 @@ class NormalModeExperiment:
                 b_j=b_j_from_migration,  # Phase 5のEXPLAIN結果からのサイズを使用
                 B_max=B_max,
                 timesteps=timesteps,
-                migration_recipes=recipes,
+                migration_cost=migration_cost,
                 query_frequency_by_timestep=frequencies,
                 gurobi_output=1,
             )
@@ -761,7 +772,7 @@ class NormalModeExperiment:
             
             # マイグレーション分析
             self.print_info("マイグレーション分析を実行中...")
-            enhanced_result = self._analyze_migration_transitions(result, recipes, b_j_from_migration, B_max)
+            enhanced_result = self._analyze_migration_transitions(result, migration_cost, b_j_from_migration, B_max)
             
             # プルーニング情報を結果に追加
             if pruning_info:
@@ -806,12 +817,12 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def _analyze_migration_transitions(self, result: dict, recipes: dict, b_j: list, B_max: float) -> dict:
+    def _analyze_migration_transitions(self, result: dict, migration_cost: dict, b_j: list, B_max: float) -> dict:
         """マイグレーション遷移を分析
         
         Args:
             result: 最適化結果
-            recipes: マイグレーションレシピ
+            migration_cost: マイグレーションコスト（フルビルド）
             b_j: 各MVのサイズリスト（Phase 5のEXPLAIN結果から取得）
             B_max: ストレージ予算
         """
@@ -871,21 +882,14 @@ class NormalModeExperiment:
                 creation_details = []
                 
                 for j in sorted(created):
-                    mv_recipes = recipes.get(j, [(tuple(), float("inf"))])
-                    applicable_recipes = [
-                        (recipe, cost) for recipe, cost in mv_recipes
-                        if all(dep in prev_mvs for dep in recipe)
-                    ]
-                    
-                    if applicable_recipes:
-                        best_recipe, best_cost = min(applicable_recipes, key=lambda x: x[1])
-                        creation_cost += best_cost
-                        creation_details.append({
-                            "mv": self.qp.node_list[j],
-                            "size": round(b_j[j], 2),  # 正しいb_jを使用
-                            "cost": round(best_cost, 2),
-                            "dependencies": [self.qp.node_list[dep] for dep in best_recipe] if best_recipe else []
-                        })
+                    cost = migration_cost.get(j, float("inf"))
+                    creation_cost += cost
+                    creation_details.append({
+                        "mv": self.qp.node_list[j],
+                        "size": round(b_j[j], 2),
+                        "cost": round(cost, 2),
+                        "dependencies": [] # 簡易化のため依存関係は空（フルビルド）
+                    })
                 
                 migration_details["creation_cost"] = round(creation_cost, 2)
                 migration_details["creation_details"] = creation_details
@@ -897,17 +901,14 @@ class NormalModeExperiment:
                 creation_details = []
                 
                 for j in sorted(current_mvs):
-                    mv_recipes = recipes.get(j, [(tuple(), 0.0)])
-                    empty_recipes = [(recipe, cost) for recipe, cost in mv_recipes if len(recipe) == 0]
-                    if empty_recipes:
-                        _, cost = min(empty_recipes, key=lambda x: x[1])
-                        initial_cost += cost
-                        creation_details.append({
-                            "mv": self.qp.node_list[j],
-                            "size": round(b_j[j], 2),  # 正しいb_jを使用
-                            "cost": round(cost, 2),
-                            "dependencies": []
-                        })
+                    cost = migration_cost.get(j, 0.0)
+                    initial_cost += cost
+                    creation_details.append({
+                        "mv": self.qp.node_list[j],
+                        "size": round(b_j[j], 2),
+                        "cost": round(cost, 2),
+                        "dependencies": []
+                    })
                 
                 timestep_info["initial_creation"] = {
                     "total_cost": round(initial_cost, 2),
