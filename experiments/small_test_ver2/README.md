@@ -398,3 +398,5 @@ FROM pg_matviews
 JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
 WHERE pg_class.relkind = 'm';
 ```
+
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode dynamic --exp-suffix _16_4 --use-pruning --pruning-parallel --use-docker

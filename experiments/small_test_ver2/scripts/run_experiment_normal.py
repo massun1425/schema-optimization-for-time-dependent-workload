@@ -653,12 +653,12 @@ class NormalModeExperiment:
         try:
             from experiments.small_test_ver2.core.io_loaders import (
                 load_timesteps_and_frequencies,
-                parse_migration_costs_and_sizes,
+                load_full_build_costs_and_sizes,
             )
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(50*1024*1024)
+            B_max = float(5*1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -675,26 +675,14 @@ class NormalModeExperiment:
                     else:
                         frequencies[ts] = frequencies[ts][:query_count]
             
-            # マイグレーションコストとサイズを読み込み（Phase 5の結果）
-            self.print_info("マイグレーションコストとサイズを読み込み中...")
-            recipes, b_j_from_migration = parse_migration_costs_and_sizes(
+            # フルビルドコストとサイズを直接読み込み（簡略化版）
+            self.print_info("フルビルドコストとサイズを読み込み中...")
+            migration_cost, b_j_from_migration = load_full_build_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
                 self.query_set
             )
-            self.print_success(f"  {len(recipes)}個のMVのレシピを読み込み完了")
-            self.print_success(f"  サイズデータをPhase 5のEXPLAIN結果から読み込み完了")
-            
-            # レシピから固定マイグレーションコスト（フルビルドコスト）を抽出
-            migration_cost = {}
-            for j, mv_recipes in recipes.items():
-                # 依存関係なし（空タプル）のレシピを探す
-                full_build_cost = float("inf")
-                for deps, cost in mv_recipes:
-                    if len(deps) == 0:
-                        full_build_cost = cost
-                        break
-                migration_cost[j] = full_build_cost
+            self.print_success(f"  {len(migration_cost)}個のMVのフルビルドコストを読み込み完了")
             
             # プルーニングを実行（オプション）
             pruning_info = None
@@ -950,9 +938,14 @@ class NormalModeExperiment:
         """フェーズ6b: 静的最適化（時間依存なし・単一タイムステップのみ）
         
         Args:
-            timestep_position: 使用するタイムステップ ('first': 最初, 'last': 最後)
+            timestep_position: 使用するタイムステップ ('first': 最初, 'last': 最後, 'average': 全時刻の平均)
         """
-        position_name = "最初" if timestep_position == 'first' else "最終"
+        if timestep_position == 'first':
+            position_name = "最初"
+        elif timestep_position == 'average':
+            position_name = "全時刻平均"
+        else:
+            position_name = "最終"
         self.print_header(f"静的最適化（{position_name}タイムステップ）", 6.5)
         
         if not self.pickle_path.exists():
@@ -974,12 +967,12 @@ class NormalModeExperiment:
         try:
             from experiments.small_test_ver2.core.io_loaders import (
                 load_timesteps_and_frequencies,
-                parse_migration_costs_and_sizes,
+                load_full_build_costs_and_sizes,
             )
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(50*1024*1024)
+            B_max = float(5*1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -991,19 +984,46 @@ class NormalModeExperiment:
             # タイムステップの選択
             if timestep_position == 'first':
                 selected_timestep = timesteps[0]
+                selected_frequencies = frequencies[selected_timestep]
                 self.print_info(f"使用タイムステップ: {selected_timestep} (最初)")
+            elif timestep_position == 'average':
+                # 全時刻での頻度の平均を計算
+                selected_timestep = "average"
+                self.print_info(f"使用タイムステップ: 全時刻の平均")
+                
+                # 各クエリについて全タイムステップでの平均頻度を計算
+                query_count = len(self.qp.u_ij)
+                selected_frequencies = [0.0] * query_count
+                
+                for timestep in timesteps:
+                    timestep_freq = frequencies[timestep]
+                    # 頻度の次元を調整
+                    if len(timestep_freq) < query_count:
+                        timestep_freq = timestep_freq + [1.0] * (query_count - len(timestep_freq))
+                    else:
+                        timestep_freq = timestep_freq[:query_count]
+                    
+                    # 累積加算
+                    for i in range(query_count):
+                        selected_frequencies[i] += timestep_freq[i]
+                
+                # 平均を計算
+                num_timesteps = len(timesteps)
+                selected_frequencies = [freq / num_timesteps for freq in selected_frequencies]
+                
+                self.print_info(f"  {num_timesteps}個のタイムステップの頻度を平均化")
             else:  # 'last'
                 selected_timestep = timesteps[-1]
+                selected_frequencies = frequencies[selected_timestep]
                 self.print_info(f"使用タイムステップ: {selected_timestep} (最後)")
             
-            selected_frequencies = frequencies[selected_timestep]
-            
-            # 頻度の次元調整
+            # 頻度の次元調整（averageの場合はすでに調整済み）
             query_count = len(self.qp.u_ij)
-            if len(selected_frequencies) < query_count:
-                selected_frequencies.extend([1.0] * (query_count - len(selected_frequencies)))
-            else:
-                selected_frequencies = selected_frequencies[:query_count]
+            if timestep_position != 'average':
+                if len(selected_frequencies) < query_count:
+                    selected_frequencies.extend([1.0] * (query_count - len(selected_frequencies)))
+                else:
+                    selected_frequencies = selected_frequencies[:query_count]
                 
             # 重み付き効用を計算 (u_ij * frequency)
             weighted_u_ij = []
@@ -1012,8 +1032,8 @@ class NormalModeExperiment:
                 weighted_row = [u * freq for u in self.qp.u_ij[i]]
                 weighted_u_ij.append(weighted_row)
             
-            # サイズデータの読み込み
-            _, b_j_from_migration = parse_migration_costs_and_sizes(
+            # サイズデータの読み込み（簡略化版）
+            _, b_j_from_migration = load_full_build_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
                 self.query_set
@@ -1979,8 +1999,8 @@ def main():
         '--static-timestep',
         type=str,
         default='last',
-        choices=['first', 'last'],
-        help='静的最適化で使用するタイムステップ (first: 最初, last: 最後)'
+        choices=['first', 'last', 'average'],
+        help='静的最適化で使用するタイムステップ (first: 最初, last: 最後, average: 全時刻の平均)'
     )
     
     # Docker/Local switching arguments

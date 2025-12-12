@@ -44,6 +44,9 @@ class LocalILPOptimizer:
         fixed_mvs_by_timestep: Dict[int, Set[int]] = None,
         candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
         gurobi_output: int = 0,
+        use_solution_pool: bool = True,  # Solution Pool機能を使用するか
+        pool_solutions: int = 10,  # 保持する解の個数
+        pool_gap: float = 0.001,  # 許容する相対ギャップ（0.1%）
     ) -> None:
         """Initialize the local ILP optimizer.
         
@@ -60,6 +63,9 @@ class LocalILPOptimizer:
             fixed_mvs_by_timestep: Optional constraints {timestep_idx: set of MV indices to fix}
             candidate_indices: Optional pre-computed candidate indices (avoids redundant filtering)
             gurobi_output: Gurobi log level (0=off, 1=on)
+            use_solution_pool: Enable Solution Pool to capture near-optimal solutions
+            pool_solutions: Number of solutions to keep in pool (default: 10)
+            pool_gap: Relative gap tolerance for pool solutions (default: 0.10 = 10%)
         """
         assert len(timestep_indices) == 3, "LocalILP requires exactly 3 timesteps"
         
@@ -88,6 +94,9 @@ class LocalILPOptimizer:
         self.I = len(self.u_ij)  # Number of queries
         self.J = len(self.node_list)  # Number of MV candidates
         self.T = len(unique_indices)  # 2 or 3 unique timesteps
+
+        # マイグレーションコストへの重み付け
+        self.migration_ratio = float(self.T/len(all_timesteps))
         
         # Initialize candidate filtering
         # Use pre-computed candidates if provided, otherwise compute them
@@ -109,9 +118,15 @@ class LocalILPOptimizer:
         
         self.gurobi_output = gurobi_output
         
+        # Solution Pool settings
+        self.use_solution_pool = use_solution_pool
+        self.pool_solutions = pool_solutions
+        self.pool_gap = pool_gap
+        
         logger.debug(
             f"LocalILP: I={self.I}, J={self.J}, T={self.T}, "
-            f"timesteps={self.timesteps}, candidates={len(self.cand_j)}"
+            f"timesteps={self.timesteps}, candidates={len(self.cand_j)}, "
+            f"solution_pool={'enabled' if use_solution_pool else 'disabled'}"
         )
     
     def _initialize_candidates(self) -> List[int]:
@@ -286,7 +301,7 @@ class LocalILPOptimizer:
         
         # Migration cost: sum(fixed_cost * c_jt)
         migration = gp.quicksum(
-            float(self.migration_cost.get(j, 0.0)) * self.c[j, t]
+            float(self.migration_cost.get(j, 0.0)) * self.c[j, t] * self.migration_ratio
             for t in range(self.T)
             for j in self.cand_j
         )
@@ -314,6 +329,19 @@ class LocalILPOptimizer:
                 self.model.Params.TimeLimit = time_limit
             # self.model.Params.Threads = 4  # Multi-threaded for consistency
             
+            # Solution Pool configuration
+            if self.use_solution_pool:
+                # PoolSearchMode=1: Systematically search for best N solutions
+                self.model.Params.PoolSearchMode = 1
+                # Number of solutions to keep
+                self.model.Params.PoolSolutions = self.pool_solutions
+                # Relative gap tolerance (e.g., 0.10 = 10% worse than optimal is OK)
+                self.model.Params.PoolGap = self.pool_gap
+                logger.debug(
+                    f"Solution Pool enabled: {self.pool_solutions} solutions, "
+                    f"gap={self.pool_gap*100:.1f}%"
+                )
+            
             # Build model
             self._build_variables()
             self._add_usage_and_storage_constraints()
@@ -338,21 +366,73 @@ class LocalILPOptimizer:
                         "solve_time_sec": elapsed,
                     }
             
-            # Extract solution from unique timesteps
-            selected_mvs_unique = {}
-            for t_local, t_global in enumerate(self.timestep_indices):
-                selected = set()
-                for j in self.cand_j:
-                    z_obj = self.z[j, t_local]
-                    # Handle both Gurobi Var and constant int
-                    if isinstance(z_obj, gp.Var):
-                        val = z_obj.X
-                    else:
-                        val = z_obj
+            # Extract solutions (use Solution Pool if enabled)
+            if self.use_solution_pool and self.model.SolCount > 0:
+                # Collect MVs from all solutions in the pool
+                all_promising_mvs = set()
+                n_solutions = min(self.model.SolCount, self.pool_solutions)
+                
+                logger.debug(f"Extracting {n_solutions} solutions from pool")
+                
+                for sol_idx in range(n_solutions):
+                    # Activate solution k
+                    self.model.Params.SolutionNumber = sol_idx
                     
-                    if val > 0.5:
-                        selected.add(j)
-                selected_mvs_unique[t_global] = selected
+                    # Get objective value of this solution
+                    if sol_idx == 0:
+                        sol_obj = self.model.objVal
+                    else:
+                        sol_obj = self.model.PoolObjVal
+                    
+                    # Extract MVs from this solution
+                    solution_mvs = set()
+                    for t_local in range(self.T):
+                        for j in self.cand_j:
+                            z_obj = self.z[j, t_local]
+                            # Use .Xn for pool solutions instead of .X
+                            if isinstance(z_obj, gp.Var):
+                                val = z_obj.Xn
+                            else:
+                                val = z_obj
+                            
+                            if val > 0.5:
+                                solution_mvs.add(j)
+                                all_promising_mvs.add(j)
+                    
+                    logger.debug(
+                        f"  Solution {sol_idx}: obj={sol_obj:.2f}, "
+                        f"MVs={len(solution_mvs)}"
+                    )
+                
+                # Create result with all promising MVs across all timesteps
+                # (for pruning purposes, we just need the set of MVs)
+                selected_mvs_unique = {}
+                for t_local, t_global in enumerate(self.timestep_indices):
+                    # For simplicity, use all promising MVs for each timestep
+                    # (CF Pruner will collect these across all nodes)
+                    selected_mvs_unique[t_global] = all_promising_mvs.copy()
+                
+                logger.debug(
+                    f"Solution Pool: {n_solutions} solutions extracted, "
+                    f"{len(all_promising_mvs)} unique promising MVs"
+                )
+                
+            else:
+                # Single optimal solution (traditional approach)
+                selected_mvs_unique = {}
+                for t_local, t_global in enumerate(self.timestep_indices):
+                    selected = set()
+                    for j in self.cand_j:
+                        z_obj = self.z[j, t_local]
+                        # Handle both Gurobi Var and constant int
+                        if isinstance(z_obj, gp.Var):
+                            val = z_obj.X
+                        else:
+                            val = z_obj
+                        
+                        if val > 0.5:
+                            selected.add(j)
+                    selected_mvs_unique[t_global] = selected
             
             # Map back to original 3 indices (handle duplicates)
             selected_mvs_by_timestep = {}
