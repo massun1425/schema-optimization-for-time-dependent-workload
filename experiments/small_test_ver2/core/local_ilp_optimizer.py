@@ -45,7 +45,7 @@ class LocalILPOptimizer:
         candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
         gurobi_output: int = 0,
         use_solution_pool: bool = True,  # Solution Pool機能を使用するか
-        pool_solutions: int = 10,  # 保持する解の個数
+        pool_solutions: int = 20,  # 保持する解の個数
         pool_gap: float = 0.001,  # 許容する相対ギャップ（0.1%）
     ) -> None:
         """Initialize the local ILP optimizer.
@@ -225,11 +225,11 @@ class LocalILPOptimizer:
                     constraint_count += 1
                     
                     # Inclusion/overlap exclusion
-                    # y[i, j, t] + sum(...) <= 1
+                    # Note: Normalization by len(cand_j) matches NormalOptimizer behavior
                     lhs = self.y[i, j, t] + gp.quicksum(
                         self.y[i, u, t] * self.X[j][u] 
                         for u in self.cand_j if u != j
-                    )
+                    ) / len(self.cand_j)
                     self._add_safe_constr(
                         lhs <= 1,
                         name=f"inclusive_excl_{i}_{j}_{t}"
@@ -366,10 +366,26 @@ class LocalILPOptimizer:
                         "solve_time_sec": elapsed,
                     }
             
-            # Extract solutions (use Solution Pool if enabled)
+            # Extract OPTIMAL solution first (for parent-child inheritance)
+            # This ensures boundary constraints are based on the best solution only
+            optimal_mvs_by_timestep = {}
+            for t_local, t_global in enumerate(self.timestep_indices):
+                selected = set()
+                for j in self.cand_j:
+                    z_obj = self.z[j, t_local]
+                    # Handle both Gurobi Var and constant int
+                    if isinstance(z_obj, gp.Var):
+                        val = z_obj.X  # Use .X for optimal solution
+                    else:
+                        val = z_obj
+                    
+                    if val > 0.5:
+                        selected.add(j)
+                optimal_mvs_by_timestep[t_global] = selected
+            
+            # Extract solution pool MVs (for pruning only, NOT for inheritance)
+            all_pool_mvs = set()
             if self.use_solution_pool and self.model.SolCount > 0:
-                # Collect MVs from all solutions in the pool
-                all_promising_mvs = set()
                 n_solutions = min(self.model.SolCount, self.pool_solutions)
                 
                 logger.debug(f"Extracting {n_solutions} solutions from pool")
@@ -389,7 +405,7 @@ class LocalILPOptimizer:
                     for t_local in range(self.T):
                         for j in self.cand_j:
                             z_obj = self.z[j, t_local]
-                            # Use .Xn for pool solutions instead of .X
+                            # Use .Xn for pool solutions
                             if isinstance(z_obj, gp.Var):
                                 val = z_obj.Xn
                             else:
@@ -397,57 +413,42 @@ class LocalILPOptimizer:
                             
                             if val > 0.5:
                                 solution_mvs.add(j)
-                                all_promising_mvs.add(j)
+                                all_pool_mvs.add(j)
                     
                     logger.debug(
                         f"  Solution {sol_idx}: obj={sol_obj:.2f}, "
                         f"MVs={len(solution_mvs)}"
                     )
                 
-                # Create result with all promising MVs across all timesteps
-                # (for pruning purposes, we just need the set of MVs)
-                selected_mvs_unique = {}
-                for t_local, t_global in enumerate(self.timestep_indices):
-                    # For simplicity, use all promising MVs for each timestep
-                    # (CF Pruner will collect these across all nodes)
-                    selected_mvs_unique[t_global] = all_promising_mvs.copy()
-                
                 logger.debug(
                     f"Solution Pool: {n_solutions} solutions extracted, "
-                    f"{len(all_promising_mvs)} unique promising MVs"
+                    f"{len(all_pool_mvs)} unique MVs across all solutions"
                 )
-                
-            else:
-                # Single optimal solution (traditional approach)
-                selected_mvs_unique = {}
-                for t_local, t_global in enumerate(self.timestep_indices):
-                    selected = set()
-                    for j in self.cand_j:
-                        z_obj = self.z[j, t_local]
-                        # Handle both Gurobi Var and constant int
-                        if isinstance(z_obj, gp.Var):
-                            val = z_obj.X
-                        else:
-                            val = z_obj
-                        
-                        if val > 0.5:
-                            selected.add(j)
-                    selected_mvs_unique[t_global] = selected
             
             # Map back to original 3 indices (handle duplicates)
+            # Use OPTIMAL solution for inheritance to children
             selected_mvs_by_timestep = {}
             for orig_idx in self.timestep_indices_original:
-                selected_mvs_by_timestep[orig_idx] = selected_mvs_unique[orig_idx]
+                selected_mvs_by_timestep[orig_idx] = optimal_mvs_by_timestep[orig_idx]
             
             obj = float(self.model.objVal) if self.model.status == gp.GRB.OPTIMAL else float("inf")
             
             logger.debug(f"LocalILP completed: T={self.T}, obj={obj:.4f}, time={elapsed:.2f}s")
             
-            return {
-                "selected_mvs_by_timestep": selected_mvs_by_timestep,
+            # Return both optimal solution (for inheritance) and pool MVs (for pruning)
+            result = {
+                "selected_mvs_by_timestep": selected_mvs_by_timestep,  # Optimal solution only
                 "objective": obj,
                 "solve_time_sec": elapsed,
             }
+            
+            # Add pool MVs if solution pool was used
+            if self.use_solution_pool and len(all_pool_mvs) > 0:
+                result["pool_mvs"] = all_pool_mvs  # All MVs from pool (for pruning)
+                logger.debug(f"  Optimal MVs for inheritance: {sum(len(mvs) for mvs in selected_mvs_by_timestep.values())}")
+                logger.debug(f"  Pool MVs for pruning: {len(all_pool_mvs)}")
+            
+            return result
         finally:
             self.model.dispose()
             self.model = None

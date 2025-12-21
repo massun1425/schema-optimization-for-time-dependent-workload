@@ -19,9 +19,9 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --query-set job \
   --exp-suffix _16_1 \
   --optimization-mode static \
-  --static-timestep first \
+  --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_first_16_1.txt
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1.txt
 echo "完了時刻: $(date)"
 
 echo ""
@@ -33,9 +33,9 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --query-set job \
   --exp-suffix _16_2 \
   --optimization-mode static \
-  --static-timestep first \
+  --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_first_16_2.txt
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2.txt
 echo "完了時刻: $(date)"
 
 echo ""
@@ -47,9 +47,9 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --query-set job \
   --exp-suffix _16_3 \
   --optimization-mode static \
-  --static-timestep first \
+  --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_first_16_3.txt
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3.txt
 echo "完了時刻: $(date)"
 
 echo ""
@@ -61,9 +61,9 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --query-set job \
   --exp-suffix _16_4 \
   --optimization-mode static \
-  --static-timestep first \
+  --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_first_16_4.txt
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_4.txt
 echo "完了時刻: $(date)"
 
 

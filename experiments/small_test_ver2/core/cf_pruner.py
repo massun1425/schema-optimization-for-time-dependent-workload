@@ -39,6 +39,8 @@ import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Dict, List, Set, Tuple, Optional
 
+import gurobipy as gp
+
 from experiments.small_test_ver2.core.local_ilp_optimizer import LocalILPOptimizer
 from experiments.small_test_ver2.core.workload_summary_tree import (
     TreeNode,
@@ -138,14 +140,110 @@ class CFPruner:
         logger.info(f"Filtered to {len(candidates)} candidates (from {self.J} total nodes)")
         return candidates
     
-    def prune_candidates(self) -> Set[int]:
+    def _solve_static_optimization(self) -> Set[int]:
+        """Solve static optimization using average frequencies across all timesteps.
+        
+        This implements the "static protection" approach: MVs selected by static
+        optimization (using global average frequencies) are considered "protected"
+        and should not be pruned.
+        
+        Returns:
+            Set of MV indices selected by static optimization
+        """
+        logger.info("Solving static optimization for protected MV set...")
+        
+        # Calculate average frequencies across all timesteps
+        avg_freq = [0.0] * self.I
+        for ts in self.timesteps:
+            for i in range(self.I):
+                avg_freq[i] += self.freq[ts][i]
+        avg_freq = [f / self.T for f in avg_freq]
+        
+        # Build weighted utility: u_ij * avg_freq[i]
+        weighted_u_ij = []
+        for i in range(self.I):
+            weighted_row = [self.u_ij[i][j] * avg_freq[i] for j in range(self.J)]
+            weighted_u_ij.append(weighted_row)
+        
+        # Solve static ILP (single timestep, no migration cost)
+        model = gp.Model("StaticILP")
+        model.Params.OutputFlag = self.gurobi_output
+        
+        try:
+            # Variables: z[j] = 1 if MV j is selected
+            z = {}
+            for j in self.cand_j:
+                z[j] = model.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}")
+            
+            # Variables: y[i,j] = 1 if query i uses MV j
+            y = {}
+            for i in range(self.I):
+                for j in self.cand_j:
+                    y[i, j] = model.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}")
+            
+            model.update()
+            
+            # Constraint: Usage implies materialization (y[i,j] <= z[j])
+            for i in range(self.I):
+                for j in self.cand_j:
+                    model.addConstr(y[i, j] <= z[j], name=f"use_le_mat_{i}_{j}")
+            
+            # Constraint: Inclusion/overlap exclusion
+            # Note: Normalization by len(cand_j) matches NormalOptimizer behavior
+            for i in range(self.I):
+                for j in self.cand_j:
+                    model.addConstr(
+                        y[i, j] + gp.quicksum(
+                            y[i, u] * self.X[j][u]
+                            for u in self.cand_j if u != j
+                        ) / len(self.cand_j) <= 1,
+                        name=f"inclusive_excl_{i}_{j}"
+                    )
+            
+            # Constraint: Storage budget
+            model.addConstr(
+                gp.quicksum(self.b_j[j] * z[j] for j in self.cand_j) <= self.B_max,
+                name="storage"
+            )
+            
+            # Objective: Maximize total utility (minimize negative)
+            objective = gp.quicksum(
+                -weighted_u_ij[i][j] * y[i, j]
+                for i in range(self.I)
+                for j in self.cand_j
+            )
+            model.setObjective(objective, gp.GRB.MINIMIZE)
+            
+            # Solve
+            model.optimize()
+            
+            # Extract selected MVs
+            static_mvs = set()
+            if model.status == gp.GRB.OPTIMAL:
+                for j in self.cand_j:
+                    if z[j].X > 0.5:
+                        static_mvs.add(j)
+            
+            logger.info(f"Static optimization selected {len(static_mvs)} MVs")
+            return static_mvs
+            
+        finally:
+            model.dispose()
+    
+    def prune_candidates(self, use_static_protection: bool = False) -> Set[int]:
         """Execute the pruning algorithm and return promising MV indices.
         
         This is the main entry point for pruning. It:
-        1. Recursively traverses the Workload Summary Tree
-        2. Solves local ILPs at each node
-        3. Collects all MVs that appear in any solution
-        4. Returns the set of promising MV indices
+        1. (Optional) Solves static optimization for protected MVs
+        2. Recursively traverses the Workload Summary Tree
+        3. Solves local ILPs at each node
+        4. Collects all MVs that appear in any solution
+        5. Merges static protected MVs with local results
+        6. Returns the set of promising MV indices
+        
+        Args:
+            use_static_protection: If True, merge static optimization results
+                with local pruning results (default: False)
         
         Returns:
             Set of promising MV indices (subset of [0, J-1])
@@ -159,21 +257,38 @@ class CFPruner:
         logger.info(f"Tree depth: {self.tree.get_depth()}")
         logger.info(f"Tree nodes: {len(self.tree.get_all_nodes())}")
         logger.info(f"Mode: {'Parallel' if self.use_parallel else 'Sequential'}")
+        logger.info(f"Static protection: {'Enabled' if use_static_protection else 'Disabled'}")
         if self.use_parallel:
             logger.info(f"Workers: {self.max_workers}")
         logger.info("-" * 70)
         
-        # Choose parallel or sequential execution
+        # Solve static optimization for protected MVs (if enabled)
+        static_protected_mvs: Set[int] = set()
+        if use_static_protection:
+            static_protected_mvs = self._solve_static_optimization()
+            logger.info(f"Static protected MVs: {len(static_protected_mvs)}")
+        
+        # Choose parallel or sequential execution for local pruning
         if self.use_parallel:
             promising_mvs = self._prune_candidates_parallel()
         else:
             promising_mvs = self._prune_candidates_sequential()
+        
+        # Merge static protected MVs with local results
+        local_only_count = len(promising_mvs)
+        if use_static_protection:
+            promising_mvs.update(static_protected_mvs)
+            added_by_static = len(promising_mvs) - local_only_count
+            logger.info(f"After merging static protected: {len(promising_mvs)} MVs (+{added_by_static} from static)")
         
         logger.info("-" * 70)
         logger.info(f"CF Pruning Completed!")
         logger.info(f"Promising MVs: {len(promising_mvs)}/{self.J}")
         logger.info(f"Reduction: {100.0 * (1 - len(promising_mvs) / self.J):.1f}%")
         logger.info("=" * 70)
+        
+        # Store static protected MVs for later reference
+        self.static_protected_mvs = static_protected_mvs
         
         return promising_mvs
     
@@ -257,18 +372,29 @@ class CFPruner:
                         self.node_count += 1
                         progress = f"[{self.node_count}/{self.total_nodes}]"
                         
+                        # Extract optimal MVs and pool MVs
+                        optimal_mvs = result['selected_mvs']
+                        pool_mvs = result.get('pool_mvs', set())
+                        
+                        # Combine for promising set
+                        all_mvs = optimal_mvs.copy()
+                        if pool_mvs:
+                            all_mvs.update(pool_mvs)
+                        
                         # Collect promising MVs
                         before_count = len(promising_mvs)
-                        promising_mvs.update(result['selected_mvs'])
+                        promising_mvs.update(all_mvs)
                         new_mvs = len(promising_mvs) - before_count
                         
                         logger.info(
                             f"{progress} Processing node: timesteps {result['timestep_indices']}, depth={node.depth}"
                         )
                         logger.info(
-                            f"  ✓ Selected {len(result['selected_mvs'])} MVs "
-                            f"(+{new_mvs} new, total: {len(promising_mvs)})"
+                            f"  ✓ Selected {len(all_mvs)} MVs "
+                            f"(optimal: {len(optimal_mvs)}, pool: {len(pool_mvs)}, "
+                            f"+{new_mvs} new, total: {len(promising_mvs)})"
                         )
+
                         
                         # Prepare children for next level
                         if node.left_child:
@@ -376,25 +502,37 @@ class CFPruner:
         
         result = local_optimizer.optimize()
         
-        # Extract selected MVs from all timesteps in this local solution
-        selected_mvs_all_timesteps: Set[int] = set()
+        # Extract selected MVs from optimal solution (for parent-child constraints)
+        selected_mvs_optimal: Set[int] = set()
         for t_idx, mvs in result["selected_mvs_by_timestep"].items():
-            selected_mvs_all_timesteps.update(mvs)
+            selected_mvs_optimal.update(mvs)
+        
+        # Extract pool MVs if available (for pruning)
+        pool_mvs = result.get("pool_mvs", set())
+        
+        # Combine optimal + pool for promising set (pruning purpose)
+        selected_mvs_all = selected_mvs_optimal.copy()
+        if pool_mvs:
+            selected_mvs_all.update(pool_mvs)
+            logger.info(f"  → Using Solution Pool: +{len(pool_mvs - selected_mvs_optimal)} additional MVs from pool")
         
         # Add to promising set
         before_count = len(promising_mvs)
-        promising_mvs.update(selected_mvs_all_timesteps)
+        promising_mvs.update(selected_mvs_all)
         new_mvs = len(promising_mvs) - before_count
         
         logger.info(
-            f"  ✓ Selected {len(selected_mvs_all_timesteps)} MVs "
-            f"(+{new_mvs} new, total: {len(promising_mvs)})"
+            f"  ✓ Selected {len(selected_mvs_all)} MVs "
+            f"(optimal: {len(selected_mvs_optimal)}, pool: {len(pool_mvs)}, "
+            f"+{new_mvs} new, total: {len(promising_mvs)})"
         )
         
         # Extract MVs at each timestep for passing to children
+        # IMPORTANT: Use optimal solution only for boundary constraints
         min_mvs = result["selected_mvs_by_timestep"].get(node.min_idx, set())
         median_mvs = result["selected_mvs_by_timestep"].get(node.median_idx, set())
         max_mvs = result["selected_mvs_by_timestep"].get(node.max_idx, set())
+
         
         # Recursively process children with correct boundary constraints
         # Left child: gets parent.min and parent.median as boundaries
@@ -434,6 +572,7 @@ class CFPruner:
         Returns:
             Dictionary with filtering statistics
         """
+        static_protected = getattr(self, 'static_protected_mvs', set())
         return {
             "total_candidates": self.J,
             "promising_candidates": len(promising_mvs),
@@ -441,6 +580,8 @@ class CFPruner:
             "retention_rate": len(promising_mvs) / self.J if self.J > 0 else 0.0,
             "reduction_rate": 1.0 - (len(promising_mvs) / self.J) if self.J > 0 else 0.0,
             "promising_mv_names": [self.node_list[j] for j in sorted(promising_mvs)],
+            "static_protected_count": len(static_protected),
+            "static_protected_mv_names": [self.node_list[j] for j in sorted(static_protected)],
         }
 
 
@@ -530,20 +671,25 @@ def _solve_node_static(
     
     result = local_optimizer.optimize()
     
-    # Extract selected MVs from all timesteps in this local solution
-    selected_mvs_all_timesteps: Set[int] = set()
+    # Extract selected MVs from optimal solution (for parent-child constraints)
+    selected_mvs_optimal: Set[int] = set()
     for t_idx, mvs in result["selected_mvs_by_timestep"].items():
-        selected_mvs_all_timesteps.update(mvs)
+        selected_mvs_optimal.update(mvs)
     
-    # Extract MVs at each timestep for passing to children
+    # Extract pool MVs if available (for pruning)
+    pool_mvs = result.get("pool_mvs", set())
+    
+    # Extract MVs at each timestep for passing to children (from optimal solution)
     min_mvs = result["selected_mvs_by_timestep"].get(node.min_idx, set())
     median_mvs = result["selected_mvs_by_timestep"].get(node.median_idx, set())
     max_mvs = result["selected_mvs_by_timestep"].get(node.max_idx, set())
     
     return {
-        "selected_mvs": selected_mvs_all_timesteps,
-        "min_mvs": min_mvs,
-        "median_mvs": median_mvs,
-        "max_mvs": max_mvs,
+        "selected_mvs": selected_mvs_optimal,  # Optimal solution for display
+        "pool_mvs": pool_mvs,  # Pool MVs for pruning
+        "min_mvs": min_mvs,  # For child constraints (optimal only)
+        "median_mvs": median_mvs,  # For child constraints (optimal only)
+        "max_mvs": max_mvs,  # For child constraints (optimal only)
         "timestep_indices": timestep_indices,
     }
+

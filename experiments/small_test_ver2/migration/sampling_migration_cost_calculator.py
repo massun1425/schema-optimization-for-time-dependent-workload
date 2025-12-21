@@ -4,6 +4,8 @@ import re
 import time
 from pathlib import Path
 from typing import Dict, Any, Tuple, List
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 from config.settings import Settings
 
@@ -20,9 +22,16 @@ class SamplingMigrationCostCalculator:
         ("name", "n")
     ]
 
-    SAMPLING_RATE = 0.001
+    SAMPLING_RATE = 0.01
     SCALE_FACTOR = 1.0 / SAMPLING_RATE
     OVERHEAD_MULTIPLIER = 1.2
+    
+    # PostgreSQLのコスト単位に合わせた書き込みコストパラメータ
+    # postgresql.conf のデフォルト値を参考
+    PAGE_SIZE = 8192            # PostgreSQLのページサイズ (8KB)
+    SEQ_PAGE_COST = 1.0         # シーケンシャルページI/Oコスト
+    CPU_TUPLE_COST = 0.01       # タプル処理コスト
+    WRITE_PAGE_COST = 1.0       # 書き込みページコスト（読み取りと同程度と仮定）
 
     def __init__(self, settings: Settings, query_set: str = "job_like"):
         self.settings = settings
@@ -115,10 +124,134 @@ class SamplingMigrationCostCalculator:
             return new_query, table
         
         return None, None
+    
+    @staticmethod
+    def _process_single_node(args: Tuple[str, Dict, Settings, str, float, float]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+        """単一ノードの処理（並列実行用の静的メソッド）"""
+        node, plans, settings, query_set, sampling_rate, scale_factor = args
+        
+        # 新しい接続を作成（各プロセスで独立した接続が必要）
+        conn = psycopg2.connect(
+            host=settings.database.host,
+            port=settings.database.port,
+            dbname=settings.database.database,
+            user=settings.database.user,
+            password=settings.database.password
+        )
+        
+        node_costs = {}
+        overhead_multiplier = 1.2
+        target_tables = [
+            ("cast_info", "ci"),
+            ("movie_info", "mi"),
+            ("movie_companies", "mc"),
+            ("person_info", "pi"),
+            ("movie_keyword", "mk"),
+            ("title", "t"),
+            ("name", "n")
+        ]
+        
+        try:
+            for plan_key in sorted(plans.keys()):
+                sql = plans[plan_key]
+                
+                if plan_key == "[]":
+                    est_rows = 0
+                    est_size = 0
+                    cost = 0.0
+                    
+                    # EXPLAIN でコストを取得
+                    try:
+                        with conn.cursor() as cursor:
+                            select_part = sql
+                            if "CREATE MATERIALIZED VIEW" in sql:
+                                match_create = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
+                                if match_create:
+                                    select_part = match_create.group(1)
+                            
+                            cursor.execute(f"EXPLAIN (FORMAT JSON) {select_part}")
+                            res = cursor.fetchone()
+                            if res:
+                                plan = res[0][0]['Plan']
+                                cost = float(plan.get('Total Cost', 0.0))
+                                est_rows = int(plan.get('Plan Rows', 0))
+                                width = int(plan.get('Plan Width', 0))
+                                est_size = est_rows * width
+                    except Exception:
+                        pass
+                    
+                    # サンプリングでサイズを推定
+                    match = re.search(r"AS\s+(SELECT.*);", sql, re.IGNORECASE | re.DOTALL)
+                    if not match:
+                        match = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
+                    
+                    if match:
+                        select_query = match.group(1)
+                        
+                        # クエリを書き換え
+                        best_table = None
+                        for table, alias in target_tables:
+                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
+                            if pattern.search(select_query):
+                                best_table = (table, alias)
+                                break
+                        
+                        if best_table:
+                            table, alias = best_table
+                            sample_table = f"sample_{table}"
+                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
+                            rewritten_query = pattern.sub(f"{sample_table} AS {alias}", select_query)
+                            
+                            # サンプルからサイズを取得
+                            wrapped_query = f"""
+                            SELECT count(*), sum(pg_column_size(sub)) 
+                            FROM ({rewritten_query}) as sub;
+                            """
+                            try:
+                                with conn.cursor() as cursor:
+                                    cursor.execute(wrapped_query)
+                                    result = cursor.fetchone()
+                                    if result and len(result) >= 2:
+                                        rows = int(result[0]) if result[0] else 0
+                                        size = int(result[1]) if result[1] else 0
+                                        if rows > 0:
+                                            est_rows = int(rows * scale_factor)
+                                            est_size = int(size * scale_factor * overhead_multiplier)
+                            except Exception:
+                                pass
+                    
+                    # 書き込みコストをPostgreSQLのコスト単位で計算
+                    # write_cost = (pages * page_cost) + (rows * cpu_tuple_cost)
+                    # サンプリングで得られた est_rows と est_size を使用
+                    estimated_pages = est_size / SamplingMigrationCostCalculator.PAGE_SIZE
+                    write_cost = (estimated_pages * SamplingMigrationCostCalculator.WRITE_PAGE_COST + 
+                                  est_rows * SamplingMigrationCostCalculator.CPU_TUPLE_COST)
+                    total_cost = cost + write_cost
+                    
+                    node_costs[plan_key] = {
+                        "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
+                        "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
+                        "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                        "rows": est_rows,
+                        "width": int(est_size / est_rows) if est_rows > 0 else 0,
+                        "size": est_size
+                    }
+                else:
+                    node_costs[plan_key] = {
+                        "cost": 0.0,
+                        "rows": 0,
+                        "width": 0,
+                        "size": 0
+                    }
+        
+        finally:
+            conn.close()
+        
+        return node, node_costs
 
-    def calculate_all_costs(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def calculate_all_costs(self, use_parallel: bool = True, max_workers: int = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
         print("\n" + "="*70)
-        print("Calculating migration costs using SAMPLING...")
+        print(f"Calculating migration costs using SAMPLING ({'PARALLEL' if use_parallel else 'SEQUENTIAL'})...")
         print("="*70)
 
         conn = self._get_connection()
@@ -128,88 +261,120 @@ class SamplingMigrationCostCalculator:
                 return {}
 
             total_nodes = len(self.plans)
-            processed = 0
-            updated_count = 0
-            skipped_count = 0
+            
+            if use_parallel:
+                # 並列処理
+                if max_workers is None:
+                    max_workers = min(cpu_count(), total_nodes)
+                
+                print(f"  Using {max_workers} workers for parallel processing...")
+                
+                # 各ノードの処理用の引数を準備
+                process_args = [
+                    (node, plans, self.settings, self.query_set, self.SAMPLING_RATE, self.SCALE_FACTOR)
+                    for node, plans in self.plans.items()
+                ]
+                
+                # 並列実行
+                with Pool(processes=max_workers) as pool:
+                    results = []
+                    for i, result in enumerate(pool.imap_unordered(self._process_single_node, process_args)):
+                        results.append(result)
+                        if (i + 1) % 10 == 0 or (i + 1) == total_nodes:
+                            print(f"  Progress: {i + 1}/{total_nodes} ({(i + 1)*100//total_nodes}%)")
+                
+                # 結果をマージ
+                for node, node_costs in results:
+                    self.costs[node] = node_costs
+                
+                print(f"\nProcessed {total_nodes} MVs with parallel sampling.")
+            
+            else:
+                # 逐次処理（元の実装）
+                processed = 0
+                updated_count = 0
+                skipped_count = 0
 
-            for node, plans in self.plans.items():
-                processed += 1
-                if processed % 10 == 0 or processed == total_nodes:
-                    print(f"  Progress: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
+                for node, plans in self.plans.items():
+                    processed += 1
+                    if processed % 10 == 0 or processed == total_nodes:
+                        print(f"  Progress: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
 
-                self.costs[node] = {}
+                    self.costs[node] = {}
 
-                for plan_key in sorted(plans.keys()):
-                    sql = plans[plan_key]
+                    for plan_key in sorted(plans.keys()):
+                        sql = plans[plan_key]
 
-                    if plan_key == "[]":
-                        # Extract SELECT part
-                        match = re.search(r"AS\s+(SELECT.*);", sql, re.IGNORECASE | re.DOTALL)
-                        if not match:
-                            match = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
-                        
-                        est_rows = 0
-                        est_size = 0
-                        cost = 0.0 # Cost is hard to estimate with sampling, maybe use explain on sample?
-                        # For now, let's just get rows and size.
-                        # We might want to run EXPLAIN on the original query to get 'cost' 
-                        # but use sampling for 'rows' and 'size'.
-                        
-                        # Let's run EXPLAIN on original query first to get cost and width (fallback)
-                        try:
-                            with conn.cursor() as cursor:
-                                cursor.execute(f"EXPLAIN (FORMAT JSON) {sql.replace('CREATE MATERIALIZED VIEW', 'CREATE MATERIALIZED VIEW IF NOT EXISTS').split('AS', 1)[1]}") 
-                                # Actually we just need to explain the SELECT part
-                                # But the SQL in plans is "CREATE MV ... AS SELECT ..."
-                                # We can just EXPLAIN the SELECT part.
-                                select_part = sql
-                                if "CREATE MATERIALIZED VIEW" in sql:
-                                     match_create = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
-                                     if match_create:
-                                         select_part = match_create.group(1)
-                                
-                                cursor.execute(f"EXPLAIN (FORMAT JSON) {select_part}")
-                                res = cursor.fetchone()
-                                if res:
-                                    plan = res[0][0]['Plan']
-                                    cost = float(plan.get('Total Cost', 0.0))
-                                    # Fallback values
-                                    est_rows = int(plan.get('Plan Rows', 0))
-                                    width = int(plan.get('Plan Width', 0))
-                                    est_size = est_rows * width
-                        except Exception:
-                            pass
-
-                        if match:
-                            select_query = match.group(1)
-                            rewritten_query, used_table = self._rewrite_query(select_query)
+                        if plan_key == "[]":
+                            # Extract SELECT part
+                            match = re.search(r"AS\s+(SELECT.*);", sql, re.IGNORECASE | re.DOTALL)
+                            if not match:
+                                match = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
                             
-                            if rewritten_query:
-                                rows, size = self._get_sample_estimate(conn, rewritten_query)
-                                if rows > 0:
-                                    est_rows = int(rows * self.SCALE_FACTOR)
-                                    est_size = int(size * self.SCALE_FACTOR * self.OVERHEAD_MULTIPLIER)
-                                    updated_count += 1
+                            est_rows = 0
+                            est_size = 0
+                            cost = 0.0
+                            
+                            # EXPLAIN でコストを取得
+                            try:
+                                with conn.cursor() as cursor:
+                                    select_part = sql
+                                    if "CREATE MATERIALIZED VIEW" in sql:
+                                        match_create = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
+                                        if match_create:
+                                            select_part = match_create.group(1)
+                                    
+                                    cursor.execute(f"EXPLAIN (FORMAT JSON) {select_part}")
+                                    res = cursor.fetchone()
+                                    if res:
+                                        plan = res[0][0]['Plan']
+                                        cost = float(plan.get('Total Cost', 0.0))
+                                        # Fallback values
+                                        est_rows = int(plan.get('Plan Rows', 0))
+                                        width = int(plan.get('Plan Width', 0))
+                                        est_size = est_rows * width
+                            except Exception:
+                                pass
+
+                            if match:
+                                select_query = match.group(1)
+                                rewritten_query, used_table = self._rewrite_query(select_query)
+                                
+                                if rewritten_query:
+                                    rows, size = self._get_sample_estimate(conn, rewritten_query)
+                                    if rows > 0:
+                                        est_rows = int(rows * self.SCALE_FACTOR)
+                                        est_size = int(size * self.SCALE_FACTOR * self.OVERHEAD_MULTIPLIER)
+                                        updated_count += 1
+                                    else:
+                                        skipped_count += 1
                                 else:
                                     skipped_count += 1
-                            else:
-                                skipped_count += 1
-                        
-                        self.costs[node][plan_key] = {
-                            "cost": cost,
-                            "rows": est_rows,
-                            "width": int(est_size / est_rows) if est_rows > 0 else 0,
-                            "size": est_size
-                        }
-                    else:
-                        self.costs[node][plan_key] = {
-                            "cost": 0.0,
-                            "rows": 0,
-                            "width": 0,
-                            "size": 0
-                        }
-            
-            print(f"\nProcessed {updated_count} MVs with sampling, Skipped/Fallback {skipped_count} MVs.")
+                            
+                            # 書き込みコストをPostgreSQLのコスト単位で計算
+                            # サンプリングで得られた est_rows と est_size を使用
+                            estimated_pages = est_size / self.PAGE_SIZE
+                            write_cost = (estimated_pages * self.WRITE_PAGE_COST + 
+                                          est_rows * self.CPU_TUPLE_COST)
+                            total_cost = cost + write_cost
+                            
+                            self.costs[node][plan_key] = {
+                                "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
+                                "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
+                                "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                                "rows": est_rows,
+                                "width": int(est_size / est_rows) if est_rows > 0 else 0,
+                                "size": est_size
+                            }
+                        else:
+                            self.costs[node][plan_key] = {
+                                "cost": 0.0,
+                                "rows": 0,
+                                "width": 0,
+                                "size": 0
+                            }
+                
+                print(f"\nProcessed {updated_count} MVs with sampling, Skipped/Fallback {skipped_count} MVs.")
             self.drop_sample_tables(conn)
             
         finally:

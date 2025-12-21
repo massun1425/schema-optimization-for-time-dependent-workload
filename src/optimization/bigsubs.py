@@ -86,7 +86,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         Returns:
             Flip probability between 0 and 1
         """
-        p = 10  # Iteration threshold
+        p = 40  # Iteration threshold
 
         # Capacity component
         if B_cur < B_max:
@@ -188,7 +188,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         """
         return [], []
 
-    def optimize(self, iter_max: int = 3, **kwargs) -> OptimizationResult:
+    def optimize(self, iter_max: int = 50, **kwargs) -> OptimizationResult:
         """Execute the BigSubs optimization algorithm.
 
         Args:
@@ -273,10 +273,14 @@ class BigSubsOptimizer(BaseILPOptimizer):
                 z_j[j] = z_j_new[j]
                 U_cur -= self.m_cost[j] * z_j[j]
 
+            # ★【重要修正】B_cur を z_j に合わせて正しく再計算する
+            # Edge Labelingで使われなかったMVが削除されるため、B_curも更新が必要
+            B_cur = sum(z_j[j] * self.b_j[j] for j in range(len(z_j)))
+
             iter_num += 1
 
-            # Track best solution
-            if U_cur > best_u:
+            # Track best solution (容量制約を満たしている場合のみベストを更新)
+            if U_cur > best_u and B_cur <= self.B_max:
                 best_u = U_cur
                 best_b = B_cur
                 best_y_ij = [list(row) for row in y_ij]

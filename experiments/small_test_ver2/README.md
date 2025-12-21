@@ -102,7 +102,8 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py \
 | `--use-pruning` | フラグ | - | CF Pruningを使用（大規模データ向け） |
 | `--pruning-parallel` | フラグ | - | プルーニングを並列実行 |
 | `--pruning-workers` | 整数 | `16` | プルーニング並列実行時のワーカー数 |
-| `--static-timestep` | `first`, `last` | `last` | 静的最適化で使用するタイムステップ |
+| `--static-timestep` | `first`, `last`, `average` | `last` | 静的最適化で使用するタイムステップ |
+| `--static-algorithm` | `normal`, `bigsubs`, `both` | `normal` | 静的最適化で使用するアルゴリズム |
 | `--exp-suffix` | 文字列 | 空 | 実験識別サフィックス（例: `_16_2`） |
 
 ### コスト推定引数
@@ -125,28 +126,34 @@ python experiments/small_test_ver2/scripts/run_experiment_normal.py \
 
 ```bash
 # 基本的な実行（動的モード）
-python scripts/run_experiment_normal.py --phase all --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job
 
 # 静的モードで最適化のみ
-python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
 
 # ベンチマーク比較（ベースライン）
-python scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
 
 # 大規模データ向け（プルーニング有効）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
 
 # 異なる頻度設定の実験
-python scripts/run_experiment_normal.py --phase all --query-set job --exp-suffix _16_4
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --exp-suffix _16_4
 
 # 静的最適化（最初のタイムステップで全実行）
-python scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode static --static-timestep first
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode static --static-timestep first
 
 # プルーニング並列実行（64ワーカー）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 64
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 64
 
 # ローカルPostgreSQL使用
-python scripts/run_experiment_normal.py --phase 1 --query-set job --use-local
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set job --use-local
+
+# BigSubs アルゴリズムで静的最適化
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static --static-algorithm bigsubs --static-timestep average --use-docker
+
+# 両アルゴリズム（normal + bigsubs）を実行して比較
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static --static-algorithm both --static-timestep average --use-docker
 ```
 
 ---
@@ -156,7 +163,7 @@ python scripts/run_experiment_normal.py --phase 1 --query-set job --use-local
 ### Phase 1: EXPLAIN JSON生成
 
 ```bash
-python scripts/run_experiment_normal.py --phase 1 --query-set job --use-docker
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set job --use-docker
 ```
 
 **出力**: `02_json/{query_set}/*.json`
@@ -164,7 +171,7 @@ python scripts/run_experiment_normal.py --phase 1 --query-set job --use-docker
 ### Phase 2: クエリパース
 
 ```bash
-python scripts/run_experiment_normal.py --phase 2 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --query-set job
 ```
 
 **出力**: `03_parsed/{query_set}/qp_class.pkl`, `parse_summary.json`
@@ -172,7 +179,7 @@ python scripts/run_experiment_normal.py --phase 2 --query-set job
 ### Phase 3: JSONノードID付加
 
 ```bash
-python scripts/run_experiment_normal.py --phase 3 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 3 --query-set job
 ```
 
 **出力**: `02_json/{query_set}/*.json`（更新）
@@ -180,7 +187,7 @@ python scripts/run_experiment_normal.py --phase 3 --query-set job
 ### Phase 4: マイグレーションプラン列挙
 
 ```bash
-python scripts/run_experiment_normal.py --phase 4 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 4 --query-set job
 ```
 
 **出力**: `04_migration/{query_set}/simple_migration_plans.json`
@@ -188,7 +195,7 @@ python scripts/run_experiment_normal.py --phase 4 --query-set job
 ### Phase 5: マイグレーションコスト計算
 
 ```bash
-python scripts/run_experiment_normal.py --phase 5 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 5 --query-set job
 ```
 
 **出力**: `04_migration/{query_set}/simple_migration_costs.json`
@@ -197,27 +204,41 @@ python scripts/run_experiment_normal.py --phase 5 --query-set job
 
 ```bash
 # 動的モード（デフォルト）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode dynamic
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode dynamic
 
 # 静的モード（最後のタイムステップ）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
 
 # 静的モード（最初のタイムステップ）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-timestep first
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-timestep first
 
 # プルーニング使用（大規模データ向け）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
 
 # プルーニング並列実行（32ワーカー）
-python scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 32
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 32
 ```
 
 **出力**: `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json`
 
+### Phase 6 (静的モード + BigSubs)
+
+```bash
+# BigSubs アルゴリズムを使用
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-algorithm bigsubs --static-timestep average
+
+# 通常ILPとBigSubsを両方実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-algorithm both --static-timestep average
+```
+
+**出力**:
+- `normal`: `time_dependent_output/{query_set}/static_mv_optimization_result{suffix}.json`
+- `bigsubs`: `time_dependent_output/{query_set}/static_bigsubs_optimization_result{suffix}.json`
+
 ### Phase 7: MV作成SQL生成
 
 ```bash
-python scripts/run_experiment_normal.py --phase 7 --query-set job --optimization-mode dynamic
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job --optimization-mode dynamic
 ```
 
 **出力**: `time_dependent_output/{query_set}/timestep_*_*.sql`
@@ -225,7 +246,7 @@ python scripts/run_experiment_normal.py --phase 7 --query-set job --optimization
 ### Phase 8: クエリ書き換え
 
 ```bash
-python scripts/run_experiment_normal.py --phase 8 --query-set job --optimization-mode dynamic
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job --optimization-mode dynamic
 ```
 
 **出力**: `time_dependent_output/{query_set}/jobs/timestep_*_*/`
@@ -234,13 +255,13 @@ python scripts/run_experiment_normal.py --phase 8 --query-set job --optimization
 
 ```bash
 # 動的MV
-python scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode dynamic
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode dynamic
 
 # 静的MV
-python scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode static
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode static
 
 # ベースライン（MVなし）
-python scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
 ```
 
 **出力**: `time_dependent_output/{query_set}/benchmark_results_{mode}{suffix}.json`
@@ -264,8 +285,11 @@ python scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mo
 | `02_json/{query_set}/*.json` | EXPLAIN JSON（ノードID付き） |
 | `03_parsed/{query_set}/qp_class.pkl` | パース結果（pickle） |
 | `04_migration/{query_set}/simple_migration_*.json` | マイグレーション計画・コスト |
-| `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json` | 最適化結果 |
+| `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json` | 動的最適化結果 |
+| `time_dependent_output/{query_set}/static_mv_optimization_result{suffix}.json` | 静的最適化結果（normal） |
+| `time_dependent_output/{query_set}/static_bigsubs_optimization_result{suffix}.json` | 静的最適化結果（bigsubs） |
 | `time_dependent_output/{query_set}/benchmark_results_*.json` | ベンチマーク結果 |
+| `time_dependent_output/{query_set}/benchmark_results_static_bigsubs*.json` | BigSubsベンチマーク結果 |
 
 ---
 
@@ -306,7 +330,7 @@ experiments/small_test_ver2/
 
 ```bash
 docker start mv_postgres
-python scripts/run_experiment_normal.py --phase 1 --use-docker
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --use-docker
 ```
 
 ### Gurobiライセンスエラー
@@ -320,7 +344,7 @@ python scripts/run_experiment_normal.py --phase 1 --use-docker
 Phase 2（クエリパース）を先に実行してください：
 
 ```bash
-python scripts/run_experiment_normal.py --phase 2 --query-set job
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --query-set job
 ```
 
 ### PostgreSQL接続エラー
@@ -369,6 +393,14 @@ docker logs mv_postgres | tail -20
 - `--static-timestep last`: 最後のタイムステップ（終了時点）のワークロードで最適化
 
 全フェーズ実行（`--phase all`）や部分実行（`--phase post-opt`）でも使用可能です。
+
+### 静的最適化アルゴリズムの選択
+
+- `--static-algorithm normal`: 通常のILP最適化（Gurobi）
+- `--static-algorithm bigsubs`: BigSubsヒューリスティック最適化
+- `--static-algorithm both`: 両方を実行して比較
+
+各アルゴリズムの結果は別ファイルに保存され、ベンチマークも独立して実行可能です。
 
 ---
 

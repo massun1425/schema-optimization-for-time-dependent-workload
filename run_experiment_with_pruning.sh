@@ -24,6 +24,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --exp-suffix _16_1 \
   --use-pruning \
   --pruning-parallel \
+  --static-protection \
   --use-docker \
   2>&1 | tee ${OUTPUT_DIR}/log_with_pruning_16_1.txt
 echo "完了時刻: $(date)"
@@ -40,6 +41,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --exp-suffix _16_2 \
   --use-pruning \
   --pruning-parallel \
+  --static-protection \
   --use-docker \
   2>&1 | tee ${OUTPUT_DIR}/log_with_pruning_16_2.txt
 echo "完了時刻: $(date)"
@@ -56,6 +58,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --exp-suffix _16_3 \
   --use-pruning \
   --pruning-parallel \
+  --static-protection \
   --use-docker \
   2>&1 | tee ${OUTPUT_DIR}/log_with_pruning_16_3.txt
 echo "完了時刻: $(date)"
@@ -72,6 +75,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --exp-suffix _16_4 \
   --use-pruning \
   --pruning-parallel \
+  --static-protection \
   --use-docker \
   2>&1 | tee ${OUTPUT_DIR}/log_with_pruning_16_4.txt
 echo "完了時刻: $(date)"

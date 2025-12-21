@@ -546,7 +546,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=True):
+    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=True, sampling_parallel=False, sampling_workers=None):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -583,7 +583,11 @@ class NormalModeExperiment:
             )
             
             # コストを計算・保存
-            costs = calculator.calculate_all_costs()
+            if use_sampling and sampling_parallel:
+                self.print_info(f"並列処理でサンプリングを実行します（ワーカー数: {sampling_workers if sampling_workers else 'auto'}）")
+                costs = calculator.calculate_all_costs(use_parallel=True, max_workers=sampling_workers)
+            else:
+                costs = calculator.calculate_all_costs()
             
             # 出力ファイルのパスを確認
             output_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
@@ -606,7 +610,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
-    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
+    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal'):
         """フェーズ6: MV最適化
         
         Args:
@@ -615,10 +619,12 @@ class NormalModeExperiment:
             pruning_parallel: プルーニングを並列実行するかどうか (デフォルト: False)
             pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
+            use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
+            static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
         """
         # 最初にモードで分岐
         if mode == 'static':
-            return self.phase6b_optimize_static(timestep_position=static_timestep)
+            return self.phase6b_optimize_static(timestep_position=static_timestep, static_algorithm=static_algorithm)
         
         # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
@@ -642,6 +648,8 @@ class NormalModeExperiment:
         if use_pruning:
             mode_str = "並列" if pruning_parallel else "逐次"
             self.print_info(f"  プルーニングを使用します（{mode_str}実行）")
+            if use_static_protection:
+                self.print_info(f"  静的保護: 有効（ハイブリッドアプローチ）")
             if pruning_parallel:
                 import multiprocessing
                 workers = pruning_workers or multiprocessing.cpu_count()
@@ -658,7 +666,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(5*1024*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -675,14 +683,20 @@ class NormalModeExperiment:
                     else:
                         frequencies[ts] = frequencies[ts][:query_count]
             
-            # フルビルドコストとサイズを直接読み込み（簡略化版）
-            self.print_info("フルビルドコストとサイズを読み込み中...")
-            migration_cost, b_j_from_migration = load_full_build_costs_and_sizes(
+            # マイグレーションコストをsubquery_costsから取得（u_ijとスケール一致）
+            self.print_info("マイグレーションコストを計算中...")
+            migration_cost = {
+                j: self.qp.qm.subquery_costs[node_id]
+                for j, node_id in enumerate(self.qp.node_list)
+            }
+            
+            # サイズはsimple_migration_costs.jsonから読み込み
+            _, b_j_from_migration = load_full_build_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
                 self.query_set
             )
-            self.print_success(f"  {len(migration_cost)}個のMVのフルビルドコストを読み込み完了")
+            self.print_success(f"  {len(migration_cost)}個のMVのマイグレーションコストを計算完了（subquery_costsベース）")
             
             # プルーニングを実行（オプション）
             pruning_info = None
@@ -707,7 +721,7 @@ class NormalModeExperiment:
                     max_workers=pruning_workers,
                 )
                 
-                promising_mvs = pruner.prune_candidates()
+                promising_mvs = pruner.prune_candidates(use_static_protection=use_static_protection)
                 pruning_time = time.time() - pruning_start
                 
                 pruning_info = pruner.get_filtering_info(promising_mvs)
@@ -934,11 +948,12 @@ class NormalModeExperiment:
         
         return enhanced
     
-    def phase6b_optimize_static(self, timestep_position='last'):
+    def phase6b_optimize_static(self, timestep_position='last', static_algorithm='normal'):
         """フェーズ6b: 静的最適化（時間依存なし・単一タイムステップのみ）
         
         Args:
             timestep_position: 使用するタイムステップ ('first': 最初, 'last': 最後, 'average': 全時刻の平均)
+            static_algorithm: 使用するアルゴリズム ('normal': 通常ILP, 'bigsubs': BigSubs, 'both': 両方)
         """
         if timestep_position == 'first':
             position_name = "最初"
@@ -972,7 +987,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(5*1024*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1039,55 +1054,119 @@ class NormalModeExperiment:
                 self.query_set
             )
             
-            # NormalOptimizerの初期化
             # m_costは0とする（マイグレーションコストを考慮しないため）
             m_cost = [0.0] * len(self.qp.node_list)
             
-            optimizer = NormalOptimizer(
-                qm=self.qp.qm, # Pass self.qp.qm (QueryManager) as qm
-                s_num=len(self.qp.node_list),
-                m_cost=m_cost,
-                node_list=self.qp.node_list,
-                B_max=B_max,
-                b_j=b_j_from_migration,
-                u_ij=weighted_u_ij,
-                X=self.qp.X,
-                q_s_list=[], # 使用しない
-                settings=self.settings
-            )
-            
-            # 最適化実行
-            self.print_info("最適化を実行中...")
-            result = optimizer.optimize()
-            
-            # 結果の整形
-            selected_mvs = [mv.node_id for mv in result.selected_views]
-            total_size = result.total_storage
-            
-            static_result = {
-                "algorithm": "static_normal",
-                "timestep": selected_timestep,
-                "selected_mvs": selected_mvs,
-                "mv_count": len(selected_mvs),
-                "total_size": total_size,
-                "storage_budget": B_max,
-                "utilization_percent": (total_size / B_max * 100) if B_max > 0 else 0,
-                "objective_value": result.total_utility,
-                "execution_time": result.execution_time
-            }
-            
-            self.print_success("静的最適化完了")
-            self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
-            self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
-            
-            # 結果保存
+            # 結果保存用の変数
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
-            result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
             
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(static_result, f, indent=2, ensure_ascii=False)
-            self.print_success(f"結果を {result_file} に保存")
+            # NormalOptimizer実行 (normal or both)
+            if static_algorithm in ('normal', 'both'):
+                self.print_info(f"NormalOptimizer で最適化を実行中...")
+                
+                optimizer = NormalOptimizer(
+                    qm=self.qp.qm,
+                    s_num=len(self.qp.node_list),
+                    m_cost=m_cost,
+                    node_list=self.qp.node_list,
+                    B_max=B_max,
+                    b_j=b_j_from_migration,
+                    u_ij=weighted_u_ij,
+                    X=self.qp.X,
+                    q_s_list=[],
+                    settings=self.settings
+                )
+                
+                result = optimizer.optimize()
+                
+                # 結果の整形
+                selected_mvs = [mv.node_id for mv in result.selected_views]
+                total_size = result.total_storage
+                
+                static_result = {
+                    "algorithm": "static_normal",
+                    "timestep": selected_timestep,
+                    "selected_mvs": selected_mvs,
+                    "mv_count": len(selected_mvs),
+                    "total_size": total_size,
+                    "storage_budget": B_max,
+                    "utilization_percent": (total_size / B_max * 100) if B_max > 0 else 0,
+                    "objective_value": result.total_utility,
+                    "execution_time": result.execution_time
+                }
+                
+                self.print_success("NormalOptimizer 完了")
+                self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
+                self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
+                
+                # 結果保存
+                result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
+                with open(result_file, 'w', encoding='utf-8') as f:
+                    json.dump(static_result, f, indent=2, ensure_ascii=False)
+                self.print_success(f"NormalOptimizer結果を {result_file} に保存")
+            
+            # BigSubsOptimizer実行 (bigsubs or both)
+            if static_algorithm in ('bigsubs', 'both'):
+                from src.optimization.bigsubs import BigSubsOptimizer
+                
+                self.print_info(f"BigSubsOptimizer で最適化を実行中...")
+                
+                # weighted_u_ij に基づいて U_j_max と U_max を計算
+                # オリジナルのBigSubsに合わせて、max ではなく sum を使用
+                weighted_U_j_max = [
+                    sum((weighted_u_ij[i][j] for i in range(len(weighted_u_ij))))
+                    for j in range(len(self.qp.node_list))
+                ]
+                weighted_U_max = sum(weighted_U_j_max)
+                
+                # y_ijはクエリパーサから取得（オリジナルの静的実験と同様）
+                initial_y_ij = self.qp.y_ij if hasattr(self.qp, 'y_ij') else [[0] * len(self.qp.node_list) for _ in range(len(weighted_u_ij))]
+                
+                bigsubs_optimizer = BigSubsOptimizer(
+                    qm=self.qp.qm,
+                    s_num=len(self.qp.node_list),
+                    m_cost=m_cost,
+                    node_list=self.qp.node_list,
+                    B_max=B_max,
+                    b_j=b_j_from_migration,
+                    u_ij=weighted_u_ij,
+                    X=self.qp.X,
+                    q_s_list=self.qp.q_s_list,
+                    settings=self.settings,
+                    U_j_max=weighted_U_j_max,
+                    U_max=weighted_U_max,
+                    y_ij=initial_y_ij
+                )
+                
+                bigsubs_result = bigsubs_optimizer.optimize(iter_max=50)
+                
+                # 結果の整形
+                bigsubs_selected_mvs = [mv.node_id for mv in bigsubs_result.selected_views]
+                bigsubs_total_size = bigsubs_result.total_storage
+                
+                bigsubs_static_result = {
+                    "algorithm": "static_bigsubs",
+                    "timestep": selected_timestep,
+                    "selected_mvs": bigsubs_selected_mvs,
+                    "mv_count": len(bigsubs_selected_mvs),
+                    "total_size": bigsubs_total_size,
+                    "storage_budget": B_max,
+                    "utilization_percent": (bigsubs_total_size / B_max * 100) if B_max > 0 else 0,
+                    "objective_value": bigsubs_result.total_utility,
+                    "execution_time": bigsubs_result.execution_time,
+                    "iterations": bigsubs_result.iterations if hasattr(bigsubs_result, 'iterations') else None
+                }
+                
+                self.print_success("BigSubsOptimizer 完了")
+                self.print_info(f"  選択されたMV数: {len(bigsubs_selected_mvs)}")
+                self.print_info(f"  使用ストレージ: {bigsubs_total_size / 1024 / 1024:.2f} MB")
+                
+                # 結果保存（BigSubs用のファイル名）
+                bigsubs_result_file = result_dir / f"static_bigsubs_optimization_result{self.exp_suffix}.json"
+                with open(bigsubs_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(bigsubs_static_result, f, indent=2, ensure_ascii=False)
+                self.print_success(f"BigSubsOptimizer結果を {bigsubs_result_file} に保存")
             
             # SQL生成はPhase 7に移動
             self.phase_times['phase6b_static_optimization'] = time.time() - phase_start
@@ -1099,18 +1178,19 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
 
-    def phase7_generate_mv_sql(self, mode='dynamic'):
+    def phase7_generate_mv_sql(self, mode='dynamic', static_algorithm='normal'):
         """フェーズ7: MV作成SQL生成
         
         Args:
             mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+            static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
         """
         # Static mode: 静的最適化結果からSQL生成
         if mode == 'static':
             self.print_header("静的MV作成SQL生成", 7)
             phase_start = time.time()
             
-            success = self._generate_static_mv_sql()
+            success = self._generate_static_mv_sql(static_algorithm=static_algorithm)
             
             self.phase_times['phase7_static_sql_generation'] = time.time() - phase_start
             if success:
@@ -1273,11 +1353,21 @@ class NormalModeExperiment:
 
     
     
-    def _generate_static_mv_sql(self):
-        """静的最適化結果からMV作成SQLを生成"""
+    def _generate_static_mv_sql(self, static_algorithm='normal'):
+        """静的最適化結果からMV作成SQLを生成
+        
+        Args:
+            static_algorithm: 使用するアルゴリズム ('normal' or 'bigsubs')
+        """
         try:
-            # 静的最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+            # 静的最適化結果を読み込み（アルゴリズムに応じてファイルを選択）
+            if static_algorithm == 'bigsubs':
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_bigsubs_optimization_result{self.exp_suffix}.json"
+                sql_file_name = "static_bigsubs_initial_mvs.sql"
+            else:
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+                sql_file_name = "static_initial_mvs.sql"
+            
             if not result_file.exists():
                 self.print_error(f"静的最適化結果が見つかりません: {result_file}")
                 self.print_info("先にフェーズ6.5を実行してください")
@@ -1287,7 +1377,7 @@ class NormalModeExperiment:
                 static_result = json.load(f)
             
             selected_mvs = static_result.get('selected_mvs', [])
-            self.print_info(f"静的最適化結果を読み込み: {len(selected_mvs)}個のMV")
+            self.print_info(f"静的最適化結果を読み込み ({static_algorithm}): {len(selected_mvs)}個のMV")
             
             # マイグレーションプランを読み込み
             plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
@@ -1302,7 +1392,7 @@ class NormalModeExperiment:
             # SQLステートメントを生成
             sql_statements = []
             sql_statements.append(f"-- =====================================================")
-            sql_statements.append(f"-- 静的最適化MV作成SQL")
+            sql_statements.append(f"-- 静的最適化MV作成SQL ({static_algorithm})")
             sql_statements.append(f"-- 選択されたMV数: {len(selected_mvs)}")
             sql_statements.append(f"-- =====================================================")
             sql_statements.append(f"\\c {self.settings.database.database}")
@@ -1322,11 +1412,11 @@ class NormalModeExperiment:
             # SQLファイルを保存
             output_dir = self.exp_dir / "time_dependent_output" / self.query_set
             output_dir.mkdir(parents=True, exist_ok=True)
-            sql_file = output_dir / "static_initial_mvs.sql"
+            sql_file = output_dir / sql_file_name
             
             # 既存の静的MVファイルを削除
             if sql_file.exists():
-                self.print_info("既存の静的MV SQLファイルを削除中")
+                self.print_info(f"既存の静的MV SQLファイルを削除中: {sql_file_name}")
                 sql_file.unlink()
             
             with open(sql_file, 'w', encoding='utf-8') as f:
@@ -1342,27 +1432,33 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase8_rewrite_queries(self, mode='dynamic'):
+    def phase8_rewrite_queries(self, mode='dynamic', static_algorithm='normal'):
         """フェーズ8: クエリ書き換え
         
         Args:
             mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
+            static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
         """
         # 最初にモードで分岐
         if mode == 'static':
             # Static mode
             self.print_header("クエリ書き換え（静的モード）", 8)
             
-            static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+            # アルゴリズムに応じてファイルを選択
+            if static_algorithm == 'bigsubs':
+                static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_bigsubs_optimization_result{self.exp_suffix}.json"
+            else:
+                static_result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+            
             if not static_result_file.exists():
-                self.print_error("静的最適化結果が見つかりません")
+                self.print_error(f"静的最適化結果が見つかりません: {static_result_file}")
                 self.print_info("先にフェーズ6を --optimization-mode static で実行してください")
                 return False
             
-            self.print_info("静的最適化結果を使用してクエリを書き換えます。")
+            self.print_info(f"静的最適化結果を使用してクエリを書き換えます ({static_algorithm})。")
             
             phase_start = time.time()
-            success = self._rewrite_static_queries(static_result_file)
+            success = self._rewrite_static_queries(static_result_file, static_algorithm=static_algorithm)
             self.phase_times['phase8_rewrite_queries_static'] = time.time() - phase_start
             
             return success
@@ -1508,8 +1604,13 @@ class NormalModeExperiment:
         
         return True
     
-    def _rewrite_static_queries(self, result_file):
-        """静的最適化結果に基づいてクエリを書き換え"""
+    def _rewrite_static_queries(self, result_file, static_algorithm='normal'):
+        """静的最適化結果に基づいてクエリを書き換え
+        
+        Args:
+            result_file: 最適化結果ファイルパス
+            static_algorithm: 使用するアルゴリズム ('normal' or 'bigsubs')
+        """
         try:
             from src.rewrite.query_rewriter import QueryRewriter
             from src.core.models import MaterializedView
@@ -1528,7 +1629,7 @@ class NormalModeExperiment:
                 result_data = json.load(f)
             
             selected_mvs = result_data.get('selected_mvs', [])
-            self.print_info(f"静的モード: {len(selected_mvs)}個のMVを使用してクエリを書き換え")
+            self.print_info(f"静的モード ({static_algorithm}): {len(selected_mvs)}個のMVを使用してクエリを書き換え")
             
             # クエリファイル取得
             query_files = sorted(self.queries_dir.glob("*.sql"), key=lambda x: x.name)
@@ -1576,8 +1677,11 @@ class NormalModeExperiment:
             rewriter = QueryRewriter(rewrite_settings)
             rewritten_queries = rewriter.rewrite_queries(mv_objects)
             
-            # 保存先
-            output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
+            # 保存先（アルゴリズムに応じて変更）
+            if static_algorithm == 'bigsubs':
+                output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static_bigsubs"
+            else:
+                output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
             output_dir.mkdir(parents=True, exist_ok=True)
             
             for query_id, rewritten_sql in rewritten_queries.items():
@@ -1585,14 +1689,14 @@ class NormalModeExperiment:
                 with open(output_file, 'w', encoding='utf-8') as f:
                     f.write(rewritten_sql)
             
-            self.print_success(f"  静的モード用クエリを書き換え完了: {output_dir}")
+            self.print_success(f"  静的モード用クエリを書き換え完了 ({static_algorithm}): {output_dir}")
             return True
             
         except Exception as e:
             self.print_error(f"静的モード用クエリ書き換えに失敗: {e}")
             return False
 
-    def phase9_execute_benchmark(self, mode='dynamic'):
+    def phase9_execute_benchmark(self, mode='dynamic', static_algorithm='normal'):
         """フェーズ9: 時間依存型ベンチマーク実行
         
         Args:
@@ -1600,6 +1704,7 @@ class NormalModeExperiment:
                 - 'dynamic': 動的MV（マイグレーションあり）
                 - 'static': 静的MV（最初のタイムステップのみ）
                 - 'baseline': ベースライン（MVなし）
+            static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
         """
         mode_names = {
             'dynamic': '動的MV（マイグレーションあり）',
@@ -1634,23 +1739,27 @@ class NormalModeExperiment:
             rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
             
         elif mode == 'static':
-            # 静的最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+            # 静的最適化結果を読み込み（アルゴリズムに応じてファイルを選択）
+            if static_algorithm == 'bigsubs':
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_bigsubs_optimization_result{self.exp_suffix}.json"
+                rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static_bigsubs"
+            else:
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"static_mv_optimization_result{self.exp_suffix}.json"
+                rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
             
             if not result_file.exists():
-                self.print_error("静的最適化結果が見つかりません")
+                self.print_error(f"静的最適化結果が見つかりません: {result_file}")
                 self.print_info("先にフェーズ6bを実行してください")
                 return False
                 
             with open(result_file, 'r', encoding='utf-8') as f:
                 optimization_result = json.load(f)
+            
+            self.print_info(f"静的最適化結果を使用 ({static_algorithm}): {result_file.name}")
                 
             # 静的モード用の設定
             # migration_sql_dir は static_initial_mvs.sql があるディレクトリ
             migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set
-            
-            # 書き換え済みクエリのディレクトリ
-            rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
             
             if not rewritten_queries_base_dir.exists():
                 self.print_error(f"静的モード用クエリディレクトリが見つかりません: {rewritten_queries_base_dir}")
@@ -1729,7 +1838,8 @@ class NormalModeExperiment:
                     frequencies_by_timestep=frequencies_by_timestep,
                     timesteps=timesteps, # Pass timesteps for static mode as well
                     timeout_minutes=30,
-                    verbose=True
+                    verbose=True,
+                    static_algorithm=static_algorithm
                 )
             else:  # dynamic
                 # 動的MV: マイグレーションあり（既存）
@@ -1746,7 +1856,12 @@ class NormalModeExperiment:
             # 結果を保存
             output_dir = self.exp_dir / "time_dependent_output" / self.query_set
             output_dir.mkdir(parents=True, exist_ok=True)
-            output_file = output_dir / f"benchmark_results_{mode}{self.exp_suffix}.json"
+            
+            # 静的モード + bigsubs の場合は別ファイル名
+            if mode == 'static' and static_algorithm == 'bigsubs':
+                output_file = output_dir / f"benchmark_results_static_bigsubs{self.exp_suffix}.json"
+            else:
+                output_file = output_dir / f"benchmark_results_{mode}{self.exp_suffix}.json"
             
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
@@ -1779,7 +1894,7 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal'):
         """最適化以降のフェーズを実行 (Phase 6-9)
         
         Args:
@@ -1788,10 +1903,10 @@ class NormalModeExperiment:
             pruning_parallel: プルーニングを並列実行するか (デフォルト: False)
             pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
+            use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
+            static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
         """
         self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
-        
-        success = True
         
         # 全体の開始時刻を記録
         total_start_time = time.time()
@@ -1802,14 +1917,16 @@ class NormalModeExperiment:
             use_pruning=use_pruning,
             pruning_parallel=pruning_parallel,
             pruning_workers=pruning_workers,
-            static_timestep=static_timestep
+            static_timestep=static_timestep,
+            use_static_protection=use_static_protection,
+            static_algorithm=static_algorithm
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
-            (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
-            (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
-            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode)),
+            (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode, static_algorithm=static_algorithm)),
+            (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode, static_algorithm=static_algorithm)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, static_algorithm=static_algorithm)),
         ]
         
         # 全フェーズをまとめる
@@ -1840,7 +1957,7 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last'):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False):
         """全フェーズを順次実行
         
         Args:
@@ -1849,6 +1966,7 @@ class NormalModeExperiment:
             pruning_parallel: プルーニングを並列実行するか (デフォルト: False)
             pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
+            use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
         """
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
         
@@ -1873,7 +1991,8 @@ class NormalModeExperiment:
             use_pruning=use_pruning,
             pruning_parallel=pruning_parallel,
             pruning_workers=pruning_workers,
-            static_timestep=static_timestep
+            static_timestep=static_timestep,
+            use_static_protection=use_static_protection
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
@@ -1974,6 +2093,17 @@ def main():
         help='サンプリングを使用してコスト推定を行う'
     )
     parser.add_argument(
+        '--sampling-parallel',
+        action='store_true',
+        help='サンプリング計算を並列実行する'
+    )
+    parser.add_argument(
+        '--sampling-workers',
+        type=int,
+        default=None,
+        help='サンプリング並列実行時のワーカー数（デフォルト：CPUコア数）'
+    )
+    parser.add_argument(
         '--use-pruning',
         action='store_true',
         help='CF Pruningを使用してMV候補を削減する（大きなタイムステップ数の場合に推奨）'
@@ -1990,6 +2120,11 @@ def main():
         help='並列実行時のワーカー数（デフォルト：CPUコア数）'
     )
     parser.add_argument(
+        '--static-protection',
+        action='store_true',
+        help='プルーニング時に静的最適化のMVを聖域として保護する（ハイブリッドアプローチ）'
+    )
+    parser.add_argument(
         '--exp-suffix',
         type=str,
         default='',
@@ -2001,6 +2136,13 @@ def main():
         default='last',
         choices=['first', 'last', 'average'],
         help='静的最適化で使用するタイムステップ (first: 最初, last: 最後, average: 全時刻の平均)'
+    )
+    parser.add_argument(
+        '--static-algorithm',
+        type=str,
+        default='normal',
+        choices=['normal', 'bigsubs', 'both'],
+        help='静的最適化で使用するアルゴリズム (normal: 通常ILP, bigsubs: BigSubs, both: 両方)'
     )
     
     # Docker/Local switching arguments
@@ -2024,7 +2166,8 @@ def main():
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
-            static_timestep=args.static_timestep
+            static_timestep=args.static_timestep,
+            use_static_protection=args.static_protection
         )
     elif args.phase == 'post-opt':
         success = exp.run_post_optimization_phases(
@@ -2032,7 +2175,9 @@ def main():
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
-            static_timestep=args.static_timestep
+            static_timestep=args.static_timestep,
+            use_static_protection=args.static_protection,
+            static_algorithm=args.static_algorithm
         )
     elif args.phase == '0':
         success = exp.phase0_setup()
@@ -2045,14 +2190,20 @@ def main():
     elif args.phase == '4':
         success = exp.phase4_enumerate_migration_plans()
     elif args.phase == '5':
-        success = exp.phase5_calculate_migration_costs(use_neurocard=args.use_neurocard, use_sampling=args.use_sampling)
+        success = exp.phase5_calculate_migration_costs(
+            use_neurocard=args.use_neurocard, 
+            use_sampling=args.use_sampling,
+            sampling_parallel=args.sampling_parallel,
+            sampling_workers=args.sampling_workers
+        )
     elif args.phase == '6':
         success = exp.phase6_optimize(
             mode=args.optimization_mode, 
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
-            static_timestep=args.static_timestep
+            static_timestep=args.static_timestep,
+            use_static_protection=args.static_protection
         )
     elif args.phase == '6.5':
         success = exp.phase6b_optimize_static(timestep_position=args.static_timestep)
