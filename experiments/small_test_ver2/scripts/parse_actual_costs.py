@@ -115,6 +115,14 @@ class ActualCostQueryParser(QueryParser):
             # 親クラスのextract_join_conditionsを使ってJOIN条件を抽出
             join_conditions = self.extract_join_conditions(node)
             
+            # cost=0 for scans without filter (query_parser.py と同じロジック)
+            # フィルタ条件がないSeq ScanはMV候補から除外
+            if "Seq Scan" in node["Node Type"] and filter_condition == "":
+                cost = 0.0
+            # HashノードでchildにFilterがない場合もcost=0
+            elif node["Node Type"] == "Hash" and "Plans" in node and "Filter" not in node["Plans"][0]:
+                cost = 0.0
+            
             subquery_list.append({
                 "type": "non_leaf",
                 "operator": node["Node Type"],
@@ -143,6 +151,11 @@ class ActualCostQueryParser(QueryParser):
             else:
                 table = node.get("Relation Name", "")
                 alias = node.get("Alias", "")
+            
+            # cost=0 for scans without filter (query_parser.py と同じロジック)
+            # フィルタなしのScanはMV候補から除外
+            if "Scan" in node["Node Type"] and "Filter" not in node:
+                cost = 0.0
             
             subquery_list.append({
                 "type": "leaf",

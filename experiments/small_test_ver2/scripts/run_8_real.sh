@@ -104,7 +104,7 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job_real \
   --optimization-mode dynamic \
   --exp-suffix _8_3_opt \
   --use-docker \
@@ -117,7 +117,7 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job_real \
   --exp-suffix _8_3_opt \
   --optimization-mode static \
   --static-timestep average \

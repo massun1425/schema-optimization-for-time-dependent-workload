@@ -191,7 +191,7 @@ class TimeDependentOptimizer:
                     # c[j,t] <= 1 - z[j,t-1] (if it existed before, not created now)
                     m.addConstr(
                         self.c[j, t] <= 1 - self.z[j, t-1],
-                        name = f"create_not_cont_{j}_{t}"
+                        name=f"create_not_cont_{j}_{t}"
                     )
                     constraint_count += 3
 
