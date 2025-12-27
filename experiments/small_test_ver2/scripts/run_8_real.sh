@@ -98,32 +98,32 @@ echo "========================================================================"
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_bigsubs_8_2_opt.txt
 # echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --optimization-mode dynamic \
-  --exp-suffix _8_3_opt \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_8_3_opt.txt
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job_real \
+#   --optimization-mode dynamic \
+#   --exp-suffix _8_3_opt \
+#   --use-docker \
+#   2>&1 | tee ${OUTPUT_DIR}/log_8_3_opt.txt
+# echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --exp-suffix _8_3_opt \
-  --optimization-mode static \
-  --static-timestep average \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_8_3_opt.txt
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job_real \
+#   --exp-suffix _8_3_opt \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --use-docker \
+#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_8_3_opt.txt
+# echo "完了時刻: $(date)"
 
 # echo ""
 # echo "------------------------------------------------------------------------"
@@ -192,3 +192,61 @@ echo "完了時刻: $(date)"
 
 
 # echo "実験終了: $(date)"
+
+
+
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job_real \
+  --optimization-mode dynamic \
+  --exp-suffix _8_1 \
+  --use-docker \
+  2>&1 | tee ${OUTPUT_DIR}/log_8_1.txt
+echo "完了時刻: $(date)"
+
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job_real \
+  --exp-suffix _8_1 \
+  --optimization-mode static \
+  --static-algorithm normal \
+  --static-timestep average \
+  --use-docker \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_normal_8_1.txt
+echo "完了時刻: $(date)"
+
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job_real \
+  --optimization-mode dynamic \
+  --exp-suffix _8_2 \
+  --use-docker \
+  2>&1 | tee ${OUTPUT_DIR}/log_8_2.txt
+echo "完了時刻: $(date)"
+
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job_real \
+  --exp-suffix _8_2 \
+  --optimization-mode static \
+  --static-algorithm normal \
+  --static-timestep average \
+  --use-docker \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_normal_8_2.txt
+echo "完了時刻: $(date)"

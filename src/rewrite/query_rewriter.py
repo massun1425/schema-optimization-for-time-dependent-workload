@@ -19,11 +19,13 @@ logger = logging.getLogger(__name__)
 class QueryRewriter:
     """クエリ書き換え管理"""
 
-    def __init__(self, query_manager: Any = None):
+    def __init__(self, query_manager: Any = None, containment_matrix: list = None, node_list: list = None):
         """初期化
 
         Args:
             query_manager: クエリ管理オブジェクトまたはSettings
+            containment_matrix: X行列（包含関係）。X[i][j]=1 ならノードiがノードjを包含
+            node_list: ノードIDのリスト（X行列のインデックスに対応）
         """
         # settingsオブジェクトが渡された場合の対応
         if hasattr(query_manager, 'database'):
@@ -34,6 +36,16 @@ class QueryRewriter:
             # これはQueryManagerオブジェクト
             self.qm = query_manager
             self.settings = None
+        
+        # 包含行列（冗長MV除去に使用）
+        self.containment_matrix = containment_matrix
+        self.node_list = node_list
+        if containment_matrix is not None and node_list is not None:
+            self._node_to_idx = {node_id: idx for idx, node_id in enumerate(node_list)}
+            logger.info(f"Containment matrix enabled: {len(node_list)} nodes")
+        else:
+            self._node_to_idx = {}
+            logger.debug("Containment matrix not provided - redundant MV filtering disabled")
         
         self.sql_parser = SQLParser()
         self.mv_generator = MVGenerator()
@@ -142,7 +154,65 @@ class QueryRewriter:
                 
                 query_to_mvs[query_id].append(mv)
         
+        # 包含行列を使って冗長なMVを除去
+        if self.containment_matrix is not None and self._node_to_idx:
+            query_to_mvs = self._filter_redundant_mvs(query_to_mvs)
+        
         return query_to_mvs
+    
+    def _filter_redundant_mvs(self, query_to_mvs: dict) -> dict:
+        """包含行列を使って冗長なMVを除去
+        
+        MV Aが MV Bを包含している場合（X[A][B]=1）、MV Bは冗長なので除去する。
+        
+        Args:
+            query_to_mvs: {query_id: [MV, ...]} のマッピング
+            
+        Returns:
+            冗長MV除去後のマッピング
+        """
+        filtered = {}
+        total_removed = 0
+        
+        for query_id, mvs in query_to_mvs.items():
+            if len(mvs) <= 1:
+                filtered[query_id] = mvs
+                continue
+            
+            # 各MVのnode_idを取得
+            mv_node_ids = []
+            for mv in mvs:
+                if hasattr(mv, 'node_id'):
+                    node_id = mv.node_id
+                elif isinstance(mv, dict):
+                    node_id = mv.get('node_id', '')
+                else:
+                    node_id = ''
+                mv_node_ids.append(node_id)
+            
+            # 冗長なMVを特定（他のMVに包含されているもの）
+            redundant_indices = set()
+            for i, node_i in enumerate(mv_node_ids):
+                for j, node_j in enumerate(mv_node_ids):
+                    if i == j:
+                        continue
+                    idx_i = self._node_to_idx.get(node_i)
+                    idx_j = self._node_to_idx.get(node_j)
+                    if idx_i is not None and idx_j is not None:
+                        # X[i][j]=1 ならノードiがノードjを包含
+                        if self.containment_matrix[idx_i][idx_j] == 1:
+                            redundant_indices.add(j)
+                            logger.debug(f"Query {query_id}: {node_i} contains {node_j} - removing {node_j}")
+            
+            # 冗長でないMVのみを保持
+            non_redundant_mvs = [mv for k, mv in enumerate(mvs) if k not in redundant_indices]
+            filtered[query_id] = non_redundant_mvs
+            total_removed += len(redundant_indices)
+        
+        if total_removed > 0:
+            logger.info(f"Removed {total_removed} redundant MVs using containment matrix")
+        
+        return filtered
     
     def _rewrite_single_query(self, query_file: Path, mvs: list) -> str:
         """単一のクエリをMVを使って書き換え

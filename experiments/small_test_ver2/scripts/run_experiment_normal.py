@@ -211,9 +211,9 @@ class NormalModeExperiment:
             # 失敗しても続行（警告のみ）
         
         # ベーステーブルのANALYZEを実行
-        # self.print_info("ベーステーブルの統計情報を更新中...")
-        # if not self._analyze_base_tables():
-        #     self.print_error("ベーステーブルのANALYZEに失敗しました")
+        self.print_info("ベーステーブルの統計情報を更新中...")
+        if not self._analyze_base_tables():
+            self.print_error("ベーステーブルのANALYZEに失敗しました")
             # 失敗しても続行（警告のみ）
         # クリーンアップが完了してから計測開始
         phase_start = time.time()
@@ -610,6 +610,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
+        
     def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal'):
         """フェーズ6: MV最適化
         
@@ -666,7 +667,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(1024*1024*1024)
+            B_max = float(500*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -987,7 +988,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(1024*1024*1024)
+            B_max = float(500*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1581,7 +1582,12 @@ class NormalModeExperiment:
             rewrite_settings = deepcopy(self.settings)
             rewrite_settings.benchmark.sql_dir = str(self.queries_dir.parent)  # 01_queriesディレクトリを指定
             
-            rewriter = QueryRewriter(rewrite_settings)
+            # 包含行列を渡して冗長MV除去を有効化
+            rewriter = QueryRewriter(
+                rewrite_settings,
+                containment_matrix=self.qp.X,
+                node_list=self.qp.node_list
+            )
             rewritten_queries = rewriter.rewrite_queries(mv_objects)
             
             # Save rewritten queries
@@ -1674,7 +1680,12 @@ class NormalModeExperiment:
             rewrite_settings = deepcopy(self.settings)
             rewrite_settings.benchmark.sql_dir = str(self.queries_dir.parent)  # 01_queriesディレクトリを指定
             
-            rewriter = QueryRewriter(rewrite_settings)
+            # 包含行列を渡して冗長MV除去を有効化
+            rewriter = QueryRewriter(
+                rewrite_settings,
+                containment_matrix=self.qp.X,
+                node_list=self.qp.node_list
+            )
             rewritten_queries = rewriter.rewrite_queries(mv_objects)
             
             # 保存先（アルゴリズムに応じて変更）
@@ -1713,7 +1724,11 @@ class NormalModeExperiment:
         }
         
         self.print_header(f"時間依存型ベンチマーク実行 - {mode_names.get(mode, mode)}", 9)
-        phase_start = time.time()       
+        phase_start = time.time()
+        
+        # ベンチマーク実行前に統計情報を更新
+        self.print_info("ベンチマーク前にベーステーブルの統計情報を更新中...")
+        self._analyze_base_tables()       
         
         from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
         from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies

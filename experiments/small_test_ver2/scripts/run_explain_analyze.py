@@ -11,6 +11,8 @@ EXPLAIN ANALYZE 実行スクリプト
     python experiments/small_test_ver2/scripts/run_explain_analyze.py --queries 1a 17a 20a
     python experiments/small_test_ver2/scripts/run_explain_analyze.py --use-local  # ローカルpsql使用
 
+    python experiments/small_test_ver2/scripts/run_explain_analyze.py --force
+
 オプション:
     --timeout: クエリタイムアウト秒数（デフォルト: 600秒）
     --queries: 実行する特定のクエリ名（指定しない場合は全クエリ）

@@ -171,7 +171,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_1G_16_opt')
+        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_500M_1')
         output_filename = 'benchmark_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])
@@ -253,9 +253,21 @@ def main():
             'dynamic_16_3_opt': 'benchmark_results_dynamic_16_3_opt.json',
             'dynamic_16_3_optp': 'benchmark_results_dynamic_16_3_optp.json',
         }
+
+    file_patterns8 = {
+            'static_16_1': 'benchmark_results_static_16_1.json',
+            'dynamic_16_1': 'benchmark_results_dynamic_16_1.json',
+            'dynamic_16_1p': 'benchmark_results_dynamic_16_1p.json',
+            'static_16_2': 'benchmark_results_static_16_2.json',
+            'dynamic_16_2': 'benchmark_results_dynamic_16_2.json',
+            'dynamic_16_2p': 'benchmark_results_dynamic_16_2p.json',
+            'static_16_3': 'benchmark_results_static_16_3.json',
+            'dynamic_16_3': 'benchmark_results_dynamic_16_3.json',
+            'dynamic_16_3p': 'benchmark_results_dynamic_16_3p.json',
+        }
     
     # CSVをエクスポート
-    success = export_to_csv(result_dir, output_file, file_patterns7)
+    success = export_to_csv(result_dir, output_file, file_patterns8)
     
     sys.exit(0 if success else 1)
 
