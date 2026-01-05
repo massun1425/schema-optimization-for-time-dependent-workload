@@ -694,6 +694,8 @@ function renderComparisonFileList() {
         label.appendChild(checkbox);
         label.appendChild(document.createTextNode(' ' + opt.text));
         label.style.cursor = 'pointer';
+        label.style.fontSize = '0.8em'; // 文字サイズを小さく
+        label.style.wordBreak = 'break-all'; // 長いファイル名を折り返す
 
         div.appendChild(label);
         container.appendChild(div);
@@ -731,7 +733,7 @@ async function updateComparisonCharts() {
     ];
 
     // ファイル名短縮ヘルパー
-    const shortenName = (name) => name.replace(/benchmark_results_|_opt\.json/g, '').replace(/^static_|dynamic_/, '');
+    const shortenName = (name) => name.replace(/benchmark_results_|_opt\.json/g, '').replace(/^dynamic_/, '');
 
     // 0. サマリーテーブル更新
     const summaryBody = document.querySelector('#comparison-summary-table tbody');
@@ -849,6 +851,156 @@ async function updateComparisonCharts() {
     };
 
     Plotly.newPlot('comparison-line-chart', lineTraces, lineLayout, { responsive: true });
+
+    // 3. 比較MVタイムライン
+    // 全MVセット取得
+    const allMVs = new Set();
+    validResults.forEach(r => {
+        r.data.timesteps.forEach(t => {
+            if (t.selected_mvs) {
+                t.selected_mvs.forEach(mv => allMVs.add(mv.name));
+            }
+        });
+    });
+    const sortedMVs = naturalSort([...allMVs]); // MV1, MV2...
+
+    // 手法数に応じたバーの配置計算
+    const numMethods = validResults.length;
+    const groupHeight = 0.8; // 1つのMV領域(高さ1.0)のうち0.8を使う
+    const barHeight = groupHeight / Math.max(numMethods, 1);
+
+    // カスタム凡例の生成 (スクロール外に出すため)
+    const legendContainer = document.getElementById('comparison-timeline-legend');
+    if (legendContainer) {
+        legendContainer.innerHTML = '';
+        validResults.forEach((r, i) => {
+            const methodName = shortenName(r.file);
+            const color = colors[i % colors.length];
+
+            const item = document.createElement('div');
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.gap = '6px';
+            item.style.fontSize = '0.9em';
+            item.style.backgroundColor = 'var(--bg-tertiary)';
+            item.style.padding = '4px 8px';
+            item.style.borderRadius = '4px';
+
+            const box = document.createElement('div');
+            box.style.width = '12px';
+            box.style.height = '12px';
+            box.style.backgroundColor = color;
+            box.style.borderRadius = '2px';
+
+            const text = document.createElement('span');
+            text.textContent = methodName;
+            text.style.color = 'var(--text-primary)';
+
+            item.appendChild(box);
+            item.appendChild(text);
+            legendContainer.appendChild(item);
+        });
+    }
+
+    // Trace作成
+    const timelineTraces = validResults.map((r, i) => {
+        const methodName = shortenName(r.file);
+        const color = colors[i % colors.length];
+
+        // 中心(0)からのオフセット計算
+        // i=0 が一番上に来るように計算 (y軸reversed前提)
+        // 領域: [-0.4, 0.4]
+        const yOffset = - (groupHeight / 2) + (i * barHeight) + (barHeight / 2);
+
+        const yData = [];
+        const baseData = [];
+        const xData = []; // duration
+        const textData = [];
+
+        r.data.timesteps.forEach(t => {
+            if (t.selected_mvs) {
+                t.selected_mvs.forEach(mv => {
+                    const mvIdx = sortedMVs.indexOf(mv.name);
+                    if (mvIdx === -1) return;
+
+                    yData.push(mvIdx + yOffset);
+                    baseData.push(t.timestep);
+                    xData.push(1); // 1 timestep width
+                    textData.push(`T${t.timestep}: ${mv.name} [${methodName}]`);
+                });
+            }
+        });
+
+        return {
+            type: 'bar',
+            orientation: 'h',
+            name: methodName,
+            y: yData,
+            base: baseData, // Start position (timestep)
+            x: xData,       // Width (duration)
+            width: barHeight * 0.9, // 隙間を空ける
+            marker: { color: color },
+            hovertext: textData,
+            hoverinfo: 'text',
+            showlegend: false // カスタム凡例を使うので非表示
+        };
+    });
+
+    // 最大タイムステップ数
+    let maxTimestep = 15;
+    validResults.forEach(r => {
+        if (r.data.timesteps.length > 0) {
+            const lastTs = r.data.timesteps[r.data.timesteps.length - 1].timestep;
+            if (lastTs > maxTimestep) maxTimestep = lastTs;
+        }
+    });
+
+    // 境界線 (Shapes) - MVごとの区切り線
+    const shapes = [];
+    for (let i = 0; i < sortedMVs.length - 1; i++) {
+        shapes.push({
+            type: 'line',
+            x0: -0.5,
+            x1: maxTimestep + 0.5,
+            y0: i + 0.5,
+            y1: i + 0.5,
+            line: {
+                color: '#45475a', // 区切り線色
+                width: 1
+            }
+        });
+    }
+
+    // 高さの動的計算 (MV数 * 高さ係数)
+    const timelineHeight = Math.max(600, sortedMVs.length * 50 + 100);
+
+    const timelineLayout = {
+        height: timelineHeight,
+        title: '比較MVタイムライン',
+        xaxis: {
+            title: 'タイムステップ',
+            dtick: 1,
+            range: [-0.5, maxTimestep + 0.5],
+            zeroline: false
+        },
+        yaxis: {
+            tickvals: sortedMVs.map((_, i) => i),
+            ticktext: sortedMVs,
+            range: [-0.5, sortedMVs.length - 0.5],
+            autorange: 'reversed', // 上から下に表示
+            automargin: true,
+            tickfont: { size: 12 }
+        },
+        shapes: shapes,
+        barmode: 'overlay', // 独自座標を使用するためOverlay
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: '#1e1e2e',
+        font: { color: '#cdd6f4' },
+        margin: { l: 200, r: 20, t: 50, b: 40 }, // タイトル用に上マージン確保
+        showlegend: false
+    };
+
+    Plotly.newPlot('comparison-mv-timeline', timelineTraces, timelineLayout, { responsive: true });
 }
 
 // 初期化実行

@@ -271,84 +271,129 @@ async def get_static_result(query_set: str, filename: str, subfolder: str = "") 
 
 @app.get("/api/benchmark-result/{query_set}/{optimization_filename}")
 async def get_benchmark_result(query_set: str, optimization_filename: str, subfolder: str = "") -> Dict:
-    """最適化結果に対応するベンチマーク結果を取得"""
+    """最適化結果に対応するベンチマーク結果を取得。最適化ファイルの情報（選択MVなど）もマージする。"""
     
-    # ファイル名変換: *_mv_optimization_result_* -> benchmark_results_*
-    if optimization_filename.startswith("static_mv_optimization_result_"):
-        bench_filename = optimization_filename.replace("static_mv_optimization_result_", "benchmark_results_static_")
-        mode = "static"
-    elif optimization_filename.startswith("td_mv_optimization_result_"):
-        bench_filename = optimization_filename.replace("td_mv_optimization_result_", "benchmark_results_dynamic_")
-        mode = "dynamic"
-    else:
-        # フォールバック: そのまま使うかエラーにするか。一旦そのまま試す
-        bench_filename = optimization_filename
-        mode = "unknown"
+    # ファイル名からベンチマークファイルと最適化ファイルを特定するロジック
+    # 入力は benchmark_results_*.json または *_mv_optimization_result_*.json のどちらも許容
+    bench_filename = optimization_filename
+    opt_filename = optimization_filename
+    mode = "unknown"
 
+    if "benchmark_results_" in optimization_filename:
+        # 入力がベンチマーク結果ファイルの場合
+        bench_filename = optimization_filename
+        if "benchmark_results_dynamic_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_dynamic_", "td_mv_optimization_result_")
+            mode = "dynamic"
+        elif "benchmark_results_static_bigsubs_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_static_bigsubs_", "static_bigsubs_optimization_result_")
+            mode = "static"
+        elif "benchmark_results_static_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_static_", "static_mv_optimization_result_")
+            mode = "static"
+    elif "_mv_optimization_result_" in optimization_filename:
+        # 入力が最適化結果ファイルの場合 (互換性のため維持)
+        opt_filename = optimization_filename
+        if "static_mv_optimization_result_" in optimization_filename:
+            bench_filename = optimization_filename.replace("static_mv_optimization_result_", "benchmark_results_static_")
+            mode = "static"
+        elif "td_mv_optimization_result_" in optimization_filename:
+            bench_filename = optimization_filename.replace("td_mv_optimization_result_", "benchmark_results_dynamic_")
+            mode = "dynamic"
+
+    # ファイルパス構築
     if subfolder and subfolder != "(root)":
-        filepath = OUTPUT_DIR / query_set / subfolder / bench_filename
+        bench_filepath = OUTPUT_DIR / query_set / subfolder / bench_filename
+        opt_filepath = OUTPUT_DIR / query_set / subfolder / opt_filename
     else:
-        filepath = OUTPUT_DIR / query_set / bench_filename
+        bench_filepath = OUTPUT_DIR / query_set / bench_filename
+        opt_filepath = OUTPUT_DIR / query_set / opt_filename
     
-    if not filepath.exists():
-        # ファイルがない場合は空の結果を返す（エラーにはしない）
+    if not bench_filepath.exists():
         return {
             "found": False,
             "total_execution_time": 0,
             "timesteps": []
         }
     
-    with open(filepath, 'r', encoding='utf-8') as f:
-        data = json.load(f)
+    # データの読み込み
+    with open(bench_filepath, 'r', encoding='utf-8') as f:
+        bench_data = json.load(f)
+        
+    opt_data = {}
+    if opt_filepath.exists():
+        try:
+            with open(opt_filepath, 'r', encoding='utf-8') as f:
+                opt_data = json.load(f)
+        except Exception:
+            pass # 最適化ファイルが読めなくてもベンチマーク結果は返す
 
     timesteps = []
     total_query_time = 0
     total_migration_time = 0
     
-    if mode == "static" or data.get("mode") == "static":
-        # 静的の場合
-        # 初期作成時間を取得
-        initial_creation = data.get("initial_mv_creation_time", 0)
+    # タイムステップデータの構築
+    bench_timesteps = bench_data.get("timestep_results", [])
+    
+    # 静的の場合の初期作成時間
+    initial_creation = 0
+    if mode == "static" or bench_data.get("mode") == "static":
+        initial_creation = bench_data.get("initial_mv_creation_time", 0)
         total_migration_time += initial_creation
-        
-        # タイムステップごとのクエリ時間
-        for ts_res in data.get("timestep_results", []):
-            q_time = ts_res.get("queries", {}).get("total_time", 0)
-            # 静的の場合、タイムステップごとのマイグレーションはないが、
-            # Time 0 に初期作成時間を割り当ててグラフ表示できるようにする
-            mig_time = initial_creation if str(ts_res.get("timestep")) == "0" else 0
-            
-            timesteps.append({
-                "timestep": int(ts_res.get("timestep", 0)),
-                "query_time": q_time,
-                "migration_time": mig_time
-            })
-            total_query_time += q_time
 
-    else:
-        # 動的の場合
-        for ts_res in data.get("timestep_results", []):
-            q_time = ts_res.get("queries", {}).get("total_time", 0)
+    for ts_res in bench_timesteps:
+        ts_val = int(ts_res.get("timestep", 0))
+        q_time = ts_res.get("queries", {}).get("total_time", 0)
+        
+        mig_time = 0
+        if mode == "static":
+            # 静的: 時間0のみ初期作成時間
+            if ts_val == 0:
+                mig_time = initial_creation
+        else:
+            # 動的: 各ステップのmigration時間
             mig_time = ts_res.get("migration", {}).get("time", 0)
-            
-            timesteps.append({
-                "timestep": int(ts_res.get("timestep", 0)),
-                "query_time": q_time,
-                "migration_time": mig_time
-            })
-            total_query_time += q_time
             total_migration_time += mig_time
 
-    total_execution_time = total_query_time + total_migration_time
-    
+        total_query_time += q_time
+        
+        # 選択MV情報の取得 (opt_dataから)
+        selected_mvs = []
+        if "migration_analysis" in opt_data:
+            # 動的最適化ファイル (td_mv_optimization_result)
+            opt_ts = next((item for item in opt_data["migration_analysis"] if int(item.get("timestep", -1)) == ts_val), None)
+            if opt_ts and "selected_mvs" in opt_ts:
+                selected_mvs = [{"name": mv, "cost_gain": 0} for mv in opt_ts["selected_mvs"]]
+        elif "timestep_results" in opt_data:
+            # 互換性: timestep_results がある場合
+            opt_ts = next((item for item in opt_data["timestep_results"] if int(item.get("timestep", -1)) == ts_val), None)
+            if opt_ts and "selected_mvs" in opt_ts:
+                selected_mvs = [{"name": mv, "cost_gain": 0} for mv in opt_ts["selected_mvs"]]
+        elif "selected_mvs" in opt_data:
+             # 静的最適化ファイルなど (トップレベル)
+             selected_mvs = [{"name": mv, "cost_gain": 0} for mv in opt_data["selected_mvs"]]
+        elif "node_list" in opt_data:
+             # フォールバック
+             selected_mvs = [{"name": mv, "cost_gain": 0} for mv in opt_data["node_list"]]
+
+        timesteps.append({
+            "timestep": ts_val,
+            "query_time": q_time,
+            "migration_time": mig_time,
+            "selected_mvs": selected_mvs,
+            "cost_gain": 0 # ベンチマーク結果には詳細なGain情報はないことが多い
+        })
+
     return {
         "found": True,
         "mode": mode,
-        "total_execution_time": total_execution_time,
+        "total_execution_time": total_query_time + total_migration_time,
         "total_query_time": total_query_time,
         "total_migration_time": total_migration_time,
-        "timesteps": sorted(timesteps, key=lambda x: x['timestep'])
+        "timesteps": timesteps
     }
+
+
 
 
 @app.get("/api/queries/{query_set}")
