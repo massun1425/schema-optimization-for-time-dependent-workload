@@ -4,10 +4,13 @@ This module implements the BigSubs algorithm which uses randomized
 initialization and iterative refinement with local ILP solving.
 """
 
+import logging
 import random
 import time
 
 import gurobipy as gp
+
+logger = logging.getLogger(__name__)
 
 from ..core.models import OptimizationResult
 from .base import BaseILPOptimizer
@@ -86,7 +89,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         Returns:
             Flip probability between 0 and 1
         """
-        p = 40  # Iteration threshold
+        p = 160  # Iteration threshold
 
         # Capacity component
         if B_cur < B_max:
@@ -199,6 +202,17 @@ class BigSubsOptimizer(BaseILPOptimizer):
             OptimizationResult containing selected MVs and metrics
         """
         start_time = time.time()
+        
+        # Initialize convergence tracking
+        self._convergence_history = []
+        
+        # Log header
+        logger.info("="*60)
+        logger.info("BigSubs Optimization - Convergence Tracking")
+        logger.info(f"iter_max={iter_max}, B_max={self.B_max/1024/1024:.2f}MB, MV候補数={self.s_num}")
+        logger.info("="*60)
+        logger.info(f"{'Iter':>5} | {'Utility':>12} | {'Storage%':>10} | {'MV数':>6} | {'Best':>5}")
+        logger.info("-"*60)
 
         # Initialize random MV selection
         z_j = [0] * self.s_num
@@ -273,11 +287,30 @@ class BigSubsOptimizer(BaseILPOptimizer):
                 z_j[j] = z_j_new[j]
                 U_cur -= self.m_cost[j] * z_j[j]
 
-            # ★【重要修正】B_cur を z_j に合わせて正しく再計算する
+            # B_cur を z_j に合わせて正しく再計算する
             # Edge Labelingで使われなかったMVが削除されるため、B_curも更新が必要
             B_cur = sum(z_j[j] * self.b_j[j] for j in range(len(z_j)))
 
             iter_num += 1
+
+            # Track convergence history
+            storage_percent = (B_cur / self.B_max * 100) if self.B_max > 0 else 0
+            mv_count = sum(z_j)
+            is_best = U_cur > best_u and B_cur <= self.B_max
+            
+            self._convergence_history.append({
+                'iteration': iter_num,
+                'utility': U_cur,
+                'storage': B_cur,
+                'storage_percent': storage_percent,
+                'mv_count': mv_count,
+                'is_best': is_best
+            })
+            
+            # Log progress (every 10 iterations or when best is updated)
+            if iter_num <= 5 or iter_num % 10 == 0 or is_best:
+                best_mark = "*" if is_best else ""
+                logger.info(f"{iter_num:>5} | {U_cur:>12.2f} | {storage_percent:>9.2f}% | {mv_count:>6} | {best_mark:>5}")
 
             # Track best solution (容量制約を満たしている場合のみベストを更新)
             if U_cur > best_u and B_cur <= self.B_max:
@@ -288,11 +321,28 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         execution_time = time.time() - start_time
 
+        # Log summary
+        best_iterations = [h['iteration'] for h in self._convergence_history if h['is_best']]
+        last_best_iter = max(best_iterations) if best_iterations else 0
+        
+        logger.info("-"*60)
+        logger.info(f"{'Finished':>5} | 総イテレーション: {iter_num}, 最終ベスト更新: iter {last_best_iter}")
+        logger.info(f"{'Result':>5} | Utility: {best_u:.2f}, Storage: {best_b/1024/1024:.2f}MB ({best_b/self.B_max*100:.2f}%)")
+        logger.info(f"{'':>5} | 選択MV数: {sum(best_z_j)}, 実行時間: {execution_time:.2f}秒")
+        logger.info("="*60)
+
         # Get materialized view list
         mat_list = [j for j in range(len(best_z_j)) if best_z_j[j] == 1]
         mat_node_names = self.make_nodename_from_id(mat_list)
 
-        # Create result
+        # Create result with convergence summary
+        convergence_summary = {
+            'total_iterations': iter_num,
+            'best_iterations': best_iterations,
+            'last_best_iteration': last_best_iter,
+            'recommended_iter_max': last_best_iter + 20 if last_best_iter > 0 else iter_max,
+        }
+        
         result = self.create_result(
             y_ij=best_y_ij,
             z_j=best_z_j,
@@ -302,6 +352,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
             materialized_count=len(mat_list),
             materialized_nodes=mat_node_names,
             iterations=iter_num,
+            convergence_summary=convergence_summary,
         )
 
         return result

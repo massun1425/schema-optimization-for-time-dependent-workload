@@ -667,7 +667,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(500*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -988,7 +988,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(500*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1140,7 +1140,7 @@ class NormalModeExperiment:
                     y_ij=initial_y_ij
                 )
                 
-                bigsubs_result = bigsubs_optimizer.optimize(iter_max=50)
+                bigsubs_result = bigsubs_optimizer.optimize(iter_max=200)
                 
                 # 結果の整形
                 bigsubs_selected_mvs = [mv.node_id for mv in bigsubs_result.selected_views]
@@ -1156,7 +1156,8 @@ class NormalModeExperiment:
                     "utilization_percent": (bigsubs_total_size / B_max * 100) if B_max > 0 else 0,
                     "objective_value": bigsubs_result.total_utility,
                     "execution_time": bigsubs_result.execution_time,
-                    "iterations": bigsubs_result.iterations if hasattr(bigsubs_result, 'iterations') else None
+                    "iterations": bigsubs_result.metadata.get('iterations'),
+                    "convergence_summary": bigsubs_result.metadata.get('convergence_summary', {})
                 }
                 
                 self.print_success("BigSubsOptimizer 完了")
