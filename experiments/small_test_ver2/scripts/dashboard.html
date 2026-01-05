@@ -1,350 +1,16 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MV最適化ダッシュボード</title>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
-    <style>
-        :root {
-            --bg-primary: #1e1e2e;
-            --bg-secondary: #313244;
-            --bg-tertiary: #45475a;
-            --text-primary: #cdd6f4;
-            --text-secondary: #a6adc8;
-            --accent-green: #a6e3a1;
-            --accent-blue: #89b4fa;
-            --accent-orange: #fab387;
-            --accent-red: #f38ba8;
-            --border-color: #585b70;
-        }
-        
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
-        body {
-            font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        
-        /* ヘッダー */
-        .header {
-            background: linear-gradient(135deg, var(--bg-secondary), var(--bg-tertiary));
-            padding: 12px 20px;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .header h1 {
-            font-size: 1.4em;
-            font-weight: 600;
-        }
-        
-        .header select {
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            border: 1px solid var(--border-color);
-            padding: 8px 12px;
-            border-radius: 6px;
-            min-width: 150px;
-        }
-        
-        .header select:hover {
-            border-color: var(--accent-blue);
-        }
-        
-        /* メインコンテナ */
-        .main-container {
-            flex: 1;
-            display: flex;
-            overflow: hidden;
-        }
-        
-        /* タブ */
-        .tabs {
-            display: flex;
-            background: var(--bg-secondary);
-            padding: 0 10px;
-            gap: 4px;
-        }
-        
-        .tab {
-            padding: 12px 20px;
-            cursor: pointer;
-            border: none;
-            background: transparent;
-            color: var(--text-secondary);
-            font-size: 0.95em;
-            transition: all 0.2s;
-            border-bottom: 2px solid transparent;
-        }
-        
-        .tab:hover {
-            color: var(--text-primary);
-            background: var(--bg-tertiary);
-        }
-        
-        .tab.active {
-            color: var(--accent-blue);
-            border-bottom-color: var(--accent-blue);
-        }
-        
-        /* コンテンツエリア */
-        .content {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
-        
-        .tab-content {
-            flex: 1;
-            display: none;
-            overflow: auto;
-            padding: 20px;
-        }
-        
-        .tab-content.active {
-            display: flex;
-            flex-direction: column;
-        }
-        
-        /* パネル */
-        .panel {
-            background: var(--bg-secondary);
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }
-        
-        .panel h2 {
-            font-size: 1.1em;
-            margin-bottom: 12px;
-            color: var(--accent-blue);
-        }
-        
-        /* メトリクスグリッド */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-        
-        .metric-card {
-            background: var(--bg-tertiary);
-            padding: 16px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        
-        .metric-value {
-            font-size: 1.8em;
-            font-weight: 700;
-            color: var(--accent-green);
-        }
-        
-        .metric-label {
-            font-size: 0.85em;
-            color: var(--text-secondary);
-            margin-top: 4px;
-        }
-        
-        /* スライダー */
-        .slider-container {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin-bottom: 20px;
-        }
-        
-        .slider-container input[type="range"] {
-            flex: 1;
-            height: 6px;
-            background: var(--bg-tertiary);
-            border-radius: 3px;
-            cursor: pointer;
-        }
-        
-        .slider-container input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
-            background: var(--accent-blue);
-            border-radius: 50%;
-            cursor: pointer;
-        }
-        
-        .slider-value {
-            min-width: 80px;
-            text-align: right;
-            font-weight: 600;
-        }
-        
-        /* テーブル */
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        
-        .data-table th,
-        .data-table td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .data-table th {
-            background: var(--bg-tertiary);
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-        }
-        
-        .data-table tr:hover {
-            background: var(--bg-tertiary);
-        }
-        
-        /* リサイズ可能なパネル */
-        .resizable-container {
-            display: flex;
-            flex-direction: column;
-            height: 100%;
-        }
-        
-        .resizable-panel {
-            overflow: auto;
-            min-height: 100px;
-        }
-        
-        .resize-handle {
-            height: 8px;
-            background: var(--bg-tertiary);
-            cursor: ns-resize;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .resize-handle:hover {
-            background: var(--accent-blue);
-        }
-        
-        .resize-handle::after {
-            content: '';
-            width: 40px;
-            height: 3px;
-            background: var(--border-color);
-            border-radius: 2px;
-        }
-        
-        /* ツリー表示 */
-        .tree-container {
-            background: var(--bg-primary);
-            border-radius: 8px;
-            padding: 20px;
-            overflow: auto;
-            min-height: 400px;
-        }
-        
-        .tree-node {
-            padding: 8px 12px;
-            margin: 4px 0;
-            border-radius: 6px;
-            font-size: 0.9em;
-            cursor: default;
-        }
-        
-        .tree-node.leaf {
-            background: var(--accent-orange);
-            color: var(--bg-primary);
-        }
-        
-        .tree-node.non-leaf {
-            background: var(--accent-blue);
-            color: var(--bg-primary);
-        }
-        
-        .tree-node.selected-mv {
-            background: var(--accent-green);
-            color: var(--bg-primary);
-            font-weight: 600;
-            box-shadow: 0 0 10px var(--accent-green);
-        }
-        
-        /* SVGツリー */
-        #tree-svg {
-            width: 100%;
-            min-height: 500px;
-        }
-        
-        #tree-svg .node rect {
-            stroke-width: 2px;
-        }
-        
-        #tree-svg .link {
-            fill: none;
-            stroke: var(--border-color);
-            stroke-width: 1.5px;
-        }
-        
-        /* チャートコンテナ */
-        .chart-container {
-            width: 100%;
-            height: 400px;
-            background: var(--bg-primary);
-            border-radius: 8px;
-        }
-        
-        /* ローディング */
-        .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 40px;
-            color: var(--text-secondary);
-        }
-        
-        .spinner {
-            width: 30px;
-            height: 30px;
-            border: 3px solid var(--bg-tertiary);
-            border-top-color: var(--accent-blue);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 12px;
-        }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        /* 高さ設定スライダー */
-        .height-control {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 10px;
-            font-size: 0.85em;
-            color: var(--text-secondary);
-        }
-        
-        .height-control input {
-            width: 100px;
-        }
-    </style>
+    <!-- 外部CSS読み込み -->
+    <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
     <div class="header">
         <h1>📊 MV最適化ダッシュボード</h1>
@@ -353,19 +19,24 @@
             <select id="query-set-select"></select>
         </label>
         <label>
+            サブフォルダ:
+            <select id="subfolder-select"></select>
+        </label>
+        <label>
             結果ファイル:
             <select id="result-file-select"></select>
         </label>
     </div>
-    
+
     <div class="main-container">
         <div class="content">
             <div class="tabs">
                 <button class="tab active" data-tab="mv-selection">📋 MV選択</button>
                 <button class="tab" data-tab="query-tree">🌲 クエリツリー</button>
                 <button class="tab" data-tab="timeline">📈 時系列分析</button>
+                <button class="tab" data-tab="comparison">📊 比較分析</button>
             </div>
-            
+
             <!-- MV選択タブ -->
             <div id="mv-selection" class="tab-content active">
                 <div class="slider-container">
@@ -373,7 +44,7 @@
                     <input type="range" id="timestep-slider" min="0" max="15" value="0">
                     <span class="slider-value" id="timestep-value">0</span>
                 </div>
-                
+
                 <div class="metrics-grid" id="mv-metrics">
                     <div class="metric-card">
                         <div class="metric-value" id="mv-count">-</div>
@@ -385,14 +56,14 @@
                     </div>
                     <div class="metric-card">
                         <div class="metric-value" id="total-cost">-</div>
-                        <div class="metric-label">コスト削減</div>
+                        <div class="metric-label">利得</div>
                     </div>
                     <div class="metric-card">
                         <div class="metric-value" id="utilization">-</div>
                         <div class="metric-label">ストレージ使用率</div>
                     </div>
                 </div>
-                
+
                 <div class="panel" style="flex:1; overflow: auto;">
                     <h2>選択されたMV一覧</h2>
                     <div class="height-control">
@@ -406,7 +77,7 @@
                                 <tr>
                                     <th>MV名</th>
                                     <th>サイズ</th>
-                                    <th>コスト削減</th>
+                                    <th>利得</th>
                                 </tr>
                             </thead>
                             <tbody id="mv-table-body"></tbody>
@@ -414,7 +85,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- クエリツリータブ -->
             <div id="query-tree" class="tab-content">
                 <div style="display: flex; gap: 16px; margin-bottom: 16px;">
@@ -427,441 +98,155 @@
                         <select id="tree-timestep-select"></select>
                     </label>
                 </div>
-                
+
                 <div class="panel" style="flex: 1;">
                     <h2>実行プランツリー</h2>
-                    <div class="height-control">
-                        ツリー高さ:
-                        <input type="range" id="tree-height" min="300" max="1200" value="600">
-                        <span id="tree-height-value">600px</span>
+                    <div style="margin-bottom: 12px; font-size: 0.9em;">
+                        <span
+                            style="display: inline-block; width: 16px; height: 16px; background: var(--accent-green); border-radius: 3px; vertical-align: middle;"></span>
+                        使用MV
+                        <span
+                            style="display: inline-block; width: 16px; height: 16px; background: var(--accent-orange); border-radius: 3px; vertical-align: middle; margin-left: 20px;"></span>
+                        リーフノード
+                        <span
+                            style="display: inline-block; width: 16px; height: 16px; background: var(--accent-blue); border-radius: 3px; vertical-align: middle; margin-left: 20px;"></span>
+                        非リーフノード
                     </div>
-                    <div class="tree-container" id="tree-container" style="height: 600px;">
+                    <div class="tree-container" id="tree-container"
+                        style="height: calc(100vh - 280px); min-height: 400px;">
                         <svg id="tree-svg"></svg>
-                    </div>
-                    <div style="margin-top: 12px; font-size: 0.9em;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: var(--accent-green); border-radius: 3px; vertical-align: middle;"></span> 選択MV
-                        <span style="display: inline-block; width: 16px; height: 16px; background: var(--accent-orange); border-radius: 3px; vertical-align: middle; margin-left: 20px;"></span> リーフノード
-                        <span style="display: inline-block; width: 16px; height: 16px; background: var(--accent-blue); border-radius: 3px; vertical-align: middle; margin-left: 20px;"></span> 非リーフノード
                     </div>
                 </div>
             </div>
-            
+
             <!-- 時系列分析タブ -->
             <div id="timeline" class="tab-content">
-                <div class="resizable-container">
-                    <div class="panel resizable-panel" style="flex: 1;">
-                        <h2>MVタイムライン</h2>
-                        <div class="height-control">
-                            チャート高さ:
-                            <input type="range" id="timeline-height" min="200" max="800" value="400">
-                            <span id="timeline-height-value">400px</span>
+                <div style="display: flex; flex-direction: column; gap: 20px; overflow-y: auto; padding-bottom: 20px;">
+
+                    <!-- ベンチマーク結果サマリー -->
+                    <div class="panel">
+                        <h2>ベンチマーク実行結果</h2>
+                        <div class="metrics-grid" id="benchmark-metrics">
+                            <div class="metric-card">
+                                <div class="metric-value" id="total-exec-time">-</div>
+                                <div class="metric-label">総実行時間 (s)</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" id="total-query-time">-</div>
+                                <div class="metric-label">クエリ時間 (s)</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" id="total-migration-time">-</div>
+                                <div class="metric-label">マイグレーション時間 (s)</div>
+                            </div>
                         </div>
-                        <div class="chart-container" id="timeline-chart"></div>
+                        <p
+                            style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px; margin-top: 20px;">
+                            タイムステップごとの実行時間内訳（クエリ + マイグレーション）
+                        </p>
+                        <div class="chart-container" id="benchmark-chart" style="height: 350px;"></div>
+
+                        <p
+                            style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px; margin-top: 20px;">
+                            クエリ実行時間の推移（マイグレーション時間を含まない）
+                        </p>
+                        <div class="chart-container" id="benchmark-line-chart" style="height: 300px;"></div>
                     </div>
-                    
-                    <div class="resize-handle"></div>
-                    
-                    <div class="panel resizable-panel" style="flex: 1;">
-                        <h2>ストレージ使用量推移</h2>
-                        <div class="chart-container" id="storage-chart"></div>
-                    </div>
-                    
-                    <div class="panel" style="max-height: 300px; overflow: auto;">
+
+                    <!-- MV変更サマリー -->
+                    <div class="panel" id="panel-changes-summary">
                         <h2>MV変更サマリー</h2>
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>タイムステップ</th>
-                                    <th>追加</th>
-                                    <th>削除</th>
-                                </tr>
-                            </thead>
-                            <tbody id="changes-table-body"></tbody>
-                        </table>
+                        <p style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px;">
+                            各タイムステップで追加・削除されたMVの数
+                        </p>
+                        <div style="max-height: 300px; overflow: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>タイムステップ</th>
+                                        <th>追加されたMV</th>
+                                        <th>削除されたMV</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="changes-table-body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- ストレージ使用量推移 -->
+                    <div class="panel" id="panel-storage-chart">
+                        <h2>ストレージ使用量推移</h2>
+                        <p style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px;">
+                            タイムステップごとのMVによるストレージ使用量
+                        </p>
+                        <div class="chart-container" id="storage-chart" style="height: 300px;"></div>
+                    </div>
+
+                    <!-- MVタイムライン -->
+                    <div class="panel" id="panel-mv-timeline">
+                        <h2>MVタイムライン</h2>
+                        <p style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px;">
+                            各タイムステップでどのMVが選択されているかを表示（緑=選択中）
+                        </p>
+                        <div id="timeline-chart-container" style="height: 500px; overflow-y: auto;">
+                            <div id="timeline-chart" style="min-height: 100%;"></div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- 比較分析タブ -->
+            <div id="comparison" class="tab-content">
+                <div style="display: flex; gap: 20px; height: 100%;">
+                    <!-- 左サイドバー: ファイル選択 -->
+                    <div class="panel" style="width: 300px; display: flex; flex-direction: column;">
+                        <h2>比較対象選択</h2>
+                        <div style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 10px;"
+                            id="comparison-file-list">
+                            <!-- JSで生成 -->
+                        </div>
+                        <button id="update-comparison-btn"
+                            style="margin-top: 10px; padding: 10px; background: var(--accent-blue); color: #fff; border: none; border-radius: 4px; cursor: pointer;">比較を更新</button>
+                    </div>
+
+                    <!-- 右メイン: チャート -->
+                    <div style="flex: 1; display: flex; flex-direction: column; gap: 20px; overflow-y: auto;">
+                        <!-- サマリーテーブル -->
+                        <div class="panel">
+                            <h2>比較サマリー</h2>
+                            <div style="overflow-x: auto;">
+                                <table class="data-table" id="comparison-summary-table">
+                                    <thead>
+                                        <tr>
+                                            <th>手法</th>
+                                            <th>総実行時間(s)</th>
+                                            <th>クエリ時間(s)</th>
+                                            <th>マイグレーション時間(s)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="panel">
+                            <h2>ベンチマーク詳細比較 (Query vs Migration)</h2>
+                            <div class="chart-container" id="comparison-bar-chart" style="height: 500px;"></div>
+                        </div>
+
+                        <div class="panel">
+                            <h2>クエリ実行時間推移比較</h2>
+                            <div class="chart-container" id="comparison-line-chart" style="height: 400px;"></div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    
-    <script>
-        // グローバル状態
-        let currentQuerySet = null;
-        let currentResultFile = null;
-        let optimizationData = null;
-        let selectedMVs = [];
-        
-        // 自然数ソート
-        function naturalSort(arr) {
-            return arr.sort((a, b) => {
-                const ax = [], bx = [];
-                a.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { ax.push([$1 || Infinity, $2 || ""]) });
-                b.replace(/(\d+)|(\D+)/g, (_, $1, $2) => { bx.push([$1 || Infinity, $2 || ""]) });
-                while(ax.length && bx.length) {
-                    const an = ax.shift(), bn = bx.shift();
-                    const nn = (an[0] - bn[0]) || an[1].localeCompare(bn[1]);
-                    if(nn) return nn;
-                }
-                return ax.length - bx.length;
-            });
-        }
-        
-        // バイトを人間が読める形式に変換
-        function formatBytes(bytes) {
-            if (bytes === 0) return '0 B';
-            const k = 1024;
-            const sizes = ['B', 'KB', 'MB', 'GB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-        }
-        
-        // API呼び出しヘルパー
-        async function fetchAPI(endpoint) {
-            const response = await fetch(endpoint);
-            if (!response.ok) throw new Error(`API error: ${response.status}`);
-            return response.json();
-        }
-        
-        // 初期化
-        async function init() {
-            // クエリセット読み込み
-            const querySets = await fetchAPI('/api/query-sets');
-            const querySetSelect = document.getElementById('query-set-select');
-            querySets.forEach(qs => {
-                const opt = document.createElement('option');
-                opt.value = qs;
-                opt.textContent = qs;
-                querySetSelect.appendChild(opt);
-            });
-            
-            // デフォルト選択
-            if (querySets.includes('job_real')) {
-                querySetSelect.value = 'job_real';
-            }
-            
-            querySetSelect.addEventListener('change', onQuerySetChange);
-            await onQuerySetChange();
-            
-            // タブ切り替え
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.addEventListener('click', () => {
-                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-                    tab.classList.add('active');
-                    document.getElementById(tab.dataset.tab).classList.add('active');
-                });
-            });
-            
-            // スライダー初期化
-            setupSlider('timestep-slider', 'timestep-value', '', onTimestepChange);
-            setupSlider('table-height', 'table-height-value', 'px', v => {
-                document.getElementById('mv-table-container').style.height = v + 'px';
-            });
-            setupSlider('tree-height', 'tree-height-value', 'px', v => {
-                document.getElementById('tree-container').style.height = v + 'px';
-            });
-            setupSlider('timeline-height', 'timeline-height-value', 'px', v => {
-                document.getElementById('timeline-chart').style.height = v + 'px';
-                updateTimelineChart();
-            });
-        }
-        
-        function setupSlider(sliderId, valueId, suffix, onChange) {
-            const slider = document.getElementById(sliderId);
-            const valueEl = document.getElementById(valueId);
-            slider.addEventListener('input', () => {
-                valueEl.textContent = slider.value + suffix;
-                onChange(parseInt(slider.value));
-            });
-        }
-        
-        // クエリセット変更
-        async function onQuerySetChange() {
-            currentQuerySet = document.getElementById('query-set-select').value;
-            
-            // 結果ファイル読み込み
-            const files = await fetchAPI(`/api/result-files/${currentQuerySet}`);
-            const resultSelect = document.getElementById('result-file-select');
-            resultSelect.innerHTML = '';
-            files.optimization.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f;
-                opt.textContent = f;
-                resultSelect.appendChild(opt);
-            });
-            
-            resultSelect.addEventListener('change', onResultFileChange);
-            await onResultFileChange();
-            
-            // クエリ一覧読み込み
-            const queries = await fetchAPI(`/api/queries/${currentQuerySet}`);
-            const querySelect = document.getElementById('query-select');
-            querySelect.innerHTML = '';
-            queries.forEach(q => {
-                const opt = document.createElement('option');
-                opt.value = q;
-                opt.textContent = q;
-                querySelect.appendChild(opt);
-            });
-            querySelect.addEventListener('change', updateQueryTree);
-        }
-        
-        // 結果ファイル変更
-        async function onResultFileChange() {
-            currentResultFile = document.getElementById('result-file-select').value;
-            if (!currentResultFile) return;
-            
-            optimizationData = await fetchAPI(`/api/optimization-result/${currentQuerySet}/${currentResultFile}`);
-            
-            // スライダー更新
-            const slider = document.getElementById('timestep-slider');
-            slider.max = optimizationData.timesteps.length - 1;
-            slider.value = 0;
-            document.getElementById('timestep-value').textContent = '0';
-            
-            // タイムステップセレクト更新
-            const tsSelect = document.getElementById('tree-timestep-select');
-            tsSelect.innerHTML = '';
-            optimizationData.timesteps.forEach((t, i) => {
-                const opt = document.createElement('option');
-                opt.value = i;
-                opt.textContent = `T${t}`;
-                tsSelect.appendChild(opt);
-            });
-            tsSelect.addEventListener('change', updateQueryTree);
-            
-            // 各ビュー更新
-            onTimestepChange(0);
-            updateTimelineChart();
-            updateStorageChart();
-            updateChangesTable();
-            updateQueryTree();
-        }
-        
-        // タイムステップ変更
-        function onTimestepChange(timestep) {
-            if (!optimizationData) return;
-            
-            const tsData = optimizationData.timestep_data[timestep];
-            if (!tsData) return;
-            
-            selectedMVs = tsData.mvs.map(m => m.mv);
-            
-            // メトリクス更新
-            document.getElementById('mv-count').textContent = tsData.mv_count;
-            document.getElementById('total-size').textContent = formatBytes(tsData.total_size);
-            const totalCost = tsData.mvs.reduce((sum, m) => sum + (m.cost || 0), 0);
-            document.getElementById('total-cost').textContent = totalCost.toFixed(2);
-            document.getElementById('utilization').textContent = tsData.utilization_percent.toFixed(1) + '%';
-            
-            // テーブル更新
-            const tbody = document.getElementById('mv-table-body');
-            tbody.innerHTML = '';
-            tsData.mvs.forEach(mv => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td>${mv.mv}</td>
-                    <td>${formatBytes(mv.size || 0)}</td>
-                    <td>${(mv.cost || 0).toFixed(2)}</td>
-                `;
-                tbody.appendChild(tr);
-            });
-        }
-        
-        // タイムラインチャート更新
-        function updateTimelineChart() {
-            if (!optimizationData) return;
-            
-            // MVごとの選択状態をマトリクス化
-            const allMVs = new Set();
-            optimizationData.timestep_data.forEach(ts => {
-                ts.mvs.forEach(m => allMVs.add(m.mv));
-            });
-            const mvList = naturalSort([...allMVs]);
-            
-            const z = mvList.map(mv => 
-                optimizationData.timestep_data.map(ts => 
-                    ts.mvs.some(m => m.mv === mv) ? 1 : 0
-                )
-            );
-            
-            const data = [{
-                z: z,
-                x: optimizationData.timesteps.map(t => 'T' + t),
-                y: mvList,
-                type: 'heatmap',
-                colorscale: [[0, '#313244'], [1, '#a6e3a1']],
-                showscale: false
-            }];
-            
-            const layout = {
-                paper_bgcolor: 'rgba(0,0,0,0)',
-                plot_bgcolor: '#1e1e2e',
-                font: { color: '#cdd6f4' },
-                margin: { l: 100, r: 20, t: 20, b: 40 },
-                xaxis: { title: 'タイムステップ' },
-                yaxis: { title: 'MV', autorange: 'reversed' }
-            };
-            
-            Plotly.newPlot('timeline-chart', data, layout, { responsive: true });
-        }
-        
-        // ストレージチャート更新
-        function updateStorageChart() {
-            if (!optimizationData) return;
-            
-            const data = [{
-                x: optimizationData.timesteps.map(t => parseInt(t)),
-                y: optimizationData.timestep_data.map(ts => ts.total_size / (1024 * 1024)),
-                type: 'scatter',
-                mode: 'lines+markers',
-                fill: 'tozeroy',
-                fillcolor: 'rgba(137, 180, 250, 0.2)',
-                line: { color: '#89b4fa', width: 2 },
-                marker: { size: 6 }
-            }];
-            
-            const layout = {
-                paper_bgcolor: 'rgba(0,0,0,0)',
-                plot_bgcolor: '#1e1e2e',
-                font: { color: '#cdd6f4' },
-                margin: { l: 60, r: 20, t: 20, b: 40 },
-                xaxis: { title: 'タイムステップ' },
-                yaxis: { title: 'ストレージ (MB)' }
-            };
-            
-            Plotly.newPlot('storage-chart', data, layout, { responsive: true });
-        }
-        
-        // 変更テーブル更新
-        function updateChangesTable() {
-            if (!optimizationData) return;
-            
-            const tbody = document.getElementById('changes-table-body');
-            tbody.innerHTML = '';
-            
-            let prevMVs = new Set();
-            optimizationData.timestep_data.forEach(ts => {
-                const currentMVs = new Set(ts.mvs.map(m => m.mv));
-                const added = [...currentMVs].filter(m => !prevMVs.has(m));
-                const removed = [...prevMVs].filter(m => !currentMVs.has(m));
-                
-                if (added.length > 0 || removed.length > 0) {
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td>T${ts.timestep}</td>
-                        <td style="color: var(--accent-green)">+${added.length}</td>
-                        <td style="color: var(--accent-red)">-${removed.length}</td>
-                    `;
-                    tbody.appendChild(tr);
-                }
-                prevMVs = currentMVs;
-            });
-        }
-        
-        // クエリツリー更新
-        async function updateQueryTree() {
-            const queryName = document.getElementById('query-select').value;
-            const timestep = parseInt(document.getElementById('tree-timestep-select').value || 0);
-            
-            if (!queryName || !currentQuerySet) return;
-            
-            // EXPLAIN取得
-            const explain = await fetchAPI(`/api/explain/${currentQuerySet}/${queryName}`);
-            
-            // 選択MVを取得
-            if (optimizationData && optimizationData.timestep_data[timestep]) {
-                selectedMVs = optimizationData.timestep_data[timestep].mvs.map(m => m.mv);
-            }
-            
-            renderTree(explain);
-        }
-        
-        // D3.jsでツリー描画
-        function renderTree(planData) {
-            const container = document.getElementById('tree-container');
-            const svg = d3.select('#tree-svg');
-            svg.selectAll('*').remove();
-            
-            const width = container.clientWidth - 40;
-            const height = container.clientHeight - 40;
-            
-            // ツリーデータ構築
-            function buildHierarchy(node) {
-                const result = {
-                    name: node['Node Type'],
-                    nodeId: node.node_id || '',
-                    relation: node['Relation Name'] || '',
-                    alias: node['Alias'] || '',
-                    rows: node['Plan Rows'] || 0,
-                    cost: node['Total Cost'] || 0,
-                    children: []
-                };
-                if (node.Plans) {
-                    result.children = node.Plans.map(buildHierarchy);
-                }
-                return result;
-            }
-            
-            const plan = planData.Plan || planData;
-            const root = d3.hierarchy(buildHierarchy(plan));
-            
-            const treeLayout = d3.tree().size([height - 40, width - 200]);
-            treeLayout(root);
-            
-            svg.attr('width', width).attr('height', height);
-            
-            const g = svg.append('g').attr('transform', 'translate(100, 20)');
-            
-            // リンク描画
-            g.selectAll('.link')
-                .data(root.links())
-                .join('path')
-                .attr('class', 'link')
-                .attr('d', d3.linkHorizontal()
-                    .x(d => d.y)
-                    .y(d => d.x));
-            
-            // ノード描画
-            const node = g.selectAll('.node')
-                .data(root.descendants())
-                .join('g')
-                .attr('class', 'node')
-                .attr('transform', d => `translate(${d.y},${d.x})`);
-            
-            node.append('rect')
-                .attr('x', -60)
-                .attr('y', -20)
-                .attr('width', 120)
-                .attr('height', 40)
-                .attr('rx', 6)
-                .attr('fill', d => {
-                    if (selectedMVs.includes(d.data.nodeId)) return '#a6e3a1';
-                    if (d.data.nodeId.startsWith('leaf_')) return '#fab387';
-                    if (d.data.nodeId.startsWith('non_leaf_')) return '#89b4fa';
-                    return '#cdd6f4';
-                })
-                .attr('stroke', d => selectedMVs.includes(d.data.nodeId) ? '#fff' : 'none')
-                .attr('stroke-width', 2);
-            
-            node.append('text')
-                .attr('dy', -5)
-                .attr('text-anchor', 'middle')
-                .attr('fill', '#1e1e2e')
-                .attr('font-size', '10px')
-                .attr('font-weight', '600')
-                .text(d => d.data.name);
-            
-            node.append('text')
-                .attr('dy', 10)
-                .attr('text-anchor', 'middle')
-                .attr('fill', '#1e1e2e')
-                .attr('font-size', '8px')
-                .text(d => d.data.relation ? `${d.data.relation}` : d.data.nodeId);
-        }
-        
-        // 初期化実行
-        init().catch(console.error);
-    </script>
+
+    <!-- 外部JS読み込み -->
+    <script src="/static/dashboard.js"></script>
 </body>
+
 </html>
