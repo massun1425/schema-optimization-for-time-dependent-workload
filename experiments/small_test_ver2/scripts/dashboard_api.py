@@ -37,6 +37,8 @@ app = FastAPI(title="MV最適化ダッシュボード API")
 OUTPUT_DIR = EXP_DIR / "time_dependent_output"
 JSON_DIR = EXP_DIR / "02_json"
 PARSED_DIR = EXP_DIR / "03_parsed"
+MIGRATION_DIR = EXP_DIR / "04_migration"
+QUERIES_DIR = EXP_DIR / "01_queries"
 STATIC_DIR = SCRIPT_DIR / "dashboard_static"
 
 # キャッシュ用
@@ -407,6 +409,103 @@ async def get_queries(query_set: str) -> List[str]:
     return sorted(query_names, key=natural_sort_key)
 
 
+@app.get("/api/root-nodes/{query_set}")
+async def get_root_nodes(query_set: str) -> Dict[str, str]:
+    """各クエリのルートノードIDを取得"""
+    json_dir = JSON_DIR / query_set
+    if not json_dir.exists():
+        raise HTTPException(status_code=404, detail="Query set not found")
+        
+    result = {}
+    for filepath in json_dir.glob("*.json"):
+        query_name = filepath.stem
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # EXPLAIN構造の差異に対応
+            if isinstance(data, list) and len(data) > 0:
+                root = data[0].get('Plan')
+            else:
+                root = data.get('Plan')
+                
+            if root and 'node_id' in root:
+                result[query_name] = root['node_id']
+                
+        except Exception as e:
+            print(f"Error parsing {filepath}: {e}")
+            
+    return result
+
+
+@app.get("/api/mv-sizes/{query_set}")
+async def get_mv_sizes(query_set: str) -> Dict[str, int]:
+    """MV名(leaf_Xなど) -> サイズ(bytes) のマッピングを取得"""
+    filepath = MIGRATION_DIR / query_set / "simple_migration_costs.json"
+    if not filepath.exists():
+        print(f"Warning: {filepath} not found")
+        return {}
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        result = {}
+        for mv_name, info in data.items():
+            # "[]" キーの size を取得 (ベース作成コスト)
+            if "[]" in info:
+                result[mv_name] = info["[]"].get("size", 0)
+        return result
+    except Exception as e:
+        print(f"Error loading mv sizes: {e}")
+        return {}
+
+
+@app.get("/api/mv-costs/{query_set}")
+async def get_mv_costs(query_set: str) -> Dict[str, float]:
+    """MV名(leaf_Xなど) -> コスト のマッピングを取得"""
+    filepath = MIGRATION_DIR / query_set / "simple_migration_costs.json"
+    if not filepath.exists():
+        return {}
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        result = {}
+        for mv_name, info in data.items():
+            if "[]" in info:
+                result[mv_name] = info["[]"].get("cost", 0)
+        return result
+    except Exception as e:
+        print(f"Error loading mv costs: {e}")
+        return {}
+
+
+@app.get("/api/mv-costs/{query_set}/{query_name}")
+async def get_mv_costs_query(query_set: str, query_name: str) -> Dict[str, float]:
+    """クエリ名が含まれるリクエストに対応（ロジックは全MV取得と同じ）"""
+    return await get_mv_costs(query_set)
+
+
+@app.get("/api/subquery-costs/{query_set}")
+async def get_subquery_costs(query_set: str) -> Dict[str, float]:
+    """pickleファイルからsubquery_costsを取得（MV選択ページの利得表示用）"""
+    qp = _load_query_parser(query_set)
+    if qp is None:
+        return {}
+    
+    try:
+        # qp.qm.subquery_costs から取得
+        subquery_costs = getattr(qp.qm, 'subquery_costs', None)
+        if subquery_costs is None:
+            return {}
+        return {str(k): float(v) for k, v in subquery_costs.items()}
+    except Exception as e:
+        print(f"Error loading subquery_costs: {e}")
+        return {}
+
+
 @app.get("/api/explain/{query_set}/{query_name}")
 async def get_explain(query_set: str, query_name: str) -> Dict:
     """EXPLAIN JSONを取得"""
@@ -513,6 +612,53 @@ async def get_query_mv_usage(query_set: str, query_name: str, selected_mvs: str 
         'usable_mvs': usable_mvs,
         'total_query_nodes': len(query_nodes),
         'total_usable_mvs': len(usable_mvs)
+    }
+
+
+@app.get("/api/frequency-files/{query_set}")
+async def get_frequency_files(query_set: str) -> List[str]:
+    """指定クエリセットの頻度ファイル一覧を取得"""
+    query_dir = QUERIES_DIR / query_set
+    if not query_dir.exists():
+        return []
+    
+    files = [f.name for f in query_dir.glob("frequency_*.json")]
+    return sorted(files, key=natural_sort_key)
+
+
+@app.get("/api/frequency-data/{query_set}/{filename}")
+async def get_frequency_data(query_set: str, filename: str) -> Dict:
+    """頻度ファイルのデータを取得"""
+    filepath = QUERIES_DIR / query_set / filename
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Frequency file not found")
+    
+    with open(filepath, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    
+    # クエリを奇数/偶数グループに分類
+    import re
+    queries = data.get('queries', {})
+    odd_group = {}  # 奇数クエリ (1a, 3a, 5a, ...)
+    even_group = {}  # 偶数クエリ (2a, 4a, 6a, ...)
+    
+    for query_name, frequencies in queries.items():
+        # クエリ名から数字部分を抽出
+        match = re.match(r'(\d+)', query_name)
+        if match:
+            query_num = int(match.group(1))
+            if query_num % 2 == 1:
+                odd_group[query_name] = frequencies
+            else:
+                even_group[query_name] = frequencies
+    
+    return {
+        'description': data.get('description', ''),
+        'note': data.get('note', ''),
+        'odd_group': odd_group,
+        'even_group': even_group,
+        'total_queries': len(queries),
+        'timesteps': len(next(iter(queries.values()), []))
     }
 
 

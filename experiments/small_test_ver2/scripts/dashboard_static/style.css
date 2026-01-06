@@ -336,3 +336,85 @@ body {
 .height-control input {
     width: 100px;
 }
+
+/* クエリギャラリー */
+.query-gallery {
+    display: flex;
+    overflow-x: auto;
+    /* gap: 20px; gapがあると100%幅の場合にズレるため削除または調整 */
+    gap: 0;
+    padding: 0;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    align-items: stretch;
+    /* 高さ合わせる */
+    height: calc(100vh - 280px);
+    /* ギャラリー自体の高さ */
+}
+
+.query-card {
+    min-width: 100%;
+    /* 1画面に1つ */
+    background: var(--bg-primary);
+    /* border-radius: 8px; */
+    padding: 20px;
+    box-sizing: border-box;
+    /* padding込みで100% */
+    scroll-snap-align: center;
+    border-right: 1px solid var(--border-color);
+    /* 区切り線 */
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+}
+
+.query-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.query-card h3 {
+    margin: 0;
+    color: var(--accent-orange);
+    font-size: 1.2em;
+}
+
+.query-card-svg-container {
+    flex: 1;
+    overflow: auto;
+    /* SVGが大きい場合はスクロール */
+    position: relative;
+    background: #181825;
+    border-radius: 4px;
+}
+
+/* ツリーリンクの見やすさ改善 */
+.query-card-svg-container .link {
+    fill: none;
+    stroke: var(--text-secondary);
+    stroke-width: 2px;
+    opacity: 0.7;
+}
+
+/* カスタムツールチップ */
+.custom-tooltip {
+    position: fixed;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 12px;
+    background: rgba(30, 30, 46, 0.95);
+    /* var(--bg-primary) with opacity */
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 10000;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    line-height: 1.4;
+    transition: opacity 0.2s;
+}

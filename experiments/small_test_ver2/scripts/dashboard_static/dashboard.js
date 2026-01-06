@@ -6,6 +6,41 @@ let staticOptimizationData = null; // 静的最適化データ保持用
 let benchmarkData = null; // ベンチマークデータ保持用
 let comparisonSelectedFiles = new Set(); // 比較用選択ファイル
 let selectedMVs = [];
+let rootNodesMap = null; // クエリ名 -> ルートノードID
+let mvSizesMap = null; // MV名 -> サイズ(bytes)
+let subqueryCostsMap = null; // MV名 -> subquery_cost（利得表示用）
+
+// ルートMV化率更新
+function updateRootMVStats() {
+    const el = document.getElementById('root-mv-stats');
+    if (!el || !rootNodesMap || !selectedMVs) {
+        if (el) el.textContent = 'ルートMV化率: - / -';
+        return;
+    }
+
+    // クエリ数ベースのカウント
+    const total = Object.keys(rootNodesMap).length;
+    const covered = Object.values(rootNodesMap).filter(id => selectedMVs.includes(id)).length;
+    const percent = total > 0 ? (covered / total * 100).toFixed(1) : 0;
+
+    // サイズベースの計算（mvSizesMapが利用可能な場合）
+    let sizeInfo = '';
+    if (mvSizesMap) {
+        let totalSize = 0;
+        let coveredSize = 0;
+        for (const [queryName, rootNodeId] of Object.entries(rootNodesMap)) {
+            const nodeSize = mvSizesMap[rootNodeId] || 0;
+            totalSize += nodeSize;
+            if (selectedMVs.includes(rootNodeId)) {
+                coveredSize += nodeSize;
+            }
+        }
+        const sizePercent = totalSize > 0 ? (coveredSize / totalSize * 100).toFixed(1) : 0;
+        sizeInfo = ` | サイズ: ${formatBytes(coveredSize)} / ${formatBytes(totalSize)} (${sizePercent}%)`;
+    }
+
+    el.textContent = `ルートMV化率: ${covered} / ${total} クエリ (${percent}%)${sizeInfo}`;
+}
 
 // 自然数ソート
 function naturalSort(arr) {
@@ -75,11 +110,18 @@ async function init() {
             if (tab.dataset.tab === 'comparison') {
                 renderComparisonFileList();
             }
+            // 頻度タブ切り替え時
+            if (tab.dataset.tab === 'frequency') {
+                loadFrequencyFiles();
+            }
         });
     });
 
     // 比較更新ボタン
     document.getElementById('update-comparison-btn').addEventListener('click', updateComparisonCharts);
+
+    // 頻度タブのイベントハンドラ設定
+    setupFrequencyTab();
 
     // スライダー初期化
     setupSlider('timestep-slider', 'timestep-value', '', onTimestepChange);
@@ -134,7 +176,29 @@ async function onQuerySetChange() {
         opt.textContent = q;
         querySelect.appendChild(opt);
     });
-    querySelect.addEventListener('change', updateQueryTree);
+    querySelect.addEventListener('change', (e) => scrollToQuery(e.target.value));
+    initQueryGallery(queries);
+
+    // Root Nodes取得
+    try {
+        rootNodesMap = await fetchAPI(`/api/root-nodes/${currentQuerySet}`);
+    } catch (e) { console.warn("Root nodes fetch failed", e); }
+
+    // MVサイズ取得
+    try {
+        mvSizesMap = await fetchAPI(`/api/mv-sizes/${currentQuerySet}`);
+    } catch (e) { console.warn("MV sizes fetch failed", e); }
+
+    // subquery_costs取得（利得表示用）
+    try {
+        subqueryCostsMap = await fetchAPI(`/api/subquery-costs/${currentQuerySet}`);
+    } catch (e) { console.warn("subquery costs fetch failed", e); }
+
+    // 全データ取得後にルートMV化率を更新
+    updateRootMVStats();
+
+    // 頻度ファイル一覧も更新
+    loadFrequencyFiles();
 }
 
 // サブフォルダ変更
@@ -210,16 +274,18 @@ async function onResultFileChange() {
 
         // 選択されたMVを更新
         selectedMVs = staticData.selected_mvs;
+        updateRootMVStats();
 
         // テーブル更新
         const tbody = document.getElementById('mv-table-body');
         tbody.innerHTML = '';
         staticData.mv_details.forEach(mv => {
             const tr = document.createElement('tr');
+            const costValue = (subqueryCostsMap && subqueryCostsMap[mv.mv]) ? subqueryCostsMap[mv.mv] : (mv.cost || 0);
             tr.innerHTML = `
                 <td>${mv.mv}</td>
                 <td>${formatBytes(mv.size || 0)}</td>
-                <td>${(mv.cost || 0).toFixed(2)}</td>
+                <td>${costValue.toFixed(2)}</td>
             `;
             tbody.appendChild(tr);
         });
@@ -264,7 +330,7 @@ async function onResultFileChange() {
             opt.textContent = `T${t}`;
             tsSelect.appendChild(opt);
         });
-        tsSelect.addEventListener('change', updateQueryTree);
+        tsSelect.addEventListener('change', updateAllLoadedQueries);
 
         // 各ビュー更新
         onTimestepChange(0);
@@ -283,7 +349,7 @@ async function onResultFileChange() {
         updateBenchmarkChart(); // クリア表示
     }
 
-    updateQueryTree();
+    updateAllLoadedQueries();
 }
 
 // タイムステップ変更
@@ -294,6 +360,7 @@ function onTimestepChange(timestep) {
     if (!tsData) return;
 
     selectedMVs = tsData.mvs.map(m => m.mv);
+    updateRootMVStats();
 
     // メトリクス更新
     document.getElementById('mv-count').textContent = tsData.mv_count;
@@ -307,10 +374,11 @@ function onTimestepChange(timestep) {
     tbody.innerHTML = '';
     tsData.mvs.forEach(mv => {
         const tr = document.createElement('tr');
+        const costValue = (subqueryCostsMap && subqueryCostsMap[mv.mv]) ? subqueryCostsMap[mv.mv] : (mv.cost || 0);
         tr.innerHTML = `
             <td>${mv.mv}</td>
             <td>${formatBytes(mv.size || 0)}</td>
-            <td>${(mv.cost || 0).toFixed(2)}</td>
+            <td>${costValue.toFixed(2)}</td>
         `;
         tbody.appendChild(tr);
     });
@@ -414,48 +482,106 @@ function updateChangesTable() {
     });
 }
 
-// クエリツリー更新
-async function updateQueryTree() {
-    const queryName = document.getElementById('query-select').value;
-    const timestep = parseInt(document.getElementById('tree-timestep-select').value || 0);
+// クエリギャラリー初期化
+function initQueryGallery(queries) {
+    const gallery = document.getElementById('query-gallery');
+    gallery.innerHTML = ''; // Clear existing
 
-    if (!queryName || !currentQuerySet) return;
+    queries.forEach(q => {
+        const card = document.createElement('div');
+        card.className = 'query-card';
+        card.dataset.queryName = q;
+        card.innerHTML = `
+            <div class="query-card-header">
+                <h3>Query: ${q}</h3>
+                <button onclick="scrollToQuery('${q}')" style="padding:4px 8px; cursor:pointer;">Focus</button>
+            </div>
+            <div class="query-card-svg-container" style="height: 100%; min-height: 400px;">
+                <svg width="100%" height="100%"></svg>
+            </div>
+        `;
+        gallery.appendChild(card);
+    });
 
-    // EXPLAIN取得
-    const explain = await fetchAPI(`/api/explain/${currentQuerySet}/${queryName}`);
+    setupLazyLoading();
+}
 
-    // 選択MVリストを取得
-    let allSelectedMVs = [];
+// Lazy Loading設定
+function setupLazyLoading() {
+    const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const card = entry.target;
+                if (!card.classList.contains('loaded')) {
+                    loadQueryCard(card);
+                    obs.unobserve(card); // 一度ロードしたら監視解除
+                }
+            }
+        });
+    }, { root: document.getElementById('query-gallery'), threshold: 0.1 });
 
-    // 静的最適化の場合（staticOptimizationDataが存在）
-    if (staticOptimizationData) {
-        allSelectedMVs = staticOptimizationData.selected_mvs || [];
-    } else if (optimizationData && optimizationData.timestep_data[timestep]) {
-        // 動的最適化の場合、選択されたタイムステップのMVを使用
-        allSelectedMVs = optimizationData.timestep_data[timestep].mvs.map(m => m.mv);
-    }
+    document.querySelectorAll('.query-card').forEach(card => observer.observe(card));
+}
 
-    // クエリ固有のMV使用情報を取得（包含関係フィルタ済み）
+// 個別クエリカードのロード
+async function loadQueryCard(card) {
+    const queryName = card.dataset.queryName;
+    const svgContainer = card.querySelector('.query-card-svg-container');
+    card.classList.add('loaded'); // ロード済みフラグ
+
     try {
-        const mvUsage = await fetchAPI(
-            `/api/query-mv-usage/${currentQuerySet}/${queryName}?selected_mvs=${allSelectedMVs.join(',')}`
-        );
-        // このクエリで実際に使用されるMVのみをハイライト対象に
-        selectedMVs = mvUsage.usable_mvs;
-        console.log(`Query ${queryName}: uses ${mvUsage.total_usable_mvs} MVs out of ${allSelectedMVs.length} selected`);
-    } catch (e) {
-        // フォールバック: qp_class.pklがない場合は全MVを使用
-        console.warn('query-mv-usage API failed, falling back to all MVs:', e);
-        selectedMVs = allSelectedMVs;
-    }
+        // EXPLAIN取得
+        const explain = await fetchAPI(`/api/explain/${currentQuerySet}/${queryName}`);
 
-    renderTree(explain);
+        // ハイライト用MV算出
+        let highlightMVs = [];
+        const timestep = parseInt(document.getElementById('tree-timestep-select').value || 0);
+
+        // 選択MVリスト
+        let allSelectedMVs = [];
+        if (staticOptimizationData) {
+            allSelectedMVs = staticOptimizationData.selected_mvs || [];
+        } else if (optimizationData && optimizationData.timestep_data[timestep]) {
+            allSelectedMVs = optimizationData.timestep_data[timestep].mvs.map(m => m.mv);
+        }
+
+        // 使用MVフィルタリング
+        try {
+            const mvUsage = await fetchAPI(
+                `/api/query-mv-usage/${currentQuerySet}/${queryName}?selected_mvs=${allSelectedMVs.join(',')}`
+            );
+            highlightMVs = mvUsage.usable_mvs;
+        } catch (e) {
+            highlightMVs = allSelectedMVs;
+        }
+
+        renderTree(explain, svgContainer, highlightMVs);
+
+    } catch (e) {
+        console.error(`Failed to load ${queryName}:`, e);
+        svgContainer.innerHTML = `<div style="color:red; padding:20px;">Error loading query</div>`;
+    }
+}
+
+// 指定クエリへスクロール
+function scrollToQuery(queryName) {
+    const card = document.querySelector(`.query-card[data-query-name="${queryName}"]`);
+    if (card) {
+        card.scrollIntoView({ behavior: 'smooth', inline: 'center' });
+    }
+}
+
+// ロード済み全カード更新（最適化結果などが変わった場合）
+async function updateAllLoadedQueries() {
+    const loadedCards = document.querySelectorAll('.query-card.loaded');
+    for (const card of loadedCards) {
+        await loadQueryCard(card);
+    }
 }
 
 // D3.jsでツリー描画（縦方向: 上から下）
-function renderTree(planData) {
-    const container = document.getElementById('tree-container');
-    const svg = d3.select('#tree-svg');
+function renderTree(planData, container, highlightMVs = []) {
+    const svg = d3.select(container).select('svg');
     svg.selectAll('*').remove();
 
     const width = container.clientWidth - 40;
@@ -469,6 +595,7 @@ function renderTree(planData) {
             relation: node['Relation Name'] || '',
             alias: node['Alias'] || '',
             rows: node['Plan Rows'] || 0,
+            width: node['Plan Width'] || 0,
             cost: node['Total Cost'] || 0,
             children: []
         };
@@ -483,14 +610,13 @@ function renderTree(planData) {
 
     // ツリーの深さとリーフ数を計算
     const depth = root.height;
-    const leaves = root.leaves().length;
 
     // 木の深さに基づいてSVG高さを計算（各レベル間に十分な間隔を確保）
     const nodeSpacing = 60;  // ノード間の垂直間隔
     const treeHeight = Math.max(400, (depth + 1) * nodeSpacing);
 
     // 幅はコンテナに収める
-    const treeWidth = width - 60;
+    const treeWidth = Math.max(width - 60, 300); // 最小幅確保
 
     // 縦方向ツリーレイアウト
     const treeLayout = d3.tree()
@@ -499,18 +625,22 @@ function renderTree(planData) {
     treeLayout(root);
 
     // SVGサイズを木のサイズに合わせる
-    svg.attr('width', width).attr('height', treeHeight + 60);
+    svg.attr('width', Math.max(width, treeWidth + 60)).attr('height', treeHeight + 60);
 
     const g = svg.append('g').attr('transform', 'translate(30, 30)');
 
-    // リンク描画（縦方向）
+    // リンク描画（直角カギ型）
     g.selectAll('.link')
         .data(root.links())
         .join('path')
         .attr('class', 'link')
-        .attr('d', d3.linkVertical()
-            .x(d => d.x)
-            .y(d => d.y));
+        .attr('fill', 'none')
+        .attr('d', d => {
+            const sx = d.source.x, sy = d.source.y;
+            const tx = d.target.x, ty = d.target.y;
+            const midY = (sy + ty) / 2;
+            return `M${sx},${sy}V${midY}H${tx}V${ty}`;
+        });
 
     // ノード描画
     const node = g.selectAll('.node')
@@ -526,12 +656,12 @@ function renderTree(planData) {
         .attr('height', 36)
         .attr('rx', 4)
         .attr('fill', d => {
-            if (selectedMVs.includes(d.data.nodeId)) return '#a6e3a1';
+            if (highlightMVs.includes(d.data.nodeId)) return '#a6e3a1';
             if (d.data.nodeId.startsWith('leaf_')) return '#fab387';
             if (d.data.nodeId.startsWith('non_leaf_')) return '#89b4fa';
             return '#cdd6f4';
         })
-        .attr('stroke', d => selectedMVs.includes(d.data.nodeId) ? '#fff' : 'none')
+        .attr('stroke', d => highlightMVs.includes(d.data.nodeId) ? '#fff' : 'none')
         .attr('stroke-width', 2);
 
     // ノードタイプ（1行目）
@@ -551,14 +681,50 @@ function renderTree(planData) {
         .attr('font-size', '6px')
         .text(d => d.data.relation ? `${d.data.relation}` : d.data.nodeId);
 
-    // コスト（3行目）
-    node.append('text')
-        .attr('dy', 13)
-        .attr('text-anchor', 'middle')
-        .attr('fill', '#1e1e2e')
-        .attr('font-size', '5px')
-        .attr('opacity', 0.8)
-        .text(d => `cost: ${d.data.cost.toFixed(0)}`);
+    // ツールチップ要素（シングルトン）
+    let tooltip = d3.select('body').select('.custom-tooltip');
+    if (tooltip.empty()) {
+        tooltip = d3.select('body').append('div')
+            .attr('class', 'custom-tooltip')
+            .style('opacity', 0);
+    }
+
+    // イベントリスナー追加
+    node.on('mouseover', (event, d) => {
+        let sizeStr = '';
+        if (mvSizesMap && mvSizesMap[d.data.nodeId]) {
+            sizeStr = formatBytes(mvSizesMap[d.data.nodeId]);
+        } else {
+            sizeStr = formatBytes((d.data.rows * d.data.width) || 0) + ' (est)';
+        }
+
+        // コストもsubqueryCostsMapから取得（pickle由来）
+        let costValue = 0;
+        if (subqueryCostsMap && subqueryCostsMap[d.data.nodeId]) {
+            costValue = subqueryCostsMap[d.data.nodeId];
+        } else {
+            costValue = d.data.cost || 0;
+        }
+
+        tooltip.transition().duration(200).style('opacity', 1);
+        tooltip.html(
+            `<strong>${d.data.name}</strong><br>` +
+            `${d.data.relation || d.data.nodeId}<br>` +
+            `<hr style="margin:4px 0; border:0; border-top:1px solid #555">` +
+            `Size: ${sizeStr}<br>` +
+            `Cost: ${costValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+        )
+            .style('left', (event.clientX + 12) + 'px')
+            .style('top', (event.clientY + 12) + 'px');
+    })
+        .on('mousemove', (event) => {
+            tooltip
+                .style('left', (event.clientX + 12) + 'px')
+                .style('top', (event.clientY + 12) + 'px');
+        })
+        .on('mouseout', () => {
+            tooltip.transition().duration(200).style('opacity', 0);
+        });
 }
 
 // ベンチマークチャート更新
@@ -749,79 +915,72 @@ async function updateComparisonCharts() {
         summaryBody.appendChild(row);
     });
 
-    // 1. 棒グラフ (Stacked + Grouped by Timestep using Multicategory)
-    // X軸構造: [Timestep, Method]
+    // 1. 棒グラフ (Grouped by Method, Stacked Query+Migration)
     const allTimesteps = new Set();
     validResults.forEach(r => r.data.timesteps.forEach(t => allTimesteps.add(t.timestep)));
-    // 数値としてソート
     const sortedTimesteps = Array.from(allTimesteps).sort((a, b) => a - b);
+    const xLabels = sortedTimesteps.map(ts => 'T' + ts);
 
-    const xTimesteps = [];
-    const xMethods = [];
-    const yQuery = [];
-    const yMigration = [];
-    const colorQuery = [];
-    const colorMigration = [];
+    // 各ファイルごとにトレースを作成
+    const barTraces = [];
+    validResults.forEach((r, i) => {
+        const color = colors[i % colors.length];
+        const name = shortenName(r.file);
 
-    // データフラット化
-    sortedTimesteps.forEach(ts => {
-        validResults.forEach((r, i) => {
+        const queryTimes = sortedTimesteps.map(ts => {
             const tsData = r.data.timesteps.find(d => d.timestep === ts);
-            // データがない場合も空（0）として入れる
-            const qTime = tsData ? tsData.query_time : 0;
-            const mTime = tsData ? tsData.migration_time : 0;
-            const name = shortenName(r.file);
-            const color = colors[i % colors.length];
+            return tsData ? tsData.query_time : 0;
+        });
 
-            xTimesteps.push('T' + ts);
-            xMethods.push(name);
-            yQuery.push(qTime);
-            yMigration.push(mTime);
-            colorQuery.push(color);
-            colorMigration.push(color);
+        const migrationTimes = sortedTimesteps.map(ts => {
+            const tsData = r.data.timesteps.find(d => d.timestep === ts);
+            return tsData ? tsData.migration_time : 0;
+        });
+
+        // クエリ時間（濃い色）
+        barTraces.push({
+            x: xLabels,
+            y: queryTimes,
+            name: name,
+            type: 'bar',
+            marker: { color: color },
+            offsetgroup: i,  // 同じファイルは同じオフセットグループ
+            legendgroup: name,
+            showlegend: true,
+            hovertemplate: `${name}<br>クエリ: %{y:.2f}秒<extra></extra>`
+        });
+
+        // マイグレーション時間（薄い色、積み上げ）
+        barTraces.push({
+            x: xLabels,
+            y: migrationTimes,
+            name: name + ' (Migration)',
+            type: 'bar',
+            marker: { color: color, opacity: 0.4 },
+            offsetgroup: i,  // 同じファイルは同じオフセットグループ
+            base: queryTimes,  // クエリ時間の上に積み上げ
+            legendgroup: name,
+            showlegend: false,
+            hovertemplate: `${name}<br>マイグレーション: %{y:.2f}秒<extra></extra>`
         });
     });
 
-    const stackTraceQuery = {
-        x: [xTimesteps, xMethods],
-        y: yQuery,
-        name: 'クエリ時間', // 凡例用だが、色は個別指定しているので凡例と色が一致しない問題がある
-        type: 'bar',
-        marker: { color: colorQuery },
-        showlegend: false, // 色がバラバラなので凡例は消す（またはダミーを作る）
-        text: yQuery.map(t => t > 0 ? t.toFixed(1) : ''),
-        textposition: 'auto',
-        hoverinfo: 'y'
-    };
-
-    const stackTraceMigration = {
-        x: [xTimesteps, xMethods],
-        y: yMigration,
-        name: 'マイグレーション時間',
-        type: 'bar',
-        marker: { color: colorMigration, opacity: 0.4 }, // 薄くする
-        showlegend: false,
-        text: yMigration.map(t => t > 0 ? t.toFixed(1) : ''),
-        textposition: 'auto',
-        hoverinfo: 'y'
-    };
-
     const barLayout = {
-        title: 'ベンチマーク詳細比較 (濃:クエリ, 薄:マイグレーション)',
-        barmode: 'stack', // 各手法内でクエリとマイグレーションを積み上げ
+        barmode: 'group',
         paper_bgcolor: 'rgba(0,0,0,0)',
         plot_bgcolor: '#1e1e2e',
         font: { color: '#cdd6f4' },
-        margin: { l: 60, r: 20, t: 30, b: 80 }, // 下余白多めに
+        margin: { l: 60, r: 20, t: 40, b: 50 },
         xaxis: {
-            title: 'タイムステップ / 手法',
-            tickangle: -45
+            title: 'タイムステップ',
+            tickangle: 0
         },
         yaxis: { title: '実行時間 (秒)' },
-        showlegend: false
+        showlegend: true,
+        legend: { orientation: 'h', y: 1.05, x: 0.5, xanchor: 'center' }
     };
 
-    Plotly.newPlot('comparison-bar-chart', [stackTraceQuery, stackTraceMigration], barLayout, { responsive: true });
+    Plotly.newPlot('comparison-bar-chart', barTraces, barLayout, { responsive: true });
 
     // 2. 折れ線グラフ (Query Time Trend)
     const lineTraces = validResults.map((r, i) => {
@@ -1003,5 +1162,128 @@ async function updateComparisonCharts() {
     Plotly.newPlot('comparison-mv-timeline', timelineTraces, timelineLayout, { responsive: true });
 }
 
+// =====================================
+// 頻度変化タブ関連
+// =====================================
+
+// 頻度ファイル一覧を取得・表示
+async function loadFrequencyFiles() {
+    const select = document.getElementById('frequency-file-select');
+    if (!select) return;
+
+    try {
+        const files = await fetchAPI(`/api/frequency-files/${currentQuerySet}`);
+        select.innerHTML = files.map(f => `<option value="${f}">${f}</option>`).join('');
+    } catch (e) {
+        console.error('Failed to load frequency files:', e);
+    }
+}
+
+// 頻度データを読み込んでチャート表示
+async function loadFrequencyData() {
+    const select = document.getElementById('frequency-file-select');
+    if (!select || !select.value) return;
+
+    try {
+        const data = await fetchAPI(`/api/frequency-data/${currentQuerySet}/${select.value}`);
+
+        // 情報表示
+        const infoEl = document.getElementById('frequency-info');
+        if (infoEl) {
+            infoEl.innerHTML = `
+                <strong>説明:</strong> ${data.description || 'N/A'}<br>
+                <strong>備考:</strong> ${data.note || 'N/A'}<br>
+                <strong>総クエリ数:</strong> ${data.total_queries} / <strong>タイムステップ数:</strong> ${data.timesteps}
+            `;
+        }
+
+        // グループ情報表示
+        const oddInfo = document.getElementById('odd-group-info');
+        const evenInfo = document.getElementById('even-group-info');
+
+        const oddQueries = Object.keys(data.odd_group);
+        const evenQueries = Object.keys(data.even_group);
+
+        if (oddInfo) {
+            oddInfo.textContent = `${oddQueries.length}個のクエリ: ${oddQueries.slice(0, 10).join(', ')}${oddQueries.length > 10 ? '...' : ''}`;
+        }
+        if (evenInfo) {
+            evenInfo.textContent = `${evenQueries.length}個のクエリ: ${evenQueries.slice(0, 10).join(', ')}${evenQueries.length > 10 ? '...' : ''}`;
+        }
+
+        // チャート描画
+        renderFrequencyChart(data);
+
+    } catch (e) {
+        console.error('Failed to load frequency data:', e);
+    }
+}
+
+// 頻度変化チャートを描画
+function renderFrequencyChart(data) {
+    const oddGroup = data.odd_group;
+    const evenGroup = data.even_group;
+    const timesteps = data.timesteps;
+
+    // X軸ラベル
+    const xLabels = Array.from({ length: timesteps }, (_, i) => 'T' + (i + 1));
+
+    // 代表クエリを選んで頻度を取得（全クエリは同じパターンのはず）
+    const firstOddKey = Object.keys(oddGroup)[0];
+    const firstEvenKey = Object.keys(evenGroup)[0];
+
+    const oddFrequencies = firstOddKey ? oddGroup[firstOddKey] : [];
+    const evenFrequencies = firstEvenKey ? evenGroup[firstEvenKey] : [];
+
+    const traces = [
+        {
+            x: xLabels,
+            y: oddFrequencies,
+            name: '奇数クエリ (1, 3, 5, ...)',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#89b4fa', width: 2 },
+            marker: { size: 8 }
+        },
+        {
+            x: xLabels,
+            y: evenFrequencies,
+            name: '偶数クエリ (2, 4, 6, ...)',
+            type: 'scatter',
+            mode: 'lines+markers',
+            line: { color: '#f38ba8', width: 2 },
+            marker: { size: 8 }
+        }
+    ];
+
+    const layout = {
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: '#1e1e2e',
+        font: { color: '#cdd6f4' },
+        margin: { l: 60, r: 20, t: 40, b: 50 },
+        xaxis: {
+            title: 'タイムステップ',
+            tickangle: -45
+        },
+        yaxis: {
+            title: '頻度',
+            rangemode: 'tozero'
+        },
+        showlegend: true,
+        legend: { orientation: 'h', y: 1.1, x: 0.5, xanchor: 'center' }
+    };
+
+    Plotly.newPlot('frequency-chart', traces, layout, { responsive: true });
+}
+
+// 頻度タブのイベントハンドラを設定
+function setupFrequencyTab() {
+    const loadBtn = document.getElementById('load-frequency-btn');
+    if (loadBtn) {
+        loadBtn.addEventListener('click', loadFrequencyData);
+    }
+}
+
 // 初期化実行
 init().catch(console.error);
+

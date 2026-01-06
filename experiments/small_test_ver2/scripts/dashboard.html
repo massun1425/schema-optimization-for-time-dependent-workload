@@ -35,6 +35,7 @@
                 <button class="tab" data-tab="query-tree">🌲 クエリツリー</button>
                 <button class="tab" data-tab="timeline">📈 時系列分析</button>
                 <button class="tab" data-tab="comparison">📊 比較分析</button>
+                <button class="tab" data-tab="frequency">📉 頻度変化</button>
             </div>
 
             <!-- MV選択タブ -->
@@ -111,10 +112,13 @@
                         <span
                             style="display: inline-block; width: 16px; height: 16px; background: var(--accent-blue); border-radius: 3px; vertical-align: middle; margin-left: 20px;"></span>
                         非リーフノード
+                        <div id="root-mv-stats" style="margin-top: 8px; font-weight: bold; color: var(--text-primary);">
+                            ルートMV化率: - / -
+                        </div>
                     </div>
-                    <div class="tree-container" id="tree-container"
-                        style="height: calc(100vh - 280px); min-height: 400px;">
-                        <svg id="tree-svg"></svg>
+                    <div id="query-gallery" class="query-gallery">
+                        <!-- JSによって .query-card が追加されます -->
+                        <div class="loading">Initializing gallery...</div>
                     </div>
                 </div>
             </div>
@@ -231,7 +235,7 @@
                         </div>
 
                         <div class="panel">
-                            <h2>ベンチマーク詳細比較 (Query vs Migration)</h2>
+                            <h2>ベンチマーク詳細比較 (濃:クエリ, 薄:マイグレーション)</h2>
                             <div class="chart-container" id="comparison-bar-chart" style="height: 500px;"></div>
                         </div>
 
@@ -257,11 +261,42 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 頻度変化タブ -->
+            <div id="frequency" class="tab-content">
+                <div class="panel">
+                    <h2>頻度変化パターン可視化</h2>
+                    <div style="display: flex; gap: 16px; margin-bottom: 16px; align-items: center;">
+                        <label>
+                            頻度ファイル:
+                            <select id="frequency-file-select" style="min-width: 300px;"></select>
+                        </label>
+                        <button id="load-frequency-btn" class="btn">📊 読み込み</button>
+                    </div>
+                    <div id="frequency-info" style="margin-bottom: 16px; color: var(--text-secondary);"></div>
+                </div>
+
+                <div class="panel">
+                    <h2>頻度変化グラフ (奇数/偶数グループ)</h2>
+                    <div class="chart-container" id="frequency-chart" style="height: 400px;"></div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="panel">
+                        <h2>奇数クエリグループ (1, 3, 5, ...)</h2>
+                        <div id="odd-group-info" style="font-size: 0.9em; color: var(--text-secondary);"></div>
+                    </div>
+                    <div class="panel">
+                        <h2>偶数クエリグループ (2, 4, 6, ...)</h2>
+                        <div id="even-group-info" style="font-size: 0.9em; color: var(--text-secondary);"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- 外部JS読み込み -->
-    <script src="/static/dashboard.js"></script>
+    <script src="/static/dashboard.js?v=20240106d"></script>
 </body>
 
 </html>
