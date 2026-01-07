@@ -45,6 +45,7 @@ class TimeDependentOptimizer:
         migration_cost: Dict[int, float],
         query_frequency_by_timestep: Dict[str, List[float]],
         gurobi_output: int = 0,
+        migration_cost_weight: float = 1.0,  # マイグレーションコストの重み係数（0.1 = 1/10に削減）
     ) -> None:
         """
         Initialize the time-dependent optimizer.
@@ -84,9 +85,11 @@ class TimeDependentOptimizer:
         # self.a removed (no recipe selection)
 
         self.gurobi_output = gurobi_output
+        self.migration_cost_weight = migration_cost_weight
 
         logger.info(f"Initialized TimeDependentOptimizer: I={self.I}, J={self.J}, T={self.T}")
         logger.info(f"Filtered to {len(self.cand_j)} candidates (from {self.J} total nodes)")
+        logger.info(f"Migration cost weight: {self.migration_cost_weight}")
 
     def initialize_candidates(self) -> list[int]:
         """Initialize MV candidates based on utility.
@@ -143,8 +146,9 @@ class TimeDependentOptimizer:
                     constraint_count += 1
 
                     # Inclusion/overlap exclusion
+                    # Note: Normalization by len(cand_j) matches NormalOptimizer behavior
                     m.addConstr(
-                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in self.cand_j if u != j) <= 1,
+                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in self.cand_j if u != j) / len(self.cand_j) <= 1,
                         name=f"inclusive_excl_{i}_{j}_{t}",
                     )
                     constraint_count += 1
@@ -187,7 +191,7 @@ class TimeDependentOptimizer:
                     # c[j,t] <= 1 - z[j,t-1] (if it existed before, not created now)
                     m.addConstr(
                         self.c[j, t] <= 1 - self.z[j, t-1],
-                        name = f"create_not_cont_{j}_{t}"
+                        name=f"create_not_cont_{j}_{t}"
                     )
                     constraint_count += 3
 
@@ -209,14 +213,15 @@ class TimeDependentOptimizer:
         )
 
         # Migration cost: sum of fixed costs when creating MVs
+        # Apply weight to reduce the impact of migration cost (default 0.1 = 1/10)
         migration_cost = gp.quicksum(
-            float(self.migration_cost.get(j, 0.0)) * self.c[j, t]
+            float(self.migration_cost.get(j, 0.0)) * self.migration_cost_weight * self.c[j, t]
             for t in range(self.T)
             for j in self.cand_j  # Only sum over candidates
         )
 
         m.setObjective(workload_cost + migration_cost, gp.GRB.MINIMIZE)
-        logger.info("Objective function built")
+        logger.info(f"Objective function built (migration_cost_weight={self.migration_cost_weight})")
 
     def optimize(self, time_limit: float | None = None) -> dict:
         """

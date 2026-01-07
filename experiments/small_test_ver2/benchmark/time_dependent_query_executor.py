@@ -662,7 +662,8 @@ class TimeDependentQueryExecutor:
         frequencies_by_timestep: Dict[str, List[float]],
         timesteps: List[str] = None,
         timeout_minutes: int = 30,
-        verbose: bool = False
+        verbose: bool = False,
+        static_algorithm: str = 'normal'
     ) -> Dict:
         """静的MV: 最初のタイムステップでMVを作成し、マイグレーションなしで実行
         
@@ -673,6 +674,7 @@ class TimeDependentQueryExecutor:
             frequencies_by_timestep: タイムステップごとの頻度情報
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
+            static_algorithm: 使用するアルゴリズム ('normal' or 'bigsubs')
             
         Returns:
             ベンチマーク結果の辞書
@@ -709,8 +711,11 @@ class TimeDependentQueryExecutor:
         logger.info(f"{'='*60}")
         
         if is_pure_static:
-            # 純粋な静的最適化の場合、専用のSQLファイルを使用
-            migration_sql_file = migration_sql_dir / "static_initial_mvs.sql"
+            # 純粋な静的最適化の場合、アルゴリズムに応じてSQLファイルを選択
+            if static_algorithm == 'bigsubs':
+                migration_sql_file = migration_sql_dir / "static_bigsubs_initial_mvs.sql"
+            else:
+                migration_sql_file = migration_sql_dir / "static_initial_mvs.sql"
         else:
             # 従来の時間依存最適化の最初のステップを使用する場合
             migration_sql_file = migration_sql_dir / f"timestep_0_{timesteps[0]}.sql"
@@ -726,7 +731,7 @@ class TimeDependentQueryExecutor:
                 logger.error(f"  ✗ Failed to create initial MVs: {error}")
                 return {'error': f'Failed to create initial MVs: {error}'}
         else:
-            logger.warning("No initial migration SQL found")
+            logger.warning(f"No initial migration SQL found: {migration_sql_file}")
         
         # 最初のタイムステップの書き換えられたクエリを取得（全タイムステップで使用）
         # Static モードではMVが変わらないため、クエリも変わらない
