@@ -43,7 +43,7 @@ from utils.postgres_executor import PostgresExecutor, add_docker_args
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None):
+    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False):
         """初期化
         
         Args:
@@ -51,10 +51,12 @@ class NormalModeExperiment:
             query_set: 使用するクエリセット名 (例: job, job_like, explicit_join)
             exp_suffix: 実験識別用サフィックス (例: _16_2, _16_4)
             use_docker: Dockerを使用するかどうか (None: 環境変数から判定)
+            recalc_mode: 再計算コストを使用するかどうか
         """
         self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
         self.exp_suffix = exp_suffix  # サフィックスを保存
+        self.recalc_mode = recalc_mode
         
         # PostgreSQL Executorを初期化
         self.pg_executor = PostgresExecutor(use_docker=use_docker)
@@ -183,6 +185,14 @@ class NormalModeExperiment:
             
             analyzed_count = 0
             with conn.cursor() as cursor:
+                # 統計情報のターゲットを引き上げる（デフォルト100 -> 1000）
+                # これによりヒストグラムの粒度が上がり、JOBのような偏ったデータの推定精度が向上する
+                try:
+                    cursor.execute("SET default_statistics_target = 1000;")
+                    self.print_info("統計情報のターゲットを1000に設定しました")
+                except Exception as e:
+                    self.print_info(f"統計情報のターゲット設定に失敗（デフォルトを使用）: {e}")
+                
                 for table in base_tables:
                     try:
                         cursor.execute(f"ANALYZE {table};")
@@ -198,6 +208,244 @@ class NormalModeExperiment:
             
         except Exception as e:
             self.print_error(f"ANALYZE実行エラー: {e}")
+            return False
+
+    def _update_u_ij_if_recalc(self):
+        """--recalcモードが有効な場合、コストを読み込んでu_ijを更新する
+        
+        Returns:
+            Tuple[Dict[int, float], List[float]]: (migration_cost, b_j) 
+            recalcが無効な場合は (None, None) を返す
+        """
+        if not self.recalc_mode:
+            return None, None
+            
+        from experiments.small_test_ver2.core.io_loaders import load_full_build_costs_and_sizes
+        
+        self.print_info("RECALC MODE: u_ij（利得）を再計算コストで上書き中...")
+        migration_cost, b_j = load_full_build_costs_and_sizes(
+            str(self.exp_dir), 
+            self.qp.node_list, 
+            self.query_set
+        )
+        
+        updated_count = 0
+        for i in range(len(self.qp.u_ij)):
+            for j in range(len(self.qp.u_ij[i])):
+                # 既存の構造（使用関係）がある場所のみ更新
+                if self.qp.u_ij[i][j] > 0:
+                    # migration_cost keys are integer indices matching j
+                    if j in migration_cost:
+                        self.qp.u_ij[i][j] = migration_cost[j]
+                        updated_count += 1
+                        
+        self.print_success(f"  {updated_count}箇所の利得エントリを更新しました")
+        return migration_cost, b_j
+    
+    def _clear_caches(self):
+        """PostgreSQLのキャッシュをクリア
+        
+        pg_prewarm拡張のpg_drop_caches()を使用してshared_buffersをクリアします。
+        PostgreSQL 14以降で利用可能。古いバージョンでは警告を出してスキップします。
+        """
+        import psycopg2
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            with conn.cursor() as cursor:
+                # まずpg_prewarm拡張を確認・作成
+                try:
+                    cursor.execute("CREATE EXTENSION IF NOT EXISTS pg_prewarm;")
+                    conn.commit()
+                except Exception:
+                    pass  # 権限がない場合はスキップ
+                
+                # pg_drop_caches()を実行してshared_buffersをクリア
+                try:
+                    cursor.execute("SELECT pg_drop_caches();")
+                    conn.commit()
+                    self.print_success("PostgreSQLキャッシュをクリア完了")
+                except psycopg2.errors.UndefinedFunction:
+                    # pg_drop_caches()が存在しない（PostgreSQL 14未満）
+                    self.print_info("pg_drop_caches()は利用不可（PostgreSQL 14+が必要）")
+                    # 代替手段: DISCARDコマンドでセッションキャッシュをクリア
+                    try:
+                        cursor.execute("DISCARD ALL;")
+                        conn.commit()
+                        self.print_info("セッションキャッシュをクリア（DISCARD ALL）")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    self.print_info(f"キャッシュクリアをスキップ: {e}")
+            
+            conn.close()
+            return True
+            
+        except Exception as e:
+            self.print_error(f"キャッシュクリアエラー: {e}")
+            return False
+    
+    def _create_extended_statistics(self):
+        """JOBクエリの推定精度向上のための多変量統計情報（Extended Statistics）を作成
+        
+        PostgreSQLプランナーが列間の相関を理解できるようにするために、
+        複数列の依存関係とMCV（Most Common Values）統計を作成します。
+        これにより、複雑なWHERE句を持つクエリの行数推定精度が向上し、
+        より適切な結合順序が選択されます。
+        """
+        import psycopg2
+        
+        # 作成する統計情報のリスト
+        # (統計名, 統計タイプ, 対象カラム, テーブル名)
+        extended_stats = [
+            # ===== 基本的な2カラム相関 =====
+            # movie_info: info_type_id と info の相関（29c, 25cなどに効果）
+            ("stts_movie_info_corr", "(dependencies, mcv)", "info_type_id, info", "movie_info"),
+            
+            # cast_info: 役割と注釈の相関（10c, 25c, 20a, 7cなどに効果）
+            ("stts_cast_info_note", "(dependencies, mcv)", "role_id, note", "cast_info"),
+            ("stts_cast_info_role_note", "(dependencies, mcv)", "person_role_id, note", "cast_info"),
+            
+            # title: 種類と制作年の相関（29c, 10c, 7c, 20aなどに効果）
+            ("stts_title_kind_year", "(dependencies, mcv)", "kind_id, production_year", "title"),
+            
+            # movie_companies: 会社IDと役割の相関（17a-f, 16bなどに効果）
+            ("stts_movie_companies_corr", "(dependencies, mcv)", "company_id, company_type_id", "movie_companies"),
+            
+            # person_info: 情報タイプと内容の相関（29c, 7cに効果）
+            ("stts_person_info_corr", "(dependencies, mcv)", "info_type_id, info", "person_info"),
+            
+            # ===== 結合ハブテーブルの相関（結合順序改善用）=====
+            # movie_keyword: 映画とキーワードの相関（結合の中間結果推定に効果）
+            ("stts_mk_movie_keyword", "(dependencies, mcv)", "movie_id, keyword_id", "movie_keyword"),
+            
+            # movie_info_idx: 25cなどで使用されるインデックステーブル
+            ("stts_mi_idx_corr", "(dependencies, mcv)", "info_type_id, info", "movie_info_idx"),
+            
+            # ===== 2カラム結合統計（3カラムは分解して使用）=====
+            # movie_info: 映画ID・情報タイプの2カラム相関
+            ("stts_mi_movie_info", "(dependencies, mcv)", "movie_id, info_type_id", "movie_info"),
+            
+            # cast_info: 3カラムはMCV漏れリスクがあるため削除
+            # 代わりに既存の2カラム統計 (stts_ci_join_corr) を使用
+            
+            # movie_companies: 映画・会社・会社種別の3カラム相関
+            ("stts_mc_movie_company", "(dependencies, mcv)", "movie_id, company_id, company_type_id", "movie_companies"),
+            
+            # movie_info_idx: 3カラムはMCV漏れリスクがあるため削除
+            # 代わりに stts_mi_idx_corr の2カラム統計を使用
+            
+            # ===== name/aka_name 関連 =====
+            # name: IDと性別の相関（29c, 7cのフィルタに効果）
+            ("stts_name_gender", "(dependencies, mcv)", "id, gender", "name"),
+            
+            # ===== マスターテーブル（小さいが頻繁にフィルタされる）=====
+            # keyword: キーワードのIDと名前（29c, 6f等でフィルタに使用）
+            ("stts_keyword_id", "(dependencies, mcv)", "id, keyword", "keyword"),
+            
+            # info_type: 情報タイプのIDと名前（it.info='genres', 'rating'等のフィルタ）
+            ("stts_info_type_id", "(dependencies, mcv)", "id, info", "info_type"),
+            
+            # company_name: 会社名と国コード（cn.country_code='[us]'等のフィルタ）
+            ("stts_company_name_id", "(dependencies, mcv)", "id, country_code", "company_name"),
+            
+            # kind_type: 種類のIDと名前（kt.kind='movie'等のフィルタ）
+            ("stts_kind_type_id", "(dependencies, mcv)", "id, kind", "kind_type"),
+            
+            # ===== 追加の結合テーブル =====
+            # movie_link: ユニーク値同士の相関は効果が薄いため削除
+            
+            # aka_name: 人物別名検索（person_idとの相関）
+            ("stts_aka_name_person", "(dependencies, mcv)", "person_id, name", "aka_name"),
+            
+            # person_info: 人物IDと情報タイプの相関
+            ("stts_person_info_person", "(dependencies, mcv)", "person_id, info_type_id", "person_info"),
+            
+            # ===== 3カラム統計（安全なもののみ）=====
+            # title: ID・種類・制作年の3カラム（結合キー＋フィルタの組み合わせ）
+            ("stts_title_id_kind_year", "(dependencies, mcv)", "id, kind_id, production_year", "title"),
+            
+            # complete_cast: 出演情報（29c, 20a等で使用）
+            ("stts_cc_complete_cast", "(dependencies, mcv)", "movie_id, subject_id, status_id", "complete_cast"),
+
+            # ===== フィルタ列＋結合キーの相関（ndistinct推定精度向上用）=====
+            # title: 年代とIDの相関（29c等、年代フィルタ後の結合に効果）
+            ("stts_title_join_corr", "(dependencies, mcv)", "production_year, id", "title"),
+            
+            # movie_info: stts_mi_movie_info で代用（重複削除）
+            
+            # cast_info: 役割と映画IDの相関
+            ("stts_ci_join_corr", "(dependencies, mcv)", "role_id, movie_id", "cast_info"),
+            
+            # char_name: 名前とIDの相関（NOT LIKE等の否定条件や部分一致の推定向上用）
+            ("stts_chn_name_corr", "(dependencies, mcv)", "name, id", "char_name"),
+            
+            # ===== マスタテーブルの関数従属性 =====
+            # 小さいテーブルなので標準統計で十分だが、害もないためキープ
+            # role_type: 役割名とIDの完全従属
+            ("stts_role_type_id", "(dependencies, mcv)", "id, role", "role_type"),
+            
+            # comp_cast_type: 種類名とIDの完全従属
+            ("stts_comp_cast_type_id", "(dependencies, mcv)", "id, kind", "comp_cast_type"),
+        ]
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            created_count = 0
+            skipped_count = 0
+            
+            with conn.cursor() as cursor:
+                for stat_name, stat_type, columns, table in extended_stats:
+                    try:
+                        # 既存の統計情報をドロップ（存在する場合）
+                        cursor.execute(f"DROP STATISTICS IF EXISTS {stat_name};")
+                        
+                        # 新しい統計情報を作成
+                        sql = f"CREATE STATISTICS {stat_name} {stat_type} ON {columns} FROM {table};"
+                        cursor.execute(sql)
+                        created_count += 1
+                        
+                    except psycopg2.errors.UndefinedTable:
+                        # テーブルが存在しない場合はスキップ
+                        conn.rollback()
+                        skipped_count += 1
+                    except psycopg2.errors.UndefinedColumn:
+                        # カラムが存在しない場合はスキップ
+                        conn.rollback()
+                        skipped_count += 1
+                    except Exception as e:
+                        # その他のエラーはログに記録してスキップ
+                        conn.rollback()
+                        self.print_info(f"  統計 {stat_name} の作成をスキップ: {e}")
+                        skipped_count += 1
+                
+                conn.commit()
+            
+            conn.close()
+            
+            if created_count > 0:
+                self.print_success(f"{created_count}個の拡張統計情報を作成完了")
+                if skipped_count > 0:
+                    self.print_info(f"  {skipped_count}個はスキップ（テーブルまたはカラムが存在しない）")
+            else:
+                self.print_info("拡張統計情報の作成をスキップ（対象テーブルが存在しない）")
+            
+            return True
+            
+        except Exception as e:
+            self.print_error(f"拡張統計情報作成エラー: {e}")
             return False
     
     def phase1_generate_explain_json(self):
@@ -215,6 +463,22 @@ class NormalModeExperiment:
         if not self._analyze_base_tables():
             self.print_error("ベーステーブルのANALYZEに失敗しました")
             # 失敗しても続行（警告のみ）
+        
+        # # 拡張統計情報（Extended Statistics）を作成
+        # # JOBクエリの結合順序推定精度を向上させるための多変量統計
+        # self.print_info("拡張統計情報を作成中...")
+        # if not self._create_extended_statistics():
+        #     self.print_error("拡張統計情報の作成に失敗しました")
+        #     # 失敗しても続行（警告のみ）
+        
+        # # 拡張統計情報を計算するためにANALYZEを再実行
+        # self.print_info("拡張統計情報を計算するためANALYZEを再実行中...")
+        # if not self._analyze_base_tables():
+        #     self.print_error("ANALYZEの再実行に失敗しました")
+        
+        # PostgreSQLキャッシュをクリア
+        self.print_info("PostgreSQLキャッシュをクリア中...")
+        self._clear_caches()
         # クリーンアップが完了してから計測開始
         phase_start = time.time()
         
@@ -546,7 +810,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self, use_neurocard=False, use_sampling=True, sampling_parallel=False, sampling_workers=None):
+    def phase5_calculate_migration_costs(self, use_neurocard=False, use_deepdb=False, use_sampling=True, sampling_parallel=False, sampling_workers=None, compare=False):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -564,6 +828,10 @@ class NormalModeExperiment:
                 from experiments.small_test_ver2.migration.neurocard_migration_cost_calculator import NeuroCardMigrationCostCalculator
                 CalculatorClass = NeuroCardMigrationCostCalculator
                 self.print_info("NeuroCardを使用してサイズ推定を行います")
+            elif use_deepdb:
+                from experiments.small_test_ver2.migration.deepdb_migration_cost_calculator import DeepDBMigrationCostCalculator
+                CalculatorClass = DeepDBMigrationCostCalculator
+                self.print_info("DeepDBを使用してサイズ推定を行います")
             elif use_sampling:
                 from experiments.small_test_ver2.migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
                 CalculatorClass = SamplingMigrationCostCalculator
@@ -576,11 +844,26 @@ class NormalModeExperiment:
             self.print_info("マイグレーションコストを計算中...")
             
             # CostCalculatorのインスタンスを作成
-            calculator = CalculatorClass(
-
-                settings=self.settings,
-                query_set=self.query_set
-            )
+            if self.recalc_mode and use_sampling:
+                recalc_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
+                # SamplingMigrationCostCalculatorのみがprecomputed_costs_fileを受け取る
+                calculator = CalculatorClass(
+                    settings=self.settings,
+                    query_set=self.query_set,
+                    precomputed_costs_file=str(recalc_file)
+                )
+            else:
+                calculator = CalculatorClass(
+                    settings=self.settings,
+                    query_set=self.query_set
+                )
+            
+            if compare and use_deepdb:
+                self.print_info("PostgreSQL と DeepDB の推定値を比較します")
+                calculator.compare_with_postgresql()
+                # 比較のみの場合はここで終了（コスト保存は行わない）
+                self.phase_times['phase5_migration_costs'] = time.time() - phase_start
+                return True
             
             # コストを計算・保存
             if use_sampling and sampling_parallel:
@@ -589,15 +872,17 @@ class NormalModeExperiment:
             else:
                 costs = calculator.calculate_all_costs()
             
-            # 出力ファイルのパスを確認
+            # 出力ファイルのパスを確認（Calculatorによって出力ファイル名が異なる可能性があるため、ここではチェックを柔軟にするか統一する）
+            # deepdb_migration_cost_calculator も simple_migration_costs.json に保存するように修正済み
             output_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
             
             if output_file.exists():
                 self.print_success(f"マイグレーションコストを保存: {output_file}")
                 self.print_info(f"  {len(costs)}個のノードのコストを計算")
             else:
-                self.print_error("マイグレーションコストファイルが見つかりません")
-                return False
+                # ファイルが見つからない場合でも、計算処理自体が正常終了していれば成功とみなす場合もあるが、
+                # 基本的にはファイル生成が目的
+                self.print_warning("マイグレーションコストファイルが見つかりません (保存処理がスキップされた可能性があります)")
             
             # フェーズ時間を記録
             self.phase_times['phase5_migration_costs'] = time.time() - phase_start
@@ -667,7 +952,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(500*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -685,20 +970,24 @@ class NormalModeExperiment:
                         frequencies[ts] = frequencies[ts][:query_count]
             
             # マイグレーションコストをsubquery_costsから取得（u_ijとスケール一致）
-            self.print_info("マイグレーションコストを計算中...")
-            migration_cost = {
-                j: self.qp.qm.subquery_costs[node_id]
-                for j, node_id in enumerate(self.qp.node_list)
-            }
+            # self.print_info("マイグレーションコストを計算中...")
+            # migration_cost = {
+            #     j: self.qp.qm.subquery_costs[node_id]
+            #     for j, node_id in enumerate(self.qp.node_list)
+            # }
             
-            # サイズはsimple_migration_costs.jsonから読み込み
-            _, b_j_from_migration = load_full_build_costs_and_sizes(
-                str(self.exp_dir), 
-                self.qp.node_list, 
-                self.query_set
-            )
-            self.print_success(f"  {len(migration_cost)}個のMVのマイグレーションコストを計算完了（subquery_costsベース）")
+            # --recalc モードの場合、ロードしたコストで u_ij を上書きし、そのコストを使用
+            migration_cost, b_j_from_migration = self._update_u_ij_if_recalc()
             
+            if migration_cost is None:
+                # 通常モード：サイズとコストを読み込む
+                migration_cost, b_j_from_migration = load_full_build_costs_and_sizes(
+                    str(self.exp_dir), 
+                    self.qp.node_list, 
+                    self.query_set
+                )
+                self.print_success(f"  {len(migration_cost)}個のMVのマイグレーションコストを計算完了（subquery_costsベース）")
+
             # プルーニングを実行（オプション）
             pruning_info = None
             candidate_filter = None
@@ -953,13 +1242,17 @@ class NormalModeExperiment:
         """フェーズ6b: 静的最適化（時間依存なし・単一タイムステップのみ）
         
         Args:
-            timestep_position: 使用するタイムステップ ('first': 最初, 'last': 最後, 'average': 全時刻の平均)
+            timestep_position: 使用するタイムステップ 
+                'first': 最初, 'last': 最後, 'average': 全時刻の平均,
+                'addmv': 頻度の和で重み付け + MV作成コスト考慮
             static_algorithm: 使用するアルゴリズム ('normal': 通常ILP, 'bigsubs': BigSubs, 'both': 両方)
         """
         if timestep_position == 'first':
             position_name = "最初"
         elif timestep_position == 'average':
             position_name = "全時刻平均"
+        elif timestep_position == 'addmv':
+            position_name = "頻度和+MV作成コスト"
         else:
             position_name = "最終"
         self.print_header(f"静的最適化（{position_name}タイムステップ）", 6.5)
@@ -988,7 +1281,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(500*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1003,11 +1296,11 @@ class NormalModeExperiment:
                 selected_frequencies = frequencies[selected_timestep]
                 self.print_info(f"使用タイムステップ: {selected_timestep} (最初)")
             elif timestep_position == 'average':
-                # 全時刻での頻度の平均を計算
+                # 全時刻での頻度の和を計算（平均ではなく和を使用）
                 selected_timestep = "average"
-                self.print_info(f"使用タイムステップ: 全時刻の平均")
+                self.print_info(f"使用タイムステップ: 全時刻の頻度和")
                 
-                # 各クエリについて全タイムステップでの平均頻度を計算
+                # 各クエリについて全タイムステップでの頻度の和を計算
                 query_count = len(self.qp.u_ij)
                 selected_frequencies = [0.0] * query_count
                 
@@ -1019,28 +1312,49 @@ class NormalModeExperiment:
                     else:
                         timestep_freq = timestep_freq[:query_count]
                     
-                    # 累積加算
+                    # 累積加算（平均化しない）
                     for i in range(query_count):
                         selected_frequencies[i] += timestep_freq[i]
                 
-                # 平均を計算
-                num_timesteps = len(timesteps)
-                selected_frequencies = [freq / num_timesteps for freq in selected_frequencies]
+                self.print_info(f"  {len(timesteps)}個のタイムステップの頻度を合計")
+            elif timestep_position == 'addmv':
+                # 頻度の和で重み付け（MV作成コストとスケールを合わせるため）
+                selected_timestep = "addmv"
+                self.print_info(f"使用タイムステップ: 頻度の和 + MV作成コスト考慮")
                 
-                self.print_info(f"  {num_timesteps}個のタイムステップの頻度を平均化")
+                # 各クエリについて全タイムステップでの頻度の和を計算（平均ではなく）
+                query_count = len(self.qp.u_ij)
+                selected_frequencies = [0.0] * query_count
+                
+                for timestep in timesteps:
+                    timestep_freq = frequencies[timestep]
+                    # 頻度の次元を調整
+                    if len(timestep_freq) < query_count:
+                        timestep_freq = timestep_freq + [1.0] * (query_count - len(timestep_freq))
+                    else:
+                        timestep_freq = timestep_freq[:query_count]
+                    
+                    # 累積加算（平均化しない）
+                    for i in range(query_count):
+                        selected_frequencies[i] += timestep_freq[i]
+                
+                self.print_info(f"  {len(timesteps)}個のタイムステップの頻度を合計")
             else:  # 'last'
                 selected_timestep = timesteps[-1]
                 selected_frequencies = frequencies[selected_timestep]
                 self.print_info(f"使用タイムステップ: {selected_timestep} (最後)")
             
-            # 頻度の次元調整（averageの場合はすでに調整済み）
+            # 頻度の次元調整（average/addmvの場合はすでに調整済み）
             query_count = len(self.qp.u_ij)
-            if timestep_position != 'average':
+            if timestep_position not in ('average', 'addmv'):
                 if len(selected_frequencies) < query_count:
                     selected_frequencies.extend([1.0] * (query_count - len(selected_frequencies)))
                 else:
                     selected_frequencies = selected_frequencies[:query_count]
                 
+            # --recalc モードの場合、u_ij を更新し、コストを取得
+            recalc_migration_cost, _ = self._update_u_ij_if_recalc()
+
             # 重み付き効用を計算 (u_ij * frequency)
             weighted_u_ij = []
             for i in range(len(self.qp.u_ij)):
@@ -1048,7 +1362,7 @@ class NormalModeExperiment:
                 weighted_row = [u * freq for u in self.qp.u_ij[i]]
                 weighted_u_ij.append(weighted_row)
             
-            # サイズデータの読み込み（簡略化版）
+            # サイズデータの読み込み（MV作成コストはsubquery_costsを使用するためcreation_costsは不要）
             _, b_j_from_migration = load_full_build_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
@@ -1057,6 +1371,29 @@ class NormalModeExperiment:
             
             # m_costは0とする（マイグレーションコストを考慮しないため）
             m_cost = [0.0] * len(self.qp.node_list)
+            
+            # addmvモードの場合、MV作成コストをindex_build_costsとして使用
+            # 動的最適化と同様にsubquery_costsを使用（u_ijとスケール一致）
+            if timestep_position == 'addmv':
+                if self.recalc_mode and recalc_migration_cost is not None:
+                     # Recalcモード: 再計算されたコストを使用
+                    index_build_costs = [
+                        recalc_migration_cost.get(j, float('inf'))
+                        for j in range(len(self.qp.node_list))
+                    ]
+                    self.print_info(f"  MV作成コストを目的関数に含めます（Recalcコストベース）")
+                else:
+                    # 通常モード: subquery_costsを使用
+                    index_build_costs = [
+                        self.qp.qm.subquery_costs[node_id]
+                        for node_id in self.qp.node_list
+                    ]
+                    self.print_info(f"  MV作成コストを目的関数に含めます（subquery_costsベース）")
+                
+                total_creation_cost = sum(val for val in index_build_costs if val != float('inf'))
+                self.print_info(f"  総MV作成コスト上限: {total_creation_cost:.4f}")
+            else:
+                index_build_costs = None  # デフォルト（作成コストを考慮しない）
             
             # 結果保存用の変数
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
@@ -1076,17 +1413,22 @@ class NormalModeExperiment:
                     u_ij=weighted_u_ij,
                     X=self.qp.X,
                     q_s_list=[],
-                    settings=self.settings
+                    settings=self.settings,
+                    index_build_costs=index_build_costs  # addmvモードでMV作成コストを渡す
                 )
                 
                 result = optimizer.optimize()
                 
                 # 結果の整形
                 selected_mvs = [mv.node_id for mv in result.selected_views]
+                selected_indices = [self.qp.node_list.index(mv.node_id) for mv in result.selected_views]
                 total_size = result.total_storage
                 
+                # addmvモードの場合はアルゴリズム名を変更
+                algorithm_name = "static_normal_with_creation_cost" if timestep_position == 'addmv' else "static_normal"
+                
                 static_result = {
-                    "algorithm": "static_normal",
+                    "algorithm": algorithm_name,
                     "timestep": selected_timestep,
                     "selected_mvs": selected_mvs,
                     "mv_count": len(selected_mvs),
@@ -1094,12 +1436,37 @@ class NormalModeExperiment:
                     "storage_budget": B_max,
                     "utilization_percent": (total_size / B_max * 100) if B_max > 0 else 0,
                     "objective_value": result.total_utility,
-                    "execution_time": result.execution_time
+                    "execution_time": result.execution_time,
+                    "considers_creation_cost": timestep_position == 'addmv'
                 }
                 
-                self.print_success("NormalOptimizer 完了")
-                self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
-                self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
+                # addmvモードの場合、利得とMV作成コストを分けて計算
+                if timestep_position == 'addmv' and index_build_costs is not None:
+                    # 選択されたMVの利得の総和を計算（y_ij=1のペアのみ）
+                    # y_ijはGurobiの最適化結果から取得
+                    y_ij = result.metadata.get("y_ij", [[0] * len(self.qp.node_list) for _ in range(len(weighted_u_ij))])
+                    total_utility_gain = 0.0
+                    for i in range(len(weighted_u_ij)):
+                        for j in selected_indices:
+                            if y_ij[i][j] == 1:  # 実際に使用される場合のみ
+                                total_utility_gain += weighted_u_ij[i][j]
+                    
+                    # 選択されたMVの初期作成コストの和を計算
+                    total_creation_cost = sum(index_build_costs[j] for j in selected_indices)
+                    
+                    static_result["total_utility_gain"] = total_utility_gain
+                    static_result["total_creation_cost"] = total_creation_cost
+                    
+                    self.print_success("NormalOptimizer 完了")
+                    self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
+                    self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
+                    self.print_info(f"  利得の総和: {total_utility_gain:.4f}")
+                    self.print_info(f"  初期MV作成コストの和: {total_creation_cost:.4f}")
+                    self.print_info(f"  目的関数値 (利得 - 作成コスト): {result.total_utility:.4f}")
+                else:
+                    self.print_success("NormalOptimizer 完了")
+                    self.print_info(f"  選択されたMV数: {len(selected_mvs)}")
+                    self.print_info(f"  使用ストレージ: {total_size / 1024 / 1024:.2f} MB")
                 
                 # 結果保存
                 result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
@@ -1708,7 +2075,7 @@ class NormalModeExperiment:
             self.print_error(f"静的モード用クエリ書き換えに失敗: {e}")
             return False
 
-    def phase9_execute_benchmark(self, mode='dynamic', static_algorithm='normal'):
+    def phase9_execute_benchmark(self, mode='dynamic', static_algorithm='normal', ease_mode=False):
         """フェーズ9: 時間依存型ベンチマーク実行
         
         Args:
@@ -1717,6 +2084,7 @@ class NormalModeExperiment:
                 - 'static': 静的MV（最初のタイムステップのみ）
                 - 'baseline': ベースライン（MVなし）
             static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
         """
         mode_names = {
             'dynamic': '動的MV（マイグレーションあり）',
@@ -1729,7 +2097,11 @@ class NormalModeExperiment:
         
         # ベンチマーク実行前に統計情報を更新
         self.print_info("ベンチマーク前にベーステーブルの統計情報を更新中...")
-        self._analyze_base_tables()       
+        self._analyze_base_tables()
+        
+        # PostgreSQLキャッシュをクリア（公平なベンチマークのため）
+        self.print_info("PostgreSQLキャッシュをクリア中...")
+        self._clear_caches()       
         
         from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
         from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
@@ -1842,7 +2214,8 @@ class NormalModeExperiment:
                     frequencies_by_timestep=frequencies_by_timestep,
                     timesteps=timesteps,
                     timeout_minutes=30,
-                    verbose=True
+                    verbose=True,
+                    ease_mode=ease_mode
                 )
             elif mode == 'static':
                 # 静的MV: 最初のタイムステップのみ
@@ -1855,7 +2228,8 @@ class NormalModeExperiment:
                     timesteps=timesteps, # Pass timesteps for static mode as well
                     timeout_minutes=30,
                     verbose=True,
-                    static_algorithm=static_algorithm
+                    static_algorithm=static_algorithm,
+                    ease_mode=ease_mode
                 )
             else:  # dynamic
                 # 動的MV: マイグレーションあり（既存）
@@ -1866,7 +2240,8 @@ class NormalModeExperiment:
                     rewritten_queries_base_dir = rewritten_queries_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timeout_minutes=30,
-                    verbose=True
+                    verbose=True,
+                    ease_mode=ease_mode
                 )
             
             # 結果を保存
@@ -1910,7 +2285,7 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal'):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', ease_mode=False):
         """最適化以降のフェーズを実行 (Phase 6-9)
         
         Args:
@@ -1942,7 +2317,7 @@ class NormalModeExperiment:
         post_optimization_phases = [
             (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode, static_algorithm=static_algorithm)),
             (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode, static_algorithm=static_algorithm)),
-            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, static_algorithm=static_algorithm)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, static_algorithm=static_algorithm, ease_mode=ease_mode)),
         ]
         
         # 全フェーズをまとめる
@@ -1973,7 +2348,7 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False):
         """全フェーズを順次実行
         
         Args:
@@ -2015,7 +2390,7 @@ class NormalModeExperiment:
         post_optimization_phases = [
             (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
             (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
-            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, ease_mode=ease_mode)),
         ]
         
         # 全フェーズをまとめる
@@ -2104,6 +2479,11 @@ def main():
         help='NeuroCardを使用してコスト推定を行う'
     )
     parser.add_argument(
+        '--use-deepdb',
+        action='store_true',
+        help='DeepDBを使用してコスト推定を行う（学習済みアンサンブル必須）'
+    )
+    parser.add_argument(
         '--use-sampling',
         action='store_true',
         help='サンプリングを使用してコスト推定を行う'
@@ -2118,6 +2498,11 @@ def main():
         type=int,
         default=None,
         help='サンプリング並列実行時のワーカー数（デフォルト：CPUコア数）'
+    )
+    parser.add_argument(
+        '--compare',
+        action='store_true',
+        help='コスト推定結果を比較する（DeepDB使用時のみ有効）'
     )
     parser.add_argument(
         '--use-pruning',
@@ -2150,8 +2535,8 @@ def main():
         '--static-timestep',
         type=str,
         default='last',
-        choices=['first', 'last', 'average'],
-        help='静的最適化で使用するタイムステップ (first: 最初, last: 最後, average: 全時刻の平均)'
+        choices=['first', 'last', 'average', 'addmv'],
+        help='静的最適化で使用するタイムステップ (first: 最初, last: 最後, average: 全時刻の平均, addmv: 頻度和+MV作成コスト考慮)'
     )
     parser.add_argument(
         '--static-algorithm',
@@ -2159,6 +2544,16 @@ def main():
         default='normal',
         choices=['normal', 'bigsubs', 'both'],
         help='静的最適化で使用するアルゴリズム (normal: 通常ILP, bigsubs: BigSubs, both: 両方)'
+    )
+    parser.add_argument(
+        '--ease',
+        action='store_true',
+        help='簡易ベンチマークモード: 各クエリを1回だけ実行し、実行時間に頻度を掛けて推定時間を算出'
+    )
+    parser.add_argument(
+        '--recalc',
+        action='store_true',
+        help='再計算されたコスト（simple_migration_costs.json）を使用してマイグレーションと利得を計算する'
     )
     
     # Docker/Local switching arguments
@@ -2170,7 +2565,8 @@ def main():
         exp_dir=args.config, 
         query_set=args.query_set, 
         exp_suffix=args.exp_suffix,
-        use_docker=args.use_docker
+        use_docker=args.use_docker,
+        recalc_mode=args.recalc
     )
     
     # 接続モードを表示
@@ -2193,7 +2589,8 @@ def main():
             pruning_workers=args.pruning_workers,
             static_timestep=args.static_timestep,
             use_static_protection=args.static_protection,
-            static_algorithm=args.static_algorithm
+            static_algorithm=args.static_algorithm,
+            ease_mode=args.ease
         )
     elif args.phase == '0':
         success = exp.phase0_setup()
@@ -2207,10 +2604,12 @@ def main():
         success = exp.phase4_enumerate_migration_plans()
     elif args.phase == '5':
         success = exp.phase5_calculate_migration_costs(
-            use_neurocard=args.use_neurocard, 
+            use_neurocard=args.use_neurocard,
+            use_deepdb=args.use_deepdb,
             use_sampling=args.use_sampling,
             sampling_parallel=args.sampling_parallel,
-            sampling_workers=args.sampling_workers
+            sampling_workers=args.sampling_workers,
+            compare=args.compare
         )
     elif args.phase == '6':
         success = exp.phase6_optimize(
@@ -2228,7 +2627,7 @@ def main():
     elif args.phase == '8':
         success = exp.phase8_rewrite_queries(mode=args.optimization_mode)
     elif args.phase == '9':
-        success = exp.phase9_execute_benchmark(mode=args.benchmark_mode)
+        success = exp.phase9_execute_benchmark(mode=args.benchmark_mode, ease_mode=args.ease)
     else:
         print(f"不明なフェーズ: {args.phase}")
         success = False

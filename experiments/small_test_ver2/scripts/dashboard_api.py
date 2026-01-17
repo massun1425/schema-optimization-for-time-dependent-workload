@@ -78,25 +78,85 @@ async def get_query_sets() -> List[str]:
 
 
 @app.get("/api/subfolders/{query_set}")
-async def get_subfolders(query_set: str) -> List[str]:
-    """クエリセット内のサブフォルダ一覧を取得"""
+async def get_subfolders(query_set: str, path: str = "") -> Dict[str, Any]:
+    """クエリセット内のサブフォルダ一覧を取得（パスベースのナビゲーション）
+    
+    Args:
+        path: 現在のパス（例: "" or "result_sample1"）
+    
+    Returns:
+        {
+            "current_path": 現在のパス,
+            "parent_path": 親パス（戻るボタン用）,
+            "has_results": このフォルダに結果があるか,
+            "folders": [{"name": "...", "path": "...", "has_results": bool, "has_children": bool}, ...]
+        }
+    """
     output_path = OUTPUT_DIR / query_set
     if not output_path.exists():
         raise HTTPException(status_code=404, detail="Query set not found")
     
-    # サブフォルダを取得（jobs, logなどを除外）
     excluded = {'jobs', 'log', 'sin', 'garbage', 'rewritten_static', 'rewritten_static_bigsubs'}
-    subfolders = []
-    for d in output_path.iterdir():
-        if d.is_dir() and not d.name.startswith('.') and d.name not in excluded:
-            # result_*パターンのみ
-            if d.name.startswith('result_'):
-                subfolders.append(d.name)
     
-    # ルートフォルダも選択肢に追加（サブフォルダがある場合）
-    result = ["(root)"] if subfolders else []
-    result.extend(sorted(subfolders, key=natural_sort_key))
-    return result
+    # 現在のパスを解決
+    if path and path != "(root)":
+        current_dir = output_path / path
+        parent_path = "/".join(path.split("/")[:-1]) if "/" in path else "(root)"
+    else:
+        current_dir = output_path
+        parent_path = ""
+        path = "(root)"
+    
+    if not current_dir.exists():
+        raise HTTPException(status_code=404, detail="Path not found")
+    
+    # 現在のフォルダに結果があるか
+    has_results = (
+        any(current_dir.glob("td_mv_optimization_result_*.json")) or
+        any(current_dir.glob("benchmark_results_*.json")) or
+        any(current_dir.glob("static_mv_optimization_result_*.json"))
+    )
+    
+    # サブフォルダを収集
+    folders = []
+    for d in current_dir.iterdir():
+        if not d.is_dir() or d.name.startswith('.') or d.name in excluded:
+            continue
+        if not d.name.startswith('result_'):
+            continue
+        
+        # このフォルダに結果があるか
+        folder_has_results = (
+            any(d.glob("td_mv_optimization_result_*.json")) or
+            any(d.glob("benchmark_results_*.json")) or
+            any(d.glob("static_mv_optimization_result_*.json"))
+        )
+        
+        # サブフォルダがあるか
+        has_children = any(
+            child.is_dir() and child.name.startswith('result_') 
+            for child in d.iterdir() 
+            if not child.name.startswith('.')
+        )
+        
+        folder_path = f"{path}/{d.name}" if path != "(root)" else d.name
+        
+        folders.append({
+            "name": d.name,
+            "path": folder_path,
+            "has_results": folder_has_results,
+            "has_children": has_children
+        })
+    
+    # ソート
+    folders.sort(key=lambda x: natural_sort_key(x['name']))
+    
+    return {
+        "current_path": path,
+        "parent_path": parent_path,
+        "has_results": has_results,
+        "folders": folders
+    }
 
 
 @app.get("/api/result-files/{query_set}")

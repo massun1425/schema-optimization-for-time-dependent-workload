@@ -204,12 +204,34 @@
             <div id="comparison" class="tab-content">
                 <div style="display: flex; gap: 20px; height: 100%;">
                     <!-- 左サイドバー: ファイル選択 -->
-                    <div class="panel" style="width: 300px; display: flex; flex-direction: column;">
+                    <div class="panel" style="width: 350px; display: flex; flex-direction: column;">
                         <h2>比較対象選択</h2>
-                        <div style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 10px;"
+
+                        <!-- フォルダ追加UI -->
+                        <div
+                            style="margin-bottom: 10px; padding: 10px; background: var(--bg-secondary); border-radius: 4px;">
+                            <label style="display: block; margin-bottom: 5px; font-size: 0.9em;">フォルダからファイルを追加:</label>
+                            <select id="comparison-folder-select"
+                                style="width: 100%; padding: 5px; margin-bottom: 5px;"></select>
+                            <select id="comparison-add-file-select"
+                                style="width: 100%; padding: 5px; margin-bottom: 5px;"></select>
+                            <button id="add-comparison-file-btn"
+                                style="width: 100%; padding: 8px; background: var(--accent-green); color: #1e1e2e; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                                ＋ 比較対象に追加
+                            </button>
+                        </div>
+
+                        <div style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 5px;">
+                            選択されたファイル:
+                        </div>
+                        <div style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 4px; padding: 10px; min-height: 150px;"
                             id="comparison-file-list">
                             <!-- JSで生成 -->
                         </div>
+                        <button id="clear-comparison-btn"
+                            style="margin-top: 5px; padding: 5px; background: var(--accent-red); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85em;">
+                            選択をクリア
+                        </button>
                         <button id="update-comparison-btn"
                             style="margin-top: 10px; padding: 10px; background: var(--accent-blue); color: #fff; border: none; border-radius: 4px; cursor: pointer;">比較を更新</button>
                     </div>
@@ -296,7 +318,7 @@
     </div>
 
     <!-- 外部JS読み込み -->
-    <script src="/static/dashboard.js?v=20240106d"></script>
+    <script src="/static/dashboard.js?v=20260116d"></script>
 </body>
 
 </html>

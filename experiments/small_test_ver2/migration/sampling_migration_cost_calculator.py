@@ -13,33 +13,49 @@ class SamplingMigrationCostCalculator:
     """サンプリングを使用してMVのサイズを推定するクラス"""
 
     TARGET_TABLES = [
+        # === Fact Tables (巨大・最重要) ===
         ("cast_info", "ci"),
         ("movie_info", "mi"),
         ("movie_companies", "mc"),
-        ("person_info", "pi"),
         ("movie_keyword", "mk"),
+        ("movie_info_idx", "mi_idx"),
+        ("person_info", "pi"),
+
+        # === Entity Tables (中心となる実体) ===
         ("title", "t"),
-        ("name", "n")
+        ("name", "n"),
+
+        # === Dictionary/Dimension Tables (フィルタ条件の要) ===
+        ("keyword", "k"),
+        ("info_type", "it"),
+        ("company_name", "cn"),
+        ("company_type", "ct"),
+        ("kind_type", "kt"),
+        ("role_type", "rt"),
+        ("char_name", "chn"),
+        ("aka_name", "an"),
     ]
 
-    SAMPLING_RATE = 0.01
+    # 小さいテーブル（数行〜数千行）はサンプリングせず全件使用
+    SMALL_TABLES = {
+        "info_type",      # 113行
+        "kind_type",      # 7行
+        "company_type",   # 4行
+        "role_type",      # 12行
+    }
+
+    SAMPLING_RATE = 0.10
     SCALE_FACTOR = 1.0 / SAMPLING_RATE
     OVERHEAD_MULTIPLIER = 1.2
-    
-    # PostgreSQLのコスト単位に合わせた書き込みコストパラメータ
-    # postgresql.conf のデフォルト値を参考
-    PAGE_SIZE = 8192            # PostgreSQLのページサイズ (8KB)
-    SEQ_PAGE_COST = 1.0         # シーケンシャルページI/Oコスト
-    CPU_TUPLE_COST = 0.01       # タプル処理コスト
-    WRITE_PAGE_COST = 1.0       # 書き込みページコスト（読み取りと同程度と仮定）
 
-    def __init__(self, settings: Settings, query_set: str = "job_like"):
+    def __init__(self, settings: Settings, query_set: str = "job_like", precomputed_costs_file: str = None):
         self.settings = settings
         self.query_set = query_set
         self.json_file_path = Path(__file__).parent.parent / "04_migration" / query_set / "simple_migration_plans.json"
         self.output_dir = self.json_file_path.parent
         self.plans = self._load_plans()
         self.costs = {}
+        self.precomputed_costs_file = precomputed_costs_file
 
     def _load_plans(self) -> Dict[str, Any]:
         with open(self.json_file_path, 'r', encoding='utf-8') as f:
@@ -70,12 +86,18 @@ class SamplingMigrationCostCalculator:
         print("Creating sample tables...")
         for table, _ in self.TARGET_TABLES:
             sample_table = f"sample_{table}"
-            # Check if table exists first to avoid errors on missing tables
-            # But for now assuming tables exist as per original script
-            print(f"  Creating {sample_table} ({self.SAMPLING_RATE * 100}% of {table})...")
+            
+            # 小さいテーブルは100%、それ以外はSAMPLING_RATE
+            if table in self.SMALL_TABLES:
+                rate = 100
+                print(f"  Creating {sample_table} (100% - small table)")
+            else:
+                rate = self.SAMPLING_RATE * 100
+                print(f"  Creating {sample_table} ({rate}% of {table})")
+            
             sql_text = f"""
             DROP TABLE IF EXISTS {sample_table};
-            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({self.SAMPLING_RATE * 100});
+            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate});
             ANALYZE {sample_table};
             """
             if not self._run_sql(conn, sql_text):
@@ -142,13 +164,25 @@ class SamplingMigrationCostCalculator:
         node_costs = {}
         overhead_multiplier = 1.2
         target_tables = [
+            # === Fact Tables ===
             ("cast_info", "ci"),
             ("movie_info", "mi"),
             ("movie_companies", "mc"),
-            ("person_info", "pi"),
             ("movie_keyword", "mk"),
+            ("movie_info_idx", "mi_idx"),
+            ("person_info", "pi"),
+            # === Entity Tables ===
             ("title", "t"),
-            ("name", "n")
+            ("name", "n"),
+            # === Dictionary Tables ===
+            ("keyword", "k"),
+            ("info_type", "it"),
+            ("company_name", "cn"),
+            ("company_type", "ct"),
+            ("kind_type", "kt"),
+            ("role_type", "rt"),
+            ("char_name", "chn"),
+            ("aka_name", "an"),
         ]
         
         try:
@@ -181,6 +215,7 @@ class SamplingMigrationCostCalculator:
                         pass
                     
                     # サンプリングでサイズを推定
+                    size_source = "explain"  # デフォルトはEXPLAIN
                     match = re.search(r"AS\s+(SELECT.*);", sql, re.IGNORECASE | re.DOTALL)
                     if not match:
                         match = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
@@ -217,24 +252,17 @@ class SamplingMigrationCostCalculator:
                                         if rows > 0:
                                             est_rows = int(rows * scale_factor)
                                             est_size = int(size * scale_factor * overhead_multiplier)
+                                            size_source = "sampling"  # サンプリング成功
                             except Exception:
                                 pass
                     
-                    # 書き込みコストをPostgreSQLのコスト単位で計算
-                    # write_cost = (pages * page_cost) + (rows * cpu_tuple_cost)
-                    # サンプリングで得られた est_rows と est_size を使用
-                    estimated_pages = est_size / SamplingMigrationCostCalculator.PAGE_SIZE
-                    write_cost = (estimated_pages * SamplingMigrationCostCalculator.WRITE_PAGE_COST + 
-                                  est_rows * SamplingMigrationCostCalculator.CPU_TUPLE_COST)
-                    total_cost = cost + write_cost
-                    
+                    # EXPLAINのコストをそのまま使用
                     node_costs[plan_key] = {
-                        "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
-                        "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
-                        "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                        "cost": cost,  # EXPLAINコストのみ
                         "rows": est_rows,
                         "width": int(est_size / est_rows) if est_rows > 0 else 0,
-                        "size": est_size
+                        "size": est_size,
+                        "size_source": size_source  # "sampling" or "explain"
                     }
                 else:
                     node_costs[plan_key] = {
@@ -249,7 +277,14 @@ class SamplingMigrationCostCalculator:
         
         return node, node_costs
 
-    def calculate_all_costs(self, use_parallel: bool = True, max_workers: int = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def calculate_all_costs(self, use_parallel: bool = False, max_workers: int = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        if self.precomputed_costs_file:
+            print(f"Using precomputed costs from: {self.precomputed_costs_file}")
+            with open(self.precomputed_costs_file, 'r', encoding='utf-8') as f:
+                self.costs = json.load(f)
+            self.save_costs() # Ensure it's saved to the expected location for downstream phases
+            return self.costs
+
         print("\n" + "="*70)
         print(f"Calculating migration costs using SAMPLING ({'PARALLEL' if use_parallel else 'SEQUENTIAL'})...")
         print("="*70)
@@ -336,6 +371,7 @@ class SamplingMigrationCostCalculator:
                             except Exception:
                                 pass
 
+                            size_source = "explain"  # デフォルトはEXPLAIN
                             if match:
                                 select_query = match.group(1)
                                 rewritten_query, used_table = self._rewrite_query(select_query)
@@ -345,26 +381,20 @@ class SamplingMigrationCostCalculator:
                                     if rows > 0:
                                         est_rows = int(rows * self.SCALE_FACTOR)
                                         est_size = int(size * self.SCALE_FACTOR * self.OVERHEAD_MULTIPLIER)
+                                        size_source = "sampling"  # サンプリング成功
                                         updated_count += 1
                                     else:
                                         skipped_count += 1
                                 else:
                                     skipped_count += 1
                             
-                            # 書き込みコストをPostgreSQLのコスト単位で計算
-                            # サンプリングで得られた est_rows と est_size を使用
-                            estimated_pages = est_size / self.PAGE_SIZE
-                            write_cost = (estimated_pages * self.WRITE_PAGE_COST + 
-                                          est_rows * self.CPU_TUPLE_COST)
-                            total_cost = cost + write_cost
-                            
+                            # EXPLAINのコストをそのまま使用
                             self.costs[node][plan_key] = {
-                                "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
-                                "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
-                                "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                                "cost": cost,  # EXPLAINコストのみ
                                 "rows": est_rows,
                                 "width": int(est_size / est_rows) if est_rows > 0 else 0,
-                                "size": est_size
+                                "size": est_size,
+                                "size_source": size_source  # "sampling" or "explain"
                             }
                         else:
                             self.costs[node][plan_key] = {

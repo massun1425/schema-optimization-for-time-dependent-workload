@@ -4,7 +4,7 @@ let currentResultFile = null;
 let optimizationData = null;
 let staticOptimizationData = null; // 静的最適化データ保持用
 let benchmarkData = null; // ベンチマークデータ保持用
-let comparisonSelectedFiles = new Set(); // 比較用選択ファイル
+let comparisonSelectedFiles = []; // 比較用選択ファイル [{folder: path, file: filename, label: displayName}, ...]
 let selectedMVs = [];
 let rootNodesMap = null; // クエリ名 -> ルートノードID
 let mvSizesMap = null; // MV名 -> サイズ(bytes)
@@ -108,7 +108,7 @@ async function init() {
             }
             // 比較タブ切り替え時
             if (tab.dataset.tab === 'comparison') {
-                renderComparisonFileList();
+                setupComparisonTab();
             }
             // 頻度タブ切り替え時
             if (tab.dataset.tab === 'frequency') {
@@ -119,6 +119,10 @@ async function init() {
 
     // 比較更新ボタン
     document.getElementById('update-comparison-btn').addEventListener('click', updateComparisonCharts);
+    document.getElementById('clear-comparison-btn').addEventListener('click', () => {
+        comparisonSelectedFiles = [];
+        renderComparisonFileList();
+    });
 
     // 頻度タブのイベントハンドラ設定
     setupFrequencyTab();
@@ -143,28 +147,86 @@ function setupSlider(sliderId, valueId, suffix, onChange) {
 async function onQuerySetChange() {
     currentQuerySet = document.getElementById('query-set-select').value;
 
-    // サブフォルダ読み込み
-    const subfolders = await fetchAPI(`/api/subfolders/${currentQuerySet}`);
+    // サブフォルダ読み込み（動的ナビゲーション）
+    await loadSubfolders('');
+}
+
+// 現在のフォルダパス
+let currentFolderPath = '(root)';
+
+// サブフォルダ読み込み
+async function loadSubfolders(path) {
+    const subfolderData = await fetchAPI(`/api/subfolders/${currentQuerySet}?path=${encodeURIComponent(path)}`);
     const subfolderSelect = document.getElementById('subfolder-select');
     subfolderSelect.innerHTML = '';
 
-    if (subfolders.length === 0) {
-        // サブフォルダがない場合は非表示
+    currentFolderPath = subfolderData.current_path;
+
+    // 戻るボタン（ルート以外の場合）
+    if (subfolderData.parent_path !== '') {
+        const backOpt = document.createElement('option');
+        backOpt.value = `__BACK__:${subfolderData.parent_path}`;
+        backOpt.textContent = '⬆️ 上のフォルダへ戻る';
+        subfolderSelect.appendChild(backOpt);
+    }
+
+    // 現在のフォルダに結果がある場合、そのオプションを追加
+    if (subfolderData.has_results) {
+        const currentOpt = document.createElement('option');
+        currentOpt.value = subfolderData.current_path;
+        currentOpt.textContent = `📁 [現在] ${subfolderData.current_path}`;
+        currentOpt.selected = true;
+        subfolderSelect.appendChild(currentOpt);
+    }
+
+    // サブフォルダ一覧
+    subfolderData.folders.forEach(folder => {
+        const opt = document.createElement('option');
+        if (folder.has_children) {
+            // サブフォルダを持つ → ナビゲーション用
+            opt.value = `__NAV__:${folder.path}`;
+            opt.textContent = `📂 ${folder.name} ▶`;
+        } else if (folder.has_results) {
+            // 結果のみ → 選択可能
+            opt.value = folder.path;
+            opt.textContent = `📁 ${folder.name}`;
+        } else {
+            // 結果もサブフォルダもなし → スキップ
+            return;
+        }
+        subfolderSelect.appendChild(opt);
+    });
+
+    // フォルダがない場合
+    if (!subfolderData.has_results && subfolderData.folders.length === 0 && subfolderData.parent_path === '') {
         const opt = document.createElement('option');
         opt.value = '';
         opt.textContent = '(なし)';
         subfolderSelect.appendChild(opt);
-    } else {
-        subfolders.forEach(sf => {
-            const opt = document.createElement('option');
-            opt.value = sf;
-            opt.textContent = sf;
-            subfolderSelect.appendChild(opt);
-        });
     }
 
-    subfolderSelect.addEventListener('change', onSubfolderChange);
-    await onSubfolderChange();
+    // イベントリスナー設定（重複防止のためonを使用）
+    subfolderSelect.onchange = async function () {
+        const val = subfolderSelect.value;
+        if (val.startsWith('__BACK__:')) {
+            // 戻る
+            const parentPath = val.replace('__BACK__:', '');
+            await loadSubfolders(parentPath === '(root)' ? '' : parentPath);
+        } else if (val.startsWith('__NAV__:')) {
+            // サブフォルダへナビゲート
+            const navPath = val.replace('__NAV__:', '');
+            await loadSubfolders(navPath);
+        } else {
+            // 結果フォルダを選択
+            currentFolderPath = val;
+            await onSubfolderChange();
+        }
+    };
+
+    // 結果がある場合は読み込み
+    if (subfolderData.has_results) {
+        await onSubfolderChange();
+    }
 
     // クエリ一覧読み込み
     const queries = await fetchAPI(`/api/queries/${currentQuerySet}`);
@@ -203,7 +265,8 @@ async function onQuerySetChange() {
 
 // サブフォルダ変更
 async function onSubfolderChange() {
-    const subfolder = document.getElementById('subfolder-select').value;
+    // currentFolderPath を使用（loadSubfoldersで設定済み）
+    const subfolder = currentFolderPath === '(root)' ? '' : currentFolderPath;
 
     // 結果ファイル読み込み
     const files = await fetchAPI(`/api/result-files/${currentQuerySet}?subfolder=${encodeURIComponent(subfolder)}`);
@@ -230,10 +293,6 @@ async function onSubfolderChange() {
 
     resultSelect.addEventListener('change', onResultFileChange);
 
-    // 比較リストの更新と選択状態のリセット
-    comparisonSelectedFiles.clear();
-    renderComparisonFileList();
-
     await onResultFileChange();
 }
 
@@ -243,7 +302,7 @@ async function onResultFileChange() {
     currentResultFile = resultSelect.value;
     if (!currentResultFile) return;
 
-    const subfolder = document.getElementById('subfolder-select').value;
+    const subfolder = currentFolderPath === '(root)' ? '' : currentFolderPath;
     const selectedOption = resultSelect.options[resultSelect.selectedIndex];
     const fileType = selectedOption?.dataset?.type || 'dynamic';
 
@@ -811,86 +870,186 @@ function updateBenchmarkChart() {
     Plotly.newPlot('benchmark-line-chart', [traceLine], lineLayout, { responsive: true });
 }
 
-// 比較用ファイルリスト描画
+// 比較タブセットアップ（フォルダ選択など）
+async function setupComparisonTab() {
+    const folderSelect = document.getElementById('comparison-folder-select');
+    const fileSelect = document.getElementById('comparison-add-file-select');
+    const addBtn = document.getElementById('add-comparison-file-btn');
+
+    // フォルダ一覧を読み込み（フラットなリストとして取得）
+    await loadComparisonFolders();
+
+    // フォルダ変更時にファイル一覧を更新
+    folderSelect.onchange = () => loadComparisonFiles();
+
+    // 追加ボタン
+    addBtn.onclick = () => {
+        const folder = folderSelect.value;
+        const file = fileSelect.value;
+        if (!file) return;
+
+        // 重複チェック
+        const exists = comparisonSelectedFiles.some(f => f.folder === folder && f.file === file);
+        if (exists) {
+            alert('このファイルはすでに追加されています');
+            return;
+        }
+
+        const folderDisplay = folder === '(root)' ? '(root)' : folder.split('/').pop();
+        comparisonSelectedFiles.push({
+            folder: folder,
+            file: file,
+            label: `${folderDisplay}/${file.replace('.json', '')}`
+        });
+        renderComparisonFileList();
+    };
+
+    // 初期ファイル一覧読み込み
+    await loadComparisonFiles();
+    renderComparisonFileList();
+}
+
+// 比較用フォルダ一覧を読み込み
+async function loadComparisonFolders() {
+    const folderSelect = document.getElementById('comparison-folder-select');
+    folderSelect.innerHTML = '';
+
+    // APIから再帰的にフォルダを取得する関数
+    async function collectFolders(path, depth = 0) {
+        const data = await fetchAPI(`/api/subfolders/${currentQuerySet}?path=${encodeURIComponent(path)}`);
+        const folders = [];
+
+        // 結果があるフォルダを追加
+        if (data.has_results) {
+            const indent = '　'.repeat(depth);
+            folders.push({
+                value: data.current_path,
+                label: indent + data.current_path
+            });
+        }
+
+        // サブフォルダを再帰処理
+        for (const folder of data.folders) {
+            if (folder.has_results || folder.has_children) {
+                const subFolders = await collectFolders(folder.path, depth + 1);
+                folders.push(...subFolders);
+            }
+        }
+
+        return folders;
+    }
+
+    const allFolders = await collectFolders('');
+
+    allFolders.forEach(f => {
+        const opt = document.createElement('option');
+        opt.value = f.value;
+        opt.textContent = f.label;
+        folderSelect.appendChild(opt);
+    });
+}
+
+// 比較用ファイル一覧を読み込み
+async function loadComparisonFiles() {
+    const folderSelect = document.getElementById('comparison-folder-select');
+    const fileSelect = document.getElementById('comparison-add-file-select');
+    fileSelect.innerHTML = '';
+
+    const folder = folderSelect.value || '(root)';
+    const subfolder = folder === '(root)' ? '' : folder;
+
+    try {
+        const files = await fetchAPI(`/api/result-files/${currentQuerySet}?subfolder=${encodeURIComponent(subfolder)}`);
+
+        // 動的ファイル
+        files.optimization.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[動的] ${f}`;
+            fileSelect.appendChild(opt);
+        });
+
+        // 静的ファイル
+        files.static.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[静的] ${f}`;
+            fileSelect.appendChild(opt);
+        });
+    } catch (e) {
+        console.error('Failed to load comparison files:', e);
+    }
+}
+
+// 比較用ファイルリスト描画（選択済みファイル）
 function renderComparisonFileList() {
     const container = document.getElementById('comparison-file-list');
     container.innerHTML = '';
 
-    const resultSelect = document.getElementById('result-file-select');
-    // result-file-selectのオプションを使用（すでにサブフォルダでフィルタされている前提）
-    if (resultSelect.options.length === 0) {
-        container.textContent = '結果ファイルがありません';
+    if (comparisonSelectedFiles.length === 0) {
+        container.innerHTML = '<span style="color: var(--text-secondary); font-size: 0.9em;">比較対象が選択されていません。<br>上のコントロールからファイルを追加してください。</span>';
         return;
     }
 
-    // 全選択/解除チェックボックス
-    const allLabel = document.createElement('label');
-    allLabel.style.display = 'block';
-    allLabel.style.marginBottom = '8px';
-    allLabel.style.fontWeight = 'bold';
-    allLabel.innerHTML = `<input type="checkbox" id="comparison-select-all"> 全て選択`;
-    container.appendChild(allLabel);
-
-    document.getElementById('comparison-select-all').addEventListener('change', (e) => {
-        const checked = e.target.checked;
-        container.querySelectorAll('.comp-file-checkbox').forEach(cb => {
-            cb.checked = checked;
-            if (checked) comparisonSelectedFiles.add(cb.value);
-            else comparisonSelectedFiles.delete(cb.value);
-        });
-    });
-
-    Array.from(resultSelect.options).forEach(opt => {
+    comparisonSelectedFiles.forEach((item, index) => {
         const div = document.createElement('div');
-        div.style.marginBottom = '4px';
+        div.style.display = 'flex';
+        div.style.alignItems = 'center';
+        div.style.marginBottom = '6px';
+        div.style.padding = '4px 8px';
+        div.style.background = 'var(--bg-tertiary)';
+        div.style.borderRadius = '4px';
 
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'comp-file-checkbox';
-        checkbox.value = opt.value;
-        checkbox.dataset.type = opt.dataset.type; // static or dynamic
-        checkbox.checked = comparisonSelectedFiles.has(opt.value);
+        const label = document.createElement('span');
+        label.style.flex = '1';
+        label.style.fontSize = '0.85em';
+        label.style.wordBreak = 'break-all';
+        label.textContent = item.label;
 
-        checkbox.addEventListener('change', (e) => {
-            if (e.target.checked) comparisonSelectedFiles.add(opt.value);
-            else comparisonSelectedFiles.delete(opt.value);
-        });
-
-        const label = document.createElement('label');
-        label.appendChild(checkbox);
-        label.appendChild(document.createTextNode(' ' + opt.text));
-        label.style.cursor = 'pointer';
-        label.style.fontSize = '0.8em'; // 文字サイズを小さく
-        label.style.wordBreak = 'break-all'; // 長いファイル名を折り返す
+        const removeBtn = document.createElement('button');
+        removeBtn.textContent = '✕';
+        removeBtn.style.marginLeft = '8px';
+        removeBtn.style.padding = '2px 6px';
+        removeBtn.style.background = 'var(--accent-red)';
+        removeBtn.style.color = '#fff';
+        removeBtn.style.border = 'none';
+        removeBtn.style.borderRadius = '3px';
+        removeBtn.style.cursor = 'pointer';
+        removeBtn.onclick = () => {
+            comparisonSelectedFiles.splice(index, 1);
+            renderComparisonFileList();
+        };
 
         div.appendChild(label);
+        div.appendChild(removeBtn);
         container.appendChild(div);
     });
 }
 
 // 比較チャート更新
 async function updateComparisonCharts() {
-    if (comparisonSelectedFiles.size === 0) {
+    if (comparisonSelectedFiles.length === 0) {
         alert('比較するファイルを選択してください');
         return;
     }
 
-    const subfolder = document.getElementById('subfolder-select').value;
-    const files = Array.from(comparisonSelectedFiles);
-
-    // データ並列取得
-    const results = await Promise.all(files.map(async file => {
+    // データ並列取得（各ファイルのフォルダを使用）
+    const results = await Promise.all(comparisonSelectedFiles.map(async item => {
         try {
-            const data = await fetchAPI(`/api/benchmark-result/${currentQuerySet}/${file}?subfolder=${encodeURIComponent(subfolder)}`);
-            return { file, data };
+            const subfolder = item.folder === '(root)' ? '' : item.folder;
+            const data = await fetchAPI(`/api/benchmark-result/${currentQuerySet}/${item.file}?subfolder=${encodeURIComponent(subfolder)}`);
+            return { file: item.file, label: item.label, folder: item.folder, data };
         } catch (e) {
-            console.error(`Failed to fetch ${file}:`, e);
-            return { file, data: null };
+            console.error(`Failed to fetch ${item.file}:`, e);
+            return { file: item.file, label: item.label, folder: item.folder, data: null };
         }
     }));
 
     const validResults = results.filter(r => r.data && r.data.found);
-    if (validResults.length === 0) return;
+    if (validResults.length === 0) {
+        alert('有効な結果が見つかりませんでした');
+        return;
+    }
 
     // カラーパレット
     const colors = [
@@ -898,8 +1057,8 @@ async function updateComparisonCharts() {
         '#f5c2e7', '#94e2d5', '#f9e2af', '#74c7ec', '#b4befe'
     ];
 
-    // ファイル名短縮ヘルパー
-    const shortenName = (name) => name.replace(/benchmark_results_|_opt\.json/g, '').replace(/^dynamic_/, '');
+    // ファイル名短縮ヘルパー（ラベルを使用）
+    const shortenName = (result) => result.label || result.file.replace(/benchmark_results_|_opt\.json/g, '').replace(/^dynamic_/, '');
 
     // 0. サマリーテーブル更新
     const summaryBody = document.querySelector('#comparison-summary-table tbody');
@@ -907,7 +1066,7 @@ async function updateComparisonCharts() {
     validResults.forEach(r => {
         const row = document.createElement('tr');
         row.innerHTML = `
-            <td style="font-weight: bold;">${shortenName(r.file)}</td>
+            <td style="font-weight: bold;">${shortenName(r)}</td>
             <td>${r.data.total_execution_time.toFixed(2)}</td>
             <td>${r.data.total_query_time.toFixed(2)}</td>
             <td>${r.data.total_migration_time.toFixed(2)}</td>
@@ -925,7 +1084,7 @@ async function updateComparisonCharts() {
     const barTraces = [];
     validResults.forEach((r, i) => {
         const color = colors[i % colors.length];
-        const name = shortenName(r.file);
+        const name = shortenName(r);
 
         const queryTimes = sortedTimesteps.map(ts => {
             const tsData = r.data.timesteps.find(d => d.timestep === ts);
@@ -990,7 +1149,7 @@ async function updateComparisonCharts() {
         return {
             x: timesteps,
             y: queryTimes,
-            name: shortenName(r.file),
+            name: shortenName(r),
             type: 'scatter',
             mode: 'lines+markers',
             line: { color: colors[i % colors.length], width: 2 },
@@ -1033,7 +1192,7 @@ async function updateComparisonCharts() {
     if (legendContainer) {
         legendContainer.innerHTML = '';
         validResults.forEach((r, i) => {
-            const methodName = shortenName(r.file);
+            const methodName = shortenName(r);
             const color = colors[i % colors.length];
 
             const item = document.createElement('div');
@@ -1063,7 +1222,7 @@ async function updateComparisonCharts() {
 
     // Trace作成
     const timelineTraces = validResults.map((r, i) => {
-        const methodName = shortenName(r.file);
+        const methodName = shortenName(r);
         const color = colors[i % colors.length];
 
         // 中心(0)からのオフセット計算

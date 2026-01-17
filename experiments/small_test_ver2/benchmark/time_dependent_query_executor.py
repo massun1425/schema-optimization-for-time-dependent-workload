@@ -226,7 +226,8 @@ class TimeDependentQueryExecutor:
         query_files: List[Path],
         frequencies: List[float],
         timeout_minutes: int = 30,
-        verbose: bool = False
+        verbose: bool = False,
+        ease_mode: bool = False
     ) -> Dict:
         """頻度に基づいてクエリを実行
         
@@ -235,6 +236,7 @@ class TimeDependentQueryExecutor:
             frequencies: 各クエリの実行頻度（実行回数）
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
             
         Returns:
             実行結果の辞書
@@ -267,15 +269,15 @@ class TimeDependentQueryExecutor:
                 })
                 continue
             
-            # 頻度分だけクエリを実行
             execution_times = []
             execution_count = int(frequency)
             query_successful = 0
             query_failed = 0
             
-            for exec_idx in range(execution_count):
+            if ease_mode:
+                # 簡易モード: 1回だけ実行し、時間に頻度を掛ける
                 if verbose:
-                    logger.info(f"  [{exec_idx+1}/{execution_count}] Executing {query_file.name}...")
+                    logger.info(f"  [EASE] Executing {query_file.name} (single run, freq={frequency})...")
                 
                 success, elapsed, error = self._execute_query(
                     query_sql, 
@@ -283,34 +285,80 @@ class TimeDependentQueryExecutor:
                     timeout_minutes
                 )
                 
-                execution_times.append(elapsed)
-                total_time += elapsed
-                total_executions += 1
+                # 実測時間と推定時間
+                actual_time = elapsed
+                estimated_total = elapsed * frequency
+                
+                execution_times.append(actual_time)
+                total_time += estimated_total  # 推定時間を合計に加算
+                total_executions += 1  # 実際の実行は1回
                 
                 if success:
-                    query_successful += 1
+                    query_successful = 1
                     successful_executions += 1
                     if verbose:
-                        logger.info(f"    ✓ Success ({elapsed:.2f}s)")
+                        logger.info(f"    ✓ Success (actual: {actual_time:.2f}s, estimated: {estimated_total:.2f}s)")
                 else:
-                    query_failed += 1
+                    query_failed = 1
                     failed_executions += 1
                     if verbose:
-                        logger.warning(f"    ✗ Failed ({elapsed:.2f}s): {error}")
-            
-            # クエリごとの集計
-            avg_time = sum(execution_times) / len(execution_times) if execution_times else 0.0
-            results.append({
-                'query_id': query_file.stem,
-                'frequency': frequency,
-                'executions': execution_count,
-                'successful': query_successful,
-                'failed': query_failed,
-                'total_time': round(sum(execution_times), 5),
-                'avg_time': round(avg_time, 5),
-                'min_time': round(min(execution_times), 5) if execution_times else 0,
-                'max_time': round(max(execution_times), 5) if execution_times else 0,
-            })
+                        logger.warning(f"    ✗ Failed ({actual_time:.2f}s): {error}")
+                
+                # 結果記録
+                results.append({
+                    'query_id': query_file.stem,
+                    'frequency': frequency,
+                    'executions': 1,  # 実際の実行回数
+                    'estimated_executions': execution_count,  # 頻度として期待される回数
+                    'successful': query_successful,
+                    'failed': query_failed,
+                    'actual_time': round(actual_time, 5),
+                    'total_time': round(estimated_total, 5),  # 推定合計時間
+                    'avg_time': round(actual_time, 5),
+                    'min_time': round(actual_time, 5),
+                    'max_time': round(actual_time, 5),
+                    'ease_mode': True
+                })
+            else:
+                # 通常モード: 頻度分だけクエリを実行
+                for exec_idx in range(execution_count):
+                    if verbose:
+                        logger.info(f"  [{exec_idx+1}/{execution_count}] Executing {query_file.name}...")
+                    
+                    success, elapsed, error = self._execute_query(
+                        query_sql, 
+                        query_file.name, 
+                        timeout_minutes
+                    )
+                    
+                    execution_times.append(elapsed)
+                    total_time += elapsed
+                    total_executions += 1
+                    
+                    if success:
+                        query_successful += 1
+                        successful_executions += 1
+                        if verbose:
+                            logger.info(f"    ✓ Success ({elapsed:.2f}s)")
+                    else:
+                        query_failed += 1
+                        failed_executions += 1
+                        if verbose:
+                            logger.warning(f"    ✗ Failed ({elapsed:.2f}s): {error}")
+                
+                # クエリごとの集計
+                avg_time = sum(execution_times) / len(execution_times) if execution_times else 0.0
+                results.append({
+                    'query_id': query_file.stem,
+                    'frequency': frequency,
+                    'executions': execution_count,
+                    'successful': query_successful,
+                    'failed': query_failed,
+                    'total_time': round(sum(execution_times), 5),
+                    'avg_time': round(avg_time, 5),
+                    'min_time': round(min(execution_times), 5) if execution_times else 0,
+                    'max_time': round(max(execution_times), 5) if execution_times else 0,
+                })
         
         return {
             'queries': results,
@@ -318,6 +366,7 @@ class TimeDependentQueryExecutor:
             'successful_executions': successful_executions,
             'failed_executions': failed_executions,
             'total_time': round(total_time, 5),
+            'ease_mode': ease_mode
         }
     
     def _cleanup_existing_mvs(self) -> Tuple[bool, int]:
@@ -376,7 +425,8 @@ class TimeDependentQueryExecutor:
         rewritten_queries_base_dir: Path,
         frequencies_by_timestep: Dict[str, List[float]],
         timeout_minutes: int = 30,
-        verbose: bool = False
+        verbose: bool = False,
+        ease_mode: bool = False
     ) -> Dict:
         """時間依存型ベンチマークを実行
         
@@ -387,6 +437,7 @@ class TimeDependentQueryExecutor:
             frequencies_by_timestep: タイムステップごとの頻度情報
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
             
         Returns:
             ベンチマーク結果の辞書
@@ -507,12 +558,16 @@ class TimeDependentQueryExecutor:
                 query_files_for_timestep,
                 frequencies,
                 timeout_minutes,
-                verbose
+                verbose,
+                ease_mode
             )
             
             total_query_time += query_results['total_time']
             
-            timestep_elapsed = time.time() - timestep_start
+            if ease_mode:
+                timestep_elapsed = migration_time + query_results['total_time']
+            else:
+                timestep_elapsed = time.time() - timestep_start
             
             # タイムステップごとの結果を保存
             timestep_result = {
@@ -537,7 +592,10 @@ class TimeDependentQueryExecutor:
             logger.info(f"  Query time: {query_results['total_time']:.2f}s")
             logger.info(f"  Total timestep time: {timestep_elapsed:.2f}s")
         
-        benchmark_elapsed = time.time() - benchmark_start
+        if ease_mode:
+            benchmark_elapsed = total_migration_time + total_query_time
+        else:
+            benchmark_elapsed = time.time() - benchmark_start
         
         # 全体サマリー
         logger.info(f"\n{'='*60}")
@@ -565,7 +623,8 @@ class TimeDependentQueryExecutor:
         frequencies_by_timestep: Dict[str, List[float]],
         timesteps: List[str],
         timeout_minutes: int = 30,
-        verbose: bool = False
+        verbose: bool = False,
+        ease_mode: bool = False
     ) -> Dict:
         """ベースライン: MVなしでクエリを実行
         
@@ -575,6 +634,7 @@ class TimeDependentQueryExecutor:
             timesteps: タイムステップのリスト
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
             
         Returns:
             ベンチマーク結果の辞書
@@ -613,12 +673,16 @@ class TimeDependentQueryExecutor:
                 query_files,
                 frequencies,
                 timeout_minutes,
-                verbose
+                verbose,
+                ease_mode
             )
             
             total_query_time += query_results['total_time']
             
-            timestep_elapsed = time.time() - timestep_start
+            if ease_mode:
+                timestep_elapsed = query_results['total_time']
+            else:
+                timestep_elapsed = time.time() - timestep_start
             
             timestep_result = {
                 'timestep': timestep_name,
@@ -634,7 +698,10 @@ class TimeDependentQueryExecutor:
             logger.info(f"  Query time: {query_results['total_time']:.2f}s")
             logger.info(f"  Total timestep time: {timestep_elapsed:.2f}s")
         
-        benchmark_elapsed = time.time() - benchmark_start
+        if ease_mode:
+            benchmark_elapsed = total_query_time
+        else:
+            benchmark_elapsed = time.time() - benchmark_start
         
         logger.info(f"\n{'='*60}")
         logger.info("Baseline Benchmark Summary:")
@@ -663,7 +730,8 @@ class TimeDependentQueryExecutor:
         timesteps: List[str] = None,
         timeout_minutes: int = 30,
         verbose: bool = False,
-        static_algorithm: str = 'normal'
+        static_algorithm: str = 'normal',
+        ease_mode: bool = False
     ) -> Dict:
         """静的MV: 最初のタイムステップでMVを作成し、マイグレーションなしで実行
         
@@ -675,6 +743,7 @@ class TimeDependentQueryExecutor:
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
             static_algorithm: 使用するアルゴリズム ('normal' or 'bigsubs')
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
             
         Returns:
             ベンチマーク結果の辞書
@@ -783,12 +852,16 @@ class TimeDependentQueryExecutor:
                 static_query_files,  # 常に最初のタイムステップのクエリを使用
                 frequencies,
                 timeout_minutes,
-                verbose
+                verbose,
+                ease_mode
             )
             
             total_query_time += query_results['total_time']
             
-            timestep_elapsed = time.time() - timestep_start
+            if ease_mode:
+                timestep_elapsed = query_results['total_time']
+            else:
+                timestep_elapsed = time.time() - timestep_start
             
             timestep_result = {
                 'timestep': timestep_name,
@@ -804,7 +877,10 @@ class TimeDependentQueryExecutor:
             logger.info(f"  Query time: {query_results['total_time']:.2f}s")
             logger.info(f"  Total timestep time: {timestep_elapsed:.2f}s")
         
-        benchmark_elapsed = time.time() - benchmark_start
+        if ease_mode:
+            benchmark_elapsed = total_query_time + initial_mv_creation_time
+        else:
+            benchmark_elapsed = time.time() - benchmark_start
         
         logger.info(f"\n{'='*60}")
         logger.info("Static MV Benchmark Summary:")
