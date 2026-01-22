@@ -44,8 +44,8 @@ class LocalILPOptimizer:
         fixed_mvs_by_timestep: Dict[int, Set[int]] = None,
         candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
         gurobi_output: int = 0,
-        use_solution_pool: bool = True,  # Solution Pool機能を使用するか
-        pool_solutions: int = 20,  # 保持する解の個数
+        use_solution_pool: bool = False,  # Solution Pool機能を使用するか
+        pool_solutions: int = 10,  # 保持する解の個数
         pool_gap: float = 0.001,  # 許容する相対ギャップ（0.1%）
     ) -> None:
         """Initialize the local ILP optimizer.

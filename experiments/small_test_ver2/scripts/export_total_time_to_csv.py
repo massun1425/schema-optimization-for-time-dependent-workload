@@ -182,7 +182,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_500M_1')
+        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_500M_originalcost_10')
         output_filename = 'total_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])
@@ -243,27 +243,27 @@ def main():
     }
 
     file_patterns6 = {
-        'static_16_1_5': 'benchmark_results_static_16_1_5.json',
-        'dynamic_16_1_5': 'benchmark_results_dynamic_16_1_5.json',
-        'dynamic_16_1_5p': 'benchmark_results_dynamic_16_1_5p.json',
-        'static_16_2_5': 'benchmark_results_static_16_2_5.json',
-        'dynamic_16_2_5': 'benchmark_results_dynamic_16_2_5.json',
-        'dynamic_16_2_5p': 'benchmark_results_dynamic_16_2_5p.json',
-        'static_16_3_5': 'benchmark_results_static_16_3_5.json',
-        'dynamic_16_3_5': 'benchmark_results_dynamic_16_3_5.json',
-        'dynamic_16_3_5p': 'benchmark_results_dynamic_16_3_5p.json',
+        'static_16_1': 'benchmark_results_static_16_1.json',
+        'dynamic_16_1': 'benchmark_results_dynamic_16_1.json',
+        'dynamic_16_1p': 'benchmark_results_dynamic_16_1p.json',
+        'static_16_2': 'benchmark_results_static_16_2.json',
+        'dynamic_16_2': 'benchmark_results_dynamic_16_2.json',
+        'dynamic_16_2p': 'benchmark_results_dynamic_16_2p.json',
+        'static_16_3': 'benchmark_results_static_16_3.json',
+        'dynamic_16_3': 'benchmark_results_dynamic_16_3.json',
+        'dynamic_16_3p': 'benchmark_results_dynamic_16_3p.json',
     }
 
     file_patterns7 = {
-        'static_16_1_opt': 'benchmark_results_static_16_1_opt.json',
-        'dynamic_16_1_opt': 'benchmark_results_dynamic_16_1_opt.json',
-        'dynamic_16_1_optp': 'benchmark_results_dynamic_16_1_optp.json',
-        'static_16_2_opt': 'benchmark_results_static_16_2_opt.json',
-        'dynamic_16_2_opt': 'benchmark_results_dynamic_16_2_opt.json',
-        'dynamic_16_2_optp': 'benchmark_results_dynamic_16_2_optp.json',
-        'static_16_3_opt': 'benchmark_results_static_16_3_opt.json',
-        'dynamic_16_3_opt': 'benchmark_results_dynamic_16_3_opt.json',
-        'dynamic_16_3_optp': 'benchmark_results_dynamic_16_3_optp.json',
+        'static_16_1_10': 'benchmark_results_static_16_1_10.json',
+        'dynamic_16_1_10': 'benchmark_results_dynamic_16_1_10.json',
+        'dynamic_16_1_10p': 'benchmark_results_dynamic_16_1_10p.json',
+        'static_16_2_10': 'benchmark_results_static_16_2_10.json',
+        'dynamic_16_2_10': 'benchmark_results_dynamic_16_2_10.json',
+        'dynamic_16_2_10p': 'benchmark_results_dynamic_16_2_10p.json',
+        'static_16_3_10': 'benchmark_results_static_16_3_10.json',
+        'dynamic_16_3_10': 'benchmark_results_dynamic_16_3_10.json',
+        'dynamic_16_3_10p': 'benchmark_results_dynamic_16_3_10p.json',
     }
 
     file_patterns8 = {
@@ -279,7 +279,7 @@ def main():
     }
     
     # CSVをエクスポート（file_patterns6を使用）
-    success = export_total_time_to_csv(result_dir, output_file, file_patterns8)
+    success = export_total_time_to_csv(result_dir, output_file, file_patterns7)
     
     sys.exit(0 if success else 1)
 

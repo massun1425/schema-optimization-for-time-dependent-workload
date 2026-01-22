@@ -550,17 +550,20 @@ async def get_mv_costs_query(query_set: str, query_name: str) -> Dict[str, float
 
 @app.get("/api/subquery-costs/{query_set}")
 async def get_subquery_costs(query_set: str) -> Dict[str, float]:
-    """pickleファイルからsubquery_costsを取得（MV選択ページの利得表示用）"""
-    qp = _load_query_parser(query_set)
-    if qp is None:
+    """simple_migration_costs.jsonからcostを取得（MV選択ページの利得表示用）"""
+    filepath = MIGRATION_DIR / query_set / "simple_migration_costs.json"
+    if not filepath.exists():
         return {}
     
     try:
-        # qp.qm.subquery_costs から取得
-        subquery_costs = getattr(qp.qm, 'subquery_costs', None)
-        if subquery_costs is None:
-            return {}
-        return {str(k): float(v) for k, v in subquery_costs.items()}
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        result = {}
+        for mv_name, info in data.items():
+            if "[]" in info:
+                result[mv_name] = info["[]"].get("cost", 0)
+        return result
     except Exception as e:
         print(f"Error loading subquery_costs: {e}")
         return {}
