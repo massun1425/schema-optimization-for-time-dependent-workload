@@ -187,11 +187,11 @@ class NormalModeExperiment:
             with conn.cursor() as cursor:
                 # 統計情報のターゲットを引き上げる（デフォルト100 -> 1000）
                 # これによりヒストグラムの粒度が上がり、JOBのような偏ったデータの推定精度が向上する
-                try:
-                    cursor.execute("SET default_statistics_target = 1000;")
-                    self.print_info("統計情報のターゲットを1000に設定しました")
-                except Exception as e:
-                    self.print_info(f"統計情報のターゲット設定に失敗（デフォルトを使用）: {e}")
+                # try:
+                #     cursor.execute("SET default_statistics_target = 1000;")
+                #     self.print_info("統計情報のターゲットを1000に設定しました")
+                # except Exception as e:
+                #     self.print_info(f"統計情報のターゲット設定に失敗（デフォルトを使用）: {e}")
                 
                 for table in base_tables:
                     try:
@@ -222,8 +222,8 @@ class NormalModeExperiment:
             
         from experiments.small_test_ver2.core.io_loaders import load_full_build_costs_and_sizes
         
-        self.print_info("RECALC MODE: u_ij（利得）を再計算コストで上書き中...")
-        migration_cost, b_j = load_full_build_costs_and_sizes(
+        self.print_info("RECALC MODE: u_ij（利得）を utility で上書き中...")
+        migration_cost, utilities, b_j = load_full_build_costs_and_sizes(
             str(self.exp_dir), 
             self.qp.node_list, 
             self.query_set
@@ -234,13 +234,13 @@ class NormalModeExperiment:
             for j in range(len(self.qp.u_ij[i])):
                 # 既存の構造（使用関係）がある場所のみ更新
                 if self.qp.u_ij[i][j] > 0:
-                    # migration_cost keys are integer indices matching j
-                    if j in migration_cost:
-                        self.qp.u_ij[i][j] = migration_cost[j]
+                    # utilities を使って利得を更新（migration_cost ではなく）
+                    if j in utilities:
+                        self.qp.u_ij[i][j] = utilities[j]
                         updated_count += 1
                         
         self.print_success(f"  {updated_count}箇所の利得エントリを更新しました")
-        return migration_cost, b_j
+        return migration_cost, b_j  # migration_cost はそのまま返す（作成コスト用）
     
     def _clear_caches(self):
         """PostgreSQLのキャッシュをクリア
@@ -952,7 +952,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(1024*1024*1024)
+            B_max = float(2*1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -981,7 +981,7 @@ class NormalModeExperiment:
             
             if migration_cost is None:
                 # 通常モード：サイズとコストを読み込む
-                migration_cost, b_j_from_migration = load_full_build_costs_and_sizes(
+                migration_cost, _, b_j_from_migration = load_full_build_costs_and_sizes(
                     str(self.exp_dir), 
                     self.qp.node_list, 
                     self.query_set
@@ -1281,7 +1281,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(1024*1024*1024)
+            B_max = float(2*1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1363,7 +1363,7 @@ class NormalModeExperiment:
                 weighted_u_ij.append(weighted_row)
             
             # サイズデータの読み込み（MV作成コストはsubquery_costsを使用するためcreation_costsは不要）
-            _, b_j_from_migration = load_full_build_costs_and_sizes(
+            _, _, b_j_from_migration = load_full_build_costs_and_sizes(
                 str(self.exp_dir), 
                 self.qp.node_list, 
                 self.query_set

@@ -354,9 +354,9 @@ def load_full_build_costs_and_sizes(
     base_dir: str,
     node_list: List[str],
     query_set: str = "job"
-) -> Tuple[Dict[int, float], List[float]]:
+) -> Tuple[Dict[int, float], Dict[int, float], List[float]]:
     """
-    simple_migration_costs.jsonから[]レシピ(フルビルド)のコストとサイズのみを読み込む。
+    simple_migration_costs.jsonから[]レシピ(フルビルド)のコスト、利得、サイズを読み込む。
     
     簡略化版最適化では依存レシピを使用しないため、
     フルビルド（空の依存関係 '[]'）のデータのみが必要。
@@ -368,8 +368,9 @@ def load_full_build_costs_and_sizes(
         query_set: クエリセット名 (e.g., "job", "job_like")
     
     Returns:
-        Tuple of (migration_costs, sizes)
-        - migration_costs: Dict[int, float] - {j: フルビルドコスト}
+        Tuple of (migration_costs, utilities, sizes)
+        - migration_costs: Dict[int, float] - {j: 作成コスト（読み取り+書き込み）}
+        - utilities: Dict[int, float] - {j: 利得（読み取りコストのみ）}
         - sizes: List[float] - 各MVのサイズ (インデックスj)
     """
     path = os.path.join(base_dir, "04_migration", query_set, "simple_migration_costs.json")
@@ -382,6 +383,7 @@ def load_full_build_costs_and_sizes(
     
     idx = {node_id: j for j, node_id in enumerate(node_list)}
     migration_costs: Dict[int, float] = {}
+    utilities: Dict[int, float] = {}
     sizes = [1.0] * len(node_list)
     
     for node_id, recipes in raw.items():
@@ -394,13 +396,16 @@ def load_full_build_costs_and_sizes(
         full_build = recipes.get("[]")
         if full_build and isinstance(full_build, dict):
             migration_costs[j] = float(full_build.get("cost", 0.0))
+            # utility があればそれを使用、なければ cost にフォールバック（後方互換性）
+            utilities[j] = float(full_build.get("utility", full_build.get("cost", 0.0)))
             sizes[j] = float(full_build.get("size", 1.0))
         else:
             logger.warning(f"Node {node_id} has no valid full-build recipe")
             migration_costs[j] = float("inf")
+            utilities[j] = float("inf")
     
-    logger.info(f"Loaded {len(migration_costs)} full-build costs")
+    logger.info(f"Loaded {len(migration_costs)} full-build costs and utilities")
     logger.info(f"Size range: min={min(sizes):.2f}, max={max(sizes):.2f}, avg={sum(sizes)/len(sizes):.2f}")
     
-    return migration_costs, sizes
+    return migration_costs, utilities, sizes
 

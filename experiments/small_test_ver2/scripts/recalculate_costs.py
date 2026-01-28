@@ -34,6 +34,37 @@ CPU_TUPLE_COST = 0.01
 CPU_INDEX_TUPLE_COST = 0.005
 CPU_OPERATOR_COST = 0.0025
 
+# Large table penalty for Index Scan (non-clustered index causes random I/O)
+# Tables larger than this threshold get a penalty on Index Scan cost
+LARGE_TABLE_THRESHOLD = 100 * 1024 * 1024  # 100MB
+LARGE_TABLE_INDEX_PENALTY = 2.0  # 2x penalty for unclustered random I/O
+
+# Table information from database (rows and size in bytes)
+# Used for calculating actual scan costs for leaf nodes
+TABLE_INFO = {
+    "cast_info": {"rows": 36244344, "size": 2070282240},
+    "movie_info": {"rows": 14835720, "size": 1324220416},
+    "movie_keyword": {"rows": 4523930, "size": 200540160},
+    "name": {"rows": 4167491, "size": 455933952},
+    "char_name": {"rows": 3140423, "size": 298582016},
+    "person_info": {"rows": 2963664, "size": 418447360},
+    "movie_companies": {"rows": 2609129, "size": 154206208},
+    "title": {"rows": 2528312, "size": 294977536},
+    "movie_info_idx": {"rows": 1380035, "size": 65273856},
+    "aka_name": {"rows": 901343, "size": 93519872},
+    "aka_title": {"rows": 361472, "size": 51052544},
+    "company_name": {"rows": 234997, "size": 24903680},
+    "complete_cast": {"rows": 135086, "size": 6029312},
+    "keyword": {"rows": 134170, "size": 8257536},
+    "movie_link": {"rows": 29997, "size": 1335296},
+    "info_type": {"rows": 113, "size": 8192},
+    "link_type": {"rows": 18, "size": 8192},
+    "role_type": {"rows": 12, "size": 8192},
+    "kind_type": {"rows": 7, "size": 8192},
+    "company_type": {"rows": 4, "size": 8192},
+    "comp_cast_type": {"rows": 4, "size": 8192},
+}
+
 
 def load_pickle(pickle_path: Path):
     """Load QueryParser object from pickle file."""
@@ -96,7 +127,11 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     Recursively calculate cost for a node using C-Store style model.
     
     Returns:
-        Tuple of (total_cost, output_rows)
+        Tuple of (exec_cost, creation_cost, utility, output_rows)
+        - exec_cost: 実行コスト（このサブクエリを実行するのにかかるコスト）
+        - creation_cost: MV作成コスト（実行コスト + 書き込みコスト）
+        - utility: 純利得（実行コスト - MV読み取りコスト）
+        - output_rows: 出力行数
     """
     # Memoization: avoid recalculating the same node
     if node_id in memo:
@@ -104,12 +139,12 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     
     # Get node properties
     operator = get_operator(qm, node_id)
-    rows = get_rows_from_migration_costs(migration_costs, node_id)
+    output_rows = get_rows_from_migration_costs(migration_costs, node_id)
     width = get_width_from_migration_costs(migration_costs, node_id)
     
     # Fallback to pickle data if not in migration_costs
-    if rows == 0 and hasattr(qm, 'subquery_rows') and node_id in qm.subquery_rows:
-        rows = qm.subquery_rows[node_id]
+    if output_rows == 0 and hasattr(qm, 'subquery_rows') and node_id in qm.subquery_rows:
+        output_rows = qm.subquery_rows[node_id]
     if width == 0 and hasattr(qm, 'subquery_widths') and node_id in qm.subquery_widths:
         width = qm.subquery_widths[node_id]
     
@@ -117,74 +152,90 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     
     # --- Leaf Node ---
     if not children:
-        # Calculate I/O cost
-        size_bytes = rows * width
-        pages = math.ceil(size_bytes / BLOCK_SIZE) if size_bytes > 0 else 0
+        # Get table name for this leaf node
+        table_name = None
+        if node_id in qm.leaf_nodes_map_r:
+            _, table_name, _, _ = qm.leaf_nodes_map_r[node_id]
         
-        if 'Index' in operator and 'Scan' in operator:
-            # Index Scan: random I/O
-            cost = (rows * RANDOM_PAGE_COST) + (rows * CPU_INDEX_TUPLE_COST)
+        # Get table size from TABLE_INFO (input size for scan)
+        if table_name and table_name in TABLE_INFO:
+            input_rows = TABLE_INFO[table_name]["rows"]
+            input_size = TABLE_INFO[table_name]["size"]
+            input_pages = math.ceil(input_size / BLOCK_SIZE) if input_size > 0 else 0
         else:
-            # Seq Scan: sequential I/O
-            cost = (pages * SEQ_PAGE_COST) + (rows * CPU_TUPLE_COST)
+            # Fallback: use output rows as input (no filter case)
+            input_rows = output_rows
+            input_size = output_rows * width
+            input_pages = math.ceil(input_size / BLOCK_SIZE) if input_size > 0 else 0
         
-        memo[node_id] = (cost, rows)
-        return cost, rows
+        # Execution cost = cost to scan the TABLE (not output)
+        if 'Index' in operator and 'Scan' in operator:
+            # Index Scan: random I/O for matching rows only
+            # Apply penalty for large tables (non-clustered index causes cache misses)
+            penalty = LARGE_TABLE_INDEX_PENALTY if input_size > LARGE_TABLE_THRESHOLD else 1.0
+            exec_cost = (output_rows * RANDOM_PAGE_COST * penalty) + (output_rows * CPU_INDEX_TUPLE_COST)
+        else:
+            # Seq Scan: scan full table + filter
+            exec_cost = (input_pages * SEQ_PAGE_COST) + (input_rows * CPU_TUPLE_COST)
+        
+        # Output size (for MV)
+        output_size = output_rows * width
+        output_pages = math.ceil(output_size / BLOCK_SIZE) if output_size > 0 else 0
+        
+        # Write cost for MV creation
+        write_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
+        creation_cost = exec_cost + write_cost
+        
+        # MV read cost (cost to read the MV)
+        mv_read_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
+        
+        # Net utility = execution cost - MV read cost
+        utility = max(0, exec_cost - mv_read_cost)
+        
+        memo[node_id] = (exec_cost, creation_cost, utility, output_rows)
+        return exec_cost, creation_cost, utility, output_rows
     
     # --- Non-Leaf Node ---
     # Recursively calculate children costs
-    children_costs = []
+    children_exec_costs = []  # execution costs (for cost propagation)
     children_rows = []
     
     for child_id in children:
-        c_cost, c_rows = calculate_node_cost(qm, child_id, migration_costs, memo)
-        children_costs.append(c_cost)
+        c_exec, c_creation, c_utility, c_rows = calculate_node_cost(qm, child_id, migration_costs, memo)
+        children_exec_costs.append(c_exec)
         children_rows.append(c_rows)
     
     input_rows_sum = sum(children_rows)
-    total_cost = 0.0
+    exec_cost = 0.0
     
     # Cost calculation based on operator type
     if operator == 'Nested Loop':
         # children[0]: Outer (駆動表), children[1]: Inner (内部表)
-        if len(children_costs) >= 2:
-            outer_cost = children_costs[0]
-            inner_cost = children_costs[1]
+        if len(children_exec_costs) >= 2:
+            outer_exec = children_exec_costs[0]
+            inner_exec = children_exec_costs[1]
             outer_rows = children_rows[0] if children_rows[0] > 0 else 1
             
-            # 内側のノードタイプを確認（pickle経由）
+            # 内側のノードタイプを確認
             inner_child_id = children[1] if len(children) >= 2 else None
             inner_type = get_operator(qm, inner_child_id) if inner_child_id else "Unknown"
             
             # ★ Materialize戦略 ★
-            
-            # ケースA: 内側がインデックススキャン (Index NLJ)
-            # 外側の1行ごとに、インデックスを引きに行くコストがかかる
             if 'Index' in inner_type and 'Scan' in inner_type:
-                # ランダムアクセス(4.0) + CPU処理(0.005)
-                # ※ ここで inner_cost (総コスト) を足さないのがポイント（毎回引くから）
+                # Index NLJ: 外側の1行ごとにインデックスアクセス
                 loop_cost_per_row = RANDOM_PAGE_COST + CPU_INDEX_TUPLE_COST
-                
-                # Cost = 外側コスト + (外側行数 × 1回のインデックスアクセス)
-                total_cost = outer_cost + (outer_rows * loop_cost_per_row) + (rows * CPU_TUPLE_COST)
-
-            # ケースB: それ以外 (Materialized NLJ)
-            # 内側を一回全部作ってメモリに置く(inner_cost)。あとは外側行数分、メモリを読むだけ。
+                exec_cost = outer_exec + (outer_rows * loop_cost_per_row) + (output_rows * CPU_TUPLE_COST)
             else:
-                # メモリ読み出し(0.01) ※非常に軽い
+                # Materialized NLJ: 内側を1回構築、あとはメモリ読み出し
                 loop_cost_per_row = CPU_TUPLE_COST
-                
-                # Cost = 外側コスト + 内側構築コスト(1回分) + (外側行数 × メモリ読み出し)
-                total_cost = outer_cost + inner_cost + (outer_rows * loop_cost_per_row) + (rows * CPU_TUPLE_COST)
-
+                exec_cost = outer_exec + inner_exec + (outer_rows * loop_cost_per_row) + (output_rows * CPU_TUPLE_COST)
         else:
-            total_cost = sum(children_costs) + (rows * CPU_TUPLE_COST)
+            exec_cost = sum(children_exec_costs) + (output_rows * CPU_TUPLE_COST)
     
     elif operator in ('Hash Join', 'Merge Join'):
         # Hash/Merge Join: additive cost
-        # Cost = OuterCost + InnerCost + (OuterRows + InnerRows) * OpCost
         my_cost = input_rows_sum * CPU_OPERATOR_COST
-        total_cost = sum(children_costs) + my_cost
+        exec_cost = sum(children_exec_costs) + my_cost
     
     elif operator == 'Sort':
         # Sort: N log N
@@ -192,19 +243,31 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
             my_cost = input_rows_sum * math.log(input_rows_sum, 2) * CPU_OPERATOR_COST
         else:
             my_cost = input_rows_sum * CPU_OPERATOR_COST
-        total_cost = sum(children_costs) + my_cost
+        exec_cost = sum(children_exec_costs) + my_cost
     
     elif operator == 'Aggregate':
         my_cost = input_rows_sum * CPU_OPERATOR_COST
-        total_cost = sum(children_costs) + my_cost
+        exec_cost = sum(children_exec_costs) + my_cost
     
     else:
         # Default: sum children costs + pass-through cost
         my_cost = input_rows_sum * CPU_TUPLE_COST
-        total_cost = sum(children_costs) + my_cost
+        exec_cost = sum(children_exec_costs) + my_cost
     
-    memo[node_id] = (total_cost, rows)
-    return total_cost, rows
+    # Calculate write cost for MV creation
+    output_size = output_rows * width
+    output_pages = math.ceil(output_size / BLOCK_SIZE) if output_size > 0 else 0
+    write_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
+    creation_cost = exec_cost + write_cost
+    
+    # MV read cost
+    mv_read_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
+    
+    # Net utility = execution cost - MV read cost
+    utility = max(0, exec_cost - mv_read_cost)
+    
+    memo[node_id] = (exec_cost, creation_cost, utility, output_rows)
+    return exec_cost, creation_cost, utility, output_rows
 
 
 def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path: Path):
@@ -236,15 +299,16 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
         if node_id not in migration_costs:
             continue
         
-        # Calculate cost using recursive method
-        total_cost, output_rows = calculate_node_cost(qm, node_id, migration_costs, memo)
+        # Calculate cost using recursive method (now returns 4 values)
+        exec_cost, creation_cost, utility, output_rows = calculate_node_cost(qm, node_id, migration_costs, memo)
         
         # Update the JSON data
         if "[]" in migration_costs[node_id]:
-            old_cost = migration_costs[node_id]["[]"].get("cost", 0)
-            migration_costs[node_id]["[]"]["cost"] = round(total_cost, 2)
+            migration_costs[node_id]["[]"]["cost"] = round(creation_cost, 2)  # 作成コスト
+            migration_costs[node_id]["[]"]["utility"] = round(utility, 2)  # 利得
+            migration_costs[node_id]["[]"]["exec_cost"] = round(exec_cost, 2)  # 実行コスト（デバッグ用）
             migration_costs[node_id]["[]"]["recalculated"] = True
-            migration_costs[node_id]["[]"]["calc_method"] = "pickle_recursive"
+            migration_costs[node_id]["[]"]["calc_method"] = "pickle_recursive_v2"
             updated_count += 1
     
     print(f"Updated {updated_count} nodes.")
@@ -275,7 +339,7 @@ def main():
     # Paths
     base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2")
     pickle_path = base_dir / "03_parsed" / args.query_set / "qp_class.pkl"
-    json_input_path = base_dir / "04_migration" / args.query_set / "simple_migration_costs.json"
+    json_input_path = base_dir / "04_migration" / args.query_set / "simple_migration_costs_10.json"
     
     if args.overwrite:
         json_output_path = json_input_path

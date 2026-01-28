@@ -39,9 +39,9 @@ class DeepDBMigrationCostCalculator:
         deepdb: DeepDBEstimator インスタンス
     """
     
-    # デフォルトのパス設定（相対パス: migration/ から deepdb/ へ）
-    DEFAULT_ENSEMBLE_PATH = "../../../deepdb/deepdb-public/imdb_ensemble/ensemble_join_3_budget_5_10000000.pkl"
-    DEFAULT_CSV_PATH = "../../../deepdb/deepdb-public/imdb_csv/{}.csv"
+    # デフォルトのパス設定（相対パス: migration/ から deepdb_full/deepdb/ へ）
+    DEFAULT_ENSEMBLE_PATH = "../../../deepdb_full/deepdb/run/imdb-all-job/spn_ensembles/ensemble_join_3_budget_5_10000000.pkl"
+    DEFAULT_CSV_PATH = "../../../deepdb_full/deepdb/csv/{}.csv"
     
     def __init__(
         self, 

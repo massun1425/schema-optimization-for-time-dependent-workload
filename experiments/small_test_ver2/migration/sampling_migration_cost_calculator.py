@@ -34,6 +34,13 @@ class SamplingMigrationCostCalculator:
         ("role_type", "rt"),
         ("char_name", "chn"),
         ("aka_name", "an"),
+
+        # === Additional Tables (追加) ===
+        ("movie_link", "ml"),
+        ("link_type", "lt"),
+        ("complete_cast", "cc"),
+        ("comp_cast_type", "cct"),
+        ("aka_title", "at"),
     ]
 
     # 小さいテーブル（数行〜数千行）はサンプリングせず全件使用
@@ -42,6 +49,8 @@ class SamplingMigrationCostCalculator:
         "kind_type",      # 7行
         "company_type",   # 4行
         "role_type",      # 12行
+        "link_type",      # 18行
+        "comp_cast_type", # 4行
     }
 
     SAMPLING_RATE = 0.10
@@ -83,7 +92,15 @@ class SamplingMigrationCostCalculator:
             return False
 
     def create_sample_tables(self, conn):
+        """サンプルテーブルを作成（既存のものは削除）"""
+        # まず既存のサンプルテーブルを削除
+        print("Dropping existing sample tables first...")
+        self.drop_sample_tables(conn)
+        
         print("Creating sample tables...")
+        created_tables = []
+        failed_tables = []
+        
         for table, _ in self.TARGET_TABLES:
             sample_table = f"sample_{table}"
             
@@ -96,13 +113,36 @@ class SamplingMigrationCostCalculator:
                 print(f"  Creating {sample_table} ({rate}% of {table})")
             
             sql_text = f"""
-            DROP TABLE IF EXISTS {sample_table};
             CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate});
             ANALYZE {sample_table};
             """
-            if not self._run_sql(conn, sql_text):
+            if self._run_sql(conn, sql_text):
+                created_tables.append(sample_table)
+            else:
                 print(f"  Failed to create {sample_table}")
-                return False
+                failed_tables.append(sample_table)
+        
+        # 作成されたテーブルを確認
+        print(f"\nSample table creation summary:")
+        print(f"  Created: {len(created_tables)}/{len(self.TARGET_TABLES)}")
+        if failed_tables:
+            print(f"  Failed: {failed_tables}")
+            return False
+        
+        # データベースで実際に存在するか確認
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'sample_%'")
+                existing = {row[0] for row in cursor.fetchall()}
+                missing = [t for t in created_tables if t not in existing]
+                if missing:
+                    print(f"  Warning: Some tables missing in DB: {missing}")
+                    return False
+                print(f"  All {len(created_tables)} sample tables verified in database.")
+        except Exception as e:
+            print(f"  Error verifying tables: {e}")
+            conn.rollback()
+        
         return True
 
     def drop_sample_tables(self, conn):
@@ -127,23 +167,46 @@ class SamplingMigrationCostCalculator:
                     return rows, size
             return 0, 0
         except Exception as e:
-            # print(f"Error executing sample query: {e}")
+            print(f"Error executing sample query: {e}")
+            print(f"  Query: {query[:200]}...")
+            conn.rollback()  # トランザクションをロールバックしてエラー状態を解除
             return 0, 0
 
     def _rewrite_query(self, query) -> Tuple[str, str]:
-        best_table = None
-        for table, alias in self.TARGET_TABLES:
-            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-            if pattern.search(query):
-                best_table = (table, alias)
-                break
+        """クエリ内のテーブルをサンプルテーブルに置換（最初の1件のみ）
         
-        if best_table:
-            table, alias = best_table
-            sample_table = f"sample_{table}"
-            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-            new_query = pattern.sub(f"{sample_table} AS {alias}", query)
-            return new_query, table
+        TARGET_TABLESの順序で検索し、最初にマッチしたテーブルを
+        サンプルテーブルに置換する。エイリアスは元のものを保持。
+        
+        Note: FROM/JOIN句のテーブル参照のみマッチし、
+              SELECT句のカラム別名はマッチしない。
+        
+        Returns:
+            Tuple[str, str]: (置換後のクエリ, 置換したテーブル名) 
+            マッチしない場合は (None, None)
+        """
+        for table, _ in self.TARGET_TABLES:
+            # SMALL_TABLESはサンプルテーブルも全件なのでスキップ不要だが、
+            # 大きいテーブルを優先するためそのまま順序通り検索
+            
+            # FROM/JOIN句のテーブル参照にマッチ
+            # パターン: FROM table AS alias / JOIN table AS alias / , table AS alias
+            pattern = re.compile(
+                rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
+                re.IGNORECASE
+            )
+            match = pattern.search(query)
+            if match:
+                alias = match.group(1)  # 元のエイリアスを保持
+                sample_table = f"sample_{table}"
+                
+                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
+                matched_text = match.group(0)
+                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
+                new_text = f"{prefix} {sample_table} AS {alias}"
+                
+                new_query = query[:match.start()] + new_text + query[match.end():]
+                return new_query, table
         
         return None, None
     
@@ -183,6 +246,12 @@ class SamplingMigrationCostCalculator:
             ("role_type", "rt"),
             ("char_name", "chn"),
             ("aka_name", "an"),
+            # === Additional Tables ===
+            ("movie_link", "ml"),
+            ("link_type", "lt"),
+            ("complete_cast", "cc"),
+            ("comp_cast_type", "cct"),
+            ("aka_title", "at"),
         ]
         
         try:
@@ -223,19 +292,30 @@ class SamplingMigrationCostCalculator:
                     if match:
                         select_query = match.group(1)
                         
-                        # クエリを書き換え
-                        best_table = None
-                        for table, alias in target_tables:
-                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-                            if pattern.search(select_query):
-                                best_table = (table, alias)
+                        # クエリを書き換え（FROM/JOIN句のテーブル参照にマッチ）
+                        matched_table = None
+                        rewritten_query = None
+                        for table, _ in target_tables:
+                            # FROM/JOIN句のテーブル参照にマッチ
+                            pattern = re.compile(
+                                rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
+                                re.IGNORECASE
+                            )
+                            match_result = pattern.search(select_query)
+                            if match_result:
+                                alias = match_result.group(1)  # 元のエイリアスを保持
+                                sample_table = f"sample_{table}"
+                                
+                                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
+                                matched_text = match_result.group(0)
+                                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
+                                new_text = f"{prefix} {sample_table} AS {alias}"
+                                
+                                rewritten_query = select_query[:match_result.start()] + new_text + select_query[match_result.end():]
+                                matched_table = table
                                 break
                         
-                        if best_table:
-                            table, alias = best_table
-                            sample_table = f"sample_{table}"
-                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-                            rewritten_query = pattern.sub(f"{sample_table} AS {alias}", select_query)
+                        if rewritten_query:
                             
                             # サンプルからサイズを取得
                             wrapped_query = f"""
@@ -256,9 +336,15 @@ class SamplingMigrationCostCalculator:
                             except Exception:
                                 pass
                     
-                    # EXPLAINのコストをそのまま使用
+                    # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
+                    # 書き込みコスト = ページ書き込み + タプル処理
+                    write_pages = (est_size // 8192) + 1 if est_size > 0 else 0
+                    write_cost = (write_pages * 1.0) + (est_rows * 0.01)  # SEQ_PAGE_COST + CPU_TUPLE_COST
+                    creation_cost = cost + write_cost  # 読み取り + 書き込み
+                    
                     node_costs[plan_key] = {
-                        "cost": cost,  # EXPLAINコストのみ
+                        "cost": creation_cost,  # 作成コスト（読み取り + 書き込み）
+                        "utility": cost,  # 利得（EXPLAINコスト = 読み取りのみ）
                         "rows": est_rows,
                         "width": int(est_size / est_rows) if est_rows > 0 else 0,
                         "size": est_size,
@@ -267,6 +353,7 @@ class SamplingMigrationCostCalculator:
                 else:
                     node_costs[plan_key] = {
                         "cost": 0.0,
+                        "utility": 0.0,
                         "rows": 0,
                         "width": 0,
                         "size": 0
@@ -369,7 +456,7 @@ class SamplingMigrationCostCalculator:
                                         width = int(plan.get('Plan Width', 0))
                                         est_size = est_rows * width
                             except Exception:
-                                pass
+                                conn.rollback()  # トランザクションをロールバック
 
                             size_source = "explain"  # デフォルトはEXPLAIN
                             if match:
@@ -388,9 +475,15 @@ class SamplingMigrationCostCalculator:
                                 else:
                                     skipped_count += 1
                             
-                            # EXPLAINのコストをそのまま使用
+                            # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
+                            # 書き込みコスト = ページ書き込み + タプル処理
+                            write_pages = (est_size // 8192) + 1 if est_size > 0 else 0
+                            write_cost = (write_pages * 1.0) + (est_rows * 0.01)  # SEQ_PAGE_COST + CPU_TUPLE_COST
+                            creation_cost = cost + write_cost  # 読み取り + 書き込み
+                            
                             self.costs[node][plan_key] = {
-                                "cost": cost,  # EXPLAINコストのみ
+                                "cost": creation_cost,  # 作成コスト（読み取り + 書き込み）
+                                "utility": cost,  # 利得（EXPLAINコスト = 読み取りのみ）
                                 "rows": est_rows,
                                 "width": int(est_size / est_rows) if est_rows > 0 else 0,
                                 "size": est_size,
@@ -399,6 +492,7 @@ class SamplingMigrationCostCalculator:
                         else:
                             self.costs[node][plan_key] = {
                                 "cost": 0.0,
+                                "utility": 0.0,
                                 "rows": 0,
                                 "width": 0,
                                 "size": 0

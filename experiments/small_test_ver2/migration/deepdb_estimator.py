@@ -18,7 +18,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 # DeepDB パスを追加
-deepdb_root = project_root / "deepdb" / "deepdb-public"
+deepdb_root = project_root / "deepdb_full" / "deepdb"
 sys.path.insert(0, str(deepdb_root))
 
 logger = logging.getLogger(__name__)
@@ -66,12 +66,12 @@ class DeepDBEstimator:
             return
             
         try:
-            # DeepDB のモジュールをインポート
-            from schemas.imdb.schema import gen_imdb_schema
+            # DeepDB のモジュールをインポート (imdb-all-job を使用)
+            from schemas.imdb.schema import gen_all_job_imdb_schema
             from ensemble_compilation.spn_ensemble import read_ensemble
             
-            logger.info(f"Loading IMDB schema from {self.csv_path}")
-            self._schema = gen_imdb_schema(self.csv_path)
+            logger.info(f"Loading IMDB all-job schema from {self.csv_path}")
+            self._schema = gen_all_job_imdb_schema(self.csv_path)
             
             logger.info(f"Loading ensemble from {self.ensemble_path}")
             self._ensemble = read_ensemble(self.ensemble_path, build_reverse_dict=True)
@@ -630,13 +630,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--ensemble-path",
         type=str,
-        default="../../deepdb/deepdb-public/imdb_ensemble/ensemble_join_3_budget_5_10000000.pkl",
+        default="../../deepdb_full/deepdb/run/imdb-all-job/spn_ensembles/ensemble_join_3_budget_5_10000000.pkl",
         help="Path to the trained ensemble file"
     )
     parser.add_argument(
         "--csv-path",
         type=str,
-        default="../../deepdb/deepdb-public/imdb_csv/{}.csv",
+        default="../../deepdb_full/deepdb/csv/{}.csv",
         help="Path template for CSV files"
     )
     parser.add_argument(
