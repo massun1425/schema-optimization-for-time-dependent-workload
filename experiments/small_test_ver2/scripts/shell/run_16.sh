@@ -77,6 +77,40 @@ restart_container() {
 # ####################
 # # static addmv _5 #
 # ####################
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job \
+  --optimization-mode dynamic \
+  --exp-suffix _16_mono \
+  --use-docker \
+  --use-pruning \
+  --pruning-parallel \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_16_mono.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set job \
+  --exp-suffix _16_mono \
+  --optimization-mode static \
+  --static-timestep average \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_mono.txt
+echo "完了時刻: $(date)"
 
 # 実験1: static average _16_1
 # restart_container
@@ -92,11 +126,12 @@ restart_container() {
 #   --static-timestep average \
 #   --use-docker \
 #   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1.txt
 # echo "完了時刻: $(date)"
 
-# 実験4: dynamic _16_1
-# restart_container
+# # 実験4: dynamic _16_1
+# # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -110,10 +145,11 @@ restart_container() {
 #   --use-pruning \
 #   --pruning-parallel \
 #   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
 # echo "完了時刻: $(date)"
 
-# 実験2: static average _16_2
+# # 実験2: static average _16_2
 # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
@@ -127,29 +163,30 @@ restart_container() {
 #   --static-timestep average \
 #   --use-docker \
 #   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2.txt
 # echo "完了時刻: $(date)"
 
-# 実験5: dynamic _16_2
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _16_2_10 \
-  --use-docker \
-  --use-pruning \
-  --pruning-parallel \
-  --recalc \
-  --ease \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
-echo "完了時刻: $(date)"
+# # 実験5: dynamic _16_2
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job \
+#   --optimization-mode dynamic \
+#   --exp-suffix _16_2_10 \
+#   --use-docker \
+#   --use-pruning \
+#   --pruning-parallel \
+#   --recalc \
+#   --ease \
+#   2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
+# echo "完了時刻: $(date)"
 
-# 実験3: static average _16_3
+# # 実験3: static average _16_3
 # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
@@ -163,32 +200,33 @@ echo "完了時刻: $(date)"
 #   --static-timestep average \
 #   --use-docker \
 #   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3.txt
 # echo "完了時刻: $(date)"
 
 
 
 
-# 実験6: dynamic _16_3
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _16_3_10 \
-  --use-docker \
-  --use-pruning \
-  --pruning-parallel \
-  --recalc \
-  --ease \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
-echo "完了時刻: $(date)"
+# # 実験6: dynamic _16_3
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job \
+#   --optimization-mode dynamic \
+#   --exp-suffix _16_3_10 \
+#   --use-docker \
+#   --use-pruning \
+#   --pruning-parallel \
+#   --recalc \
+#   --ease \
+#   2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
+# echo "完了時刻: $(date)"
 
-echo ""
-echo "========================================================================"
-echo "全実験完了: $(date)"
-echo "========================================================================"
+# echo ""
+# echo "========================================================================"
+# echo "全実験完了: $(date)"
+# echo "========================================================================"

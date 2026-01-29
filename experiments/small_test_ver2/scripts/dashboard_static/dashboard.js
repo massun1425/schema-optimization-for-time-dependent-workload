@@ -8,7 +8,8 @@ let comparisonSelectedFiles = []; // 比較用選択ファイル [{folder: path,
 let selectedMVs = [];
 let rootNodesMap = null; // クエリ名 -> ルートノードID
 let mvSizesMap = null; // MV名 -> サイズ(bytes)
-let subqueryCostsMap = null; // MV名 -> subquery_cost（利得表示用）
+let subqueryCostsMap = null; // MV名 -> cost（作成コスト表示用）
+let mvUtilitiesMap = null; // MV名 -> utility（利得表示用）
 
 // ルートMV化率更新
 function updateRootMVStats() {
@@ -251,10 +252,15 @@ async function loadSubfolders(path) {
         mvSizesMap = await fetchAPI(`/api/mv-sizes/${currentQuerySet}`);
     } catch (e) { console.warn("MV sizes fetch failed", e); }
 
-    // subquery_costs取得（利得表示用）
+    // subquery_costs取得（コスト表示用）
     try {
         subqueryCostsMap = await fetchAPI(`/api/subquery-costs/${currentQuerySet}`);
     } catch (e) { console.warn("subquery costs fetch failed", e); }
+
+    // mv_utilities取得（利得表示用）
+    try {
+        mvUtilitiesMap = await fetchAPI(`/api/mv-utilities/${currentQuerySet}`);
+    } catch (e) { console.warn("mv utilities fetch failed", e); }
 
     // 全データ取得後にルートMV化率を更新
     updateRootMVStats();
@@ -340,10 +346,12 @@ async function onResultFileChange() {
         tbody.innerHTML = '';
         staticData.mv_details.forEach(mv => {
             const tr = document.createElement('tr');
+            const utilityValue = (mvUtilitiesMap && mvUtilitiesMap[mv.mv]) ? mvUtilitiesMap[mv.mv] : 0;
             const costValue = (subqueryCostsMap && subqueryCostsMap[mv.mv]) ? subqueryCostsMap[mv.mv] : (mv.cost || 0);
             tr.innerHTML = `
                 <td>${mv.mv}</td>
                 <td>${formatBytes(mv.size || 0)}</td>
+                <td>${utilityValue.toFixed(2)}</td>
                 <td>${costValue.toFixed(2)}</td>
             `;
             tbody.appendChild(tr);
@@ -433,10 +441,12 @@ function onTimestepChange(timestep) {
     tbody.innerHTML = '';
     tsData.mvs.forEach(mv => {
         const tr = document.createElement('tr');
+        const utilityValue = (mvUtilitiesMap && mvUtilitiesMap[mv.mv]) ? mvUtilitiesMap[mv.mv] : 0;
         const costValue = (subqueryCostsMap && subqueryCostsMap[mv.mv]) ? subqueryCostsMap[mv.mv] : (mv.cost || 0);
         tr.innerHTML = `
             <td>${mv.mv}</td>
             <td>${formatBytes(mv.size || 0)}</td>
+            <td>${utilityValue.toFixed(2)}</td>
             <td>${costValue.toFixed(2)}</td>
         `;
         tbody.appendChild(tr);
@@ -738,7 +748,13 @@ function renderTree(planData, container, highlightMVs = []) {
         .attr('text-anchor', 'middle')
         .attr('fill', '#1e1e2e')
         .attr('font-size', '6px')
-        .text(d => d.data.relation ? `${d.data.relation}` : d.data.nodeId);
+        .text(d => {
+            // リーフノードの場合はテーブル名とノードIDを表示
+            if (d.data.nodeId.startsWith('leaf_') && d.data.relation) {
+                return `${d.data.relation} (${d.data.nodeId})`;
+            }
+            return d.data.relation ? d.data.relation : d.data.nodeId;
+        });
 
     // ツールチップ要素（シングルトン）
     let tooltip = d3.select('body').select('.custom-tooltip');
@@ -757,7 +773,7 @@ function renderTree(planData, container, highlightMVs = []) {
             sizeStr = formatBytes((d.data.rows * d.data.width) || 0) + ' (est)';
         }
 
-        // コストもsubqueryCostsMapから取得（pickle由来）
+        // コスト（作成コスト）を取得
         let costValue = 0;
         if (subqueryCostsMap && subqueryCostsMap[d.data.nodeId]) {
             costValue = subqueryCostsMap[d.data.nodeId];
@@ -765,13 +781,21 @@ function renderTree(planData, container, highlightMVs = []) {
             costValue = d.data.cost || 0;
         }
 
+        // 利得(utility)を取得
+        let utilityValue = 0;
+        if (mvUtilitiesMap && mvUtilitiesMap[d.data.nodeId]) {
+            utilityValue = mvUtilitiesMap[d.data.nodeId];
+        }
+
         tooltip.transition().duration(200).style('opacity', 1);
         tooltip.html(
             `<strong>${d.data.name}</strong><br>` +
             `${d.data.relation || d.data.nodeId}<br>` +
+            `<small style="color:#888">${d.data.nodeId}</small><br>` +
             `<hr style="margin:4px 0; border:0; border-top:1px solid #555">` +
             `Size: ${sizeStr}<br>` +
-            `Cost: ${costValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+            `Cost: ${costValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}<br>` +
+            `Utility: ${utilityValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
         )
             .style('left', (event.clientX + 12) + 'px')
             .style('top', (event.clientY + 12) + 'px');

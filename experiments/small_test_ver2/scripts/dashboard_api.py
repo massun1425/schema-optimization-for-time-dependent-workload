@@ -550,7 +550,7 @@ async def get_mv_costs_query(query_set: str, query_name: str) -> Dict[str, float
 
 @app.get("/api/subquery-costs/{query_set}")
 async def get_subquery_costs(query_set: str) -> Dict[str, float]:
-    """simple_migration_costs.jsonからcostを取得（MV選択ページの利得表示用）"""
+    """simple_migration_costs.jsonからcost（作成コスト）を取得"""
     filepath = MIGRATION_DIR / query_set / "simple_migration_costs.json"
     if not filepath.exists():
         return {}
@@ -566,6 +566,27 @@ async def get_subquery_costs(query_set: str) -> Dict[str, float]:
         return result
     except Exception as e:
         print(f"Error loading subquery_costs: {e}")
+        return {}
+
+
+@app.get("/api/mv-utilities/{query_set}")
+async def get_mv_utilities(query_set: str) -> Dict[str, float]:
+    """MV名 -> 利得(utility) のマッピングを取得"""
+    filepath = MIGRATION_DIR / query_set / "simple_migration_costs.json"
+    if not filepath.exists():
+        return {}
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        result = {}
+        for mv_name, info in data.items():
+            if "[]" in info:
+                result[mv_name] = info["[]"].get("utility", 0)
+        return result
+    except Exception as e:
+        print(f"Error loading mv utilities: {e}")
         return {}
 
 
