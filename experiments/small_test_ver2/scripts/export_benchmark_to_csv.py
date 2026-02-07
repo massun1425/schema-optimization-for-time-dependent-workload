@@ -171,7 +171,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_1G_originalcost_10')
+        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_100M_freq_true')
         output_filename = 'benchmark_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])

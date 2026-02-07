@@ -96,7 +96,7 @@ class LocalILPOptimizer:
         self.T = len(unique_indices)  # 2 or 3 unique timesteps
 
         # マイグレーションコストへの重み付け
-        self.migration_ratio = float(self.T/len(all_timesteps))
+        self.migration_ratio = 1.0 # float(self.T/len(all_timesteps))
         
         # Initialize candidate filtering
         # Use pre-computed candidates if provided, otherwise compute them
