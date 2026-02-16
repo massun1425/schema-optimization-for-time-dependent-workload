@@ -20,21 +20,8 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase 6 \
   --query-set job \
   --optimization-mode dynamic \
-  --exp-suffix _36 \
+  --exp-suffix _44 \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_wo_pruning_36.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase 6 \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _40 \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_wo_pruning_40.txt
+  2>&1 | tee ${OUTPUT_DIR}/log_wo_pruning_44.txt
 echo "完了時刻: $(date)"
 

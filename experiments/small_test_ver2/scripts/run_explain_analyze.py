@@ -25,6 +25,8 @@ import json
 import os
 import sys
 from pathlib import Path
+import psycopg2
+import psycopg2.extras
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent.parent.parent
@@ -70,8 +72,35 @@ class ExplainAnalyzeRunner:
         # 出力ディレクトリ作成
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
+        # データベース接続（再利用）
+        self.conn = None
+        
         print(f"PostgreSQL実行モード: {self.pg_executor.get_mode_description()}")
         print(f"データベース: {self.settings.database.database}")
+    
+    def _connect_db(self):
+        """データベースに接続（1回のみ）"""
+        if self.conn is None:
+            self.conn = psycopg2.connect(
+                host=self.settings.database.host,
+                port=self.settings.database.port,
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password
+            )
+            self.conn.autocommit = True
+            
+            # 初期設定を実行
+            with self.conn.cursor() as cur:
+                cur.execute(f"SET statement_timeout = '{self.timeout}s'")
+                cur.execute("SET enable_bitmapscan = off")
+                cur.execute("SET random_page_cost = 1.1")
+    
+    def _close_db(self):
+        """データベース接続をクローズ"""
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
     
     def get_query_files(self, query_names: list = None) -> list:
         """クエリファイル一覧を取得
@@ -93,6 +122,32 @@ class ExplainAnalyzeRunner:
             return sorted(files, key=natural_sort_key)
         else:
             return sorted(self.queries_dir.glob("*.sql"), key=natural_sort_key)
+    
+    def _convert_select_to_star(self, sql: str) -> str:
+        """SELECT句をSELECT *に変換（集約処理を除去）
+        
+        Args:
+            sql: 元のSQL文
+            
+        Returns:
+            SELECT *に変換されたSQL文
+        """
+        import re
+        
+        # SELECT ... FROM のパターンをSELECT * FROM に置き換え
+        # 大文字小文字区別なし、複数行にまたがる可能性を考慮
+        pattern = r'(SELECT\s+).*?(\s+FROM\s+)'
+        replacement = r'\1*\2'
+        
+        converted_sql = re.sub(
+            pattern,
+            replacement,
+            sql,
+            count=1,
+            flags=re.IGNORECASE | re.DOTALL
+        )
+        
+        return converted_sql
     
     def run_explain_analyze(self, query_file: Path) -> dict:
         """単一クエリに対してEXPLAIN ANALYZEを実行
@@ -117,35 +172,28 @@ class ExplainAnalyzeRunner:
         if sql.endswith(';'):
             sql = sql[:-1]
         
+        # SELECT句をSELECT *に変換（集約処理を除去）
+        sql = self._convert_select_to_star(sql)
+        
         # EXPLAIN ANALYZE SQL
         explain_sql = f"EXPLAIN (ANALYZE, FORMAT JSON) {sql}"
         
         try:
-            # タイムアウト設定と一緒に実行
-            result = self.pg_executor.run_psql_commands(
-                [
-                    f"SET statement_timeout = '{self.timeout}s';",
-                    "SET enable_bitmapscan = off;",
-                    explain_sql + ";"
-                ],
-                database=self.settings.database.database,
-                extra_args=["-t", "-A"],
-                check=True
-            )
+            # 既存の接続を使用して実行
+            with self.conn.cursor() as cur:
+                cur.execute(explain_sql)
+                result = cur.fetchone()
+                
+                if result:
+                    return result[0]  # JSON結果を返す
+                return None
             
-            # 出力からJSON部分を抽出
-            output_lines = result.stdout.strip().split('\n')
-            json_lines = [line for line in output_lines if line and line != 'SET']
-            json_text = '\n'.join(json_lines)
-            
-            return json.loads(json_text)
-            
+        except psycopg2.errors.QueryCanceled:
+            print(f"  ⏱ タイムアウト ({self.timeout}秒)")
+            return None
         except Exception as e:
             error_msg = str(e)
-            if "statement timeout" in error_msg.lower():
-                print(f"  ⏱ タイムアウト ({self.timeout}秒)")
-            else:
-                print(f"  ✗ エラー: {error_msg[:100]}")
+            print(f"  ✗ エラー: {error_msg[:100]}")
             return None
     
     def run_all(self, query_names: list = None, force: bool = False):
@@ -166,39 +214,50 @@ class ExplainAnalyzeRunner:
         print(f"出力先: {self.output_dir}")
         print("=" * 60)
         
+        # データベースに接続（1回のみ）
+        print("データベースに接続中...")
+        self._connect_db()
+        print("接続完了")
+        
         success_count = 0
         fail_count = 0
         skip_count = 0
         
-        for i, query_file in enumerate(query_files, 1):
-            query_name = query_file.stem
-            output_file = self.output_dir / f"{query_name}.json"
-            
-            # 既に存在する場合はスキップ（forceでない場合）
-            if output_file.exists() and not force:
-                print(f"[{i}/{total}] {query_name}: 既に存在（スキップ）")
-                skip_count += 1
-                continue
-            
-            print(f"[{i}/{total}] {query_name}: 実行中...", end="", flush=True)
-            
-            result = self.run_explain_analyze(query_file)
-            
-            if result:
-                # JSON保存
-                with open(output_file, 'w', encoding='utf-8') as f:
-                    json.dump(result, f, indent=2, ensure_ascii=False)
+        try:
+            for i, query_file in enumerate(query_files, 1):
+                query_name = query_file.stem
+                output_file = self.output_dir / f"{query_name}.json"
                 
-                # 実行時間を取得
-                try:
-                    exec_time = result[0]["Execution Time"]
-                    print(f" ✓ {exec_time:.1f}ms")
-                except (KeyError, IndexError, TypeError):
-                    print(" ✓ 完了")
+                # 既に存在する場合はスキップ（forceでない場合）
+                if output_file.exists() and not force:
+                    print(f"[{i}/{total}] {query_name}: 既に存在（スキップ）")
+                    skip_count += 1
+                    continue
                 
-                success_count += 1
-            else:
-                fail_count += 1
+                print(f"[{i}/{total}] {query_name}: 実行中...", end="", flush=True)
+                
+                result = self.run_explain_analyze(query_file)
+                
+                if result:
+                    # JSON保存
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        json.dump(result, f, indent=2, ensure_ascii=False)
+                    
+                    # 実行時間を取得
+                    try:
+                        exec_time = result[0]["Execution Time"]
+                        print(f" ✓ {exec_time:.1f}ms")
+                    except (KeyError, IndexError, TypeError):
+                        print(" ✓ 完了")
+                    
+                    success_count += 1
+                else:
+                    fail_count += 1
+        
+        finally:
+            # データベース接続をクローズ
+            self._close_db()
+            print("データベース接続をクローズしました")
         
         # サマリー
         print()

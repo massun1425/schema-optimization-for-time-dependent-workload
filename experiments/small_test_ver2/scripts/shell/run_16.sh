@@ -12,307 +12,175 @@ echo "========================================================================"
 echo "実験開始: $(date)"
 echo "========================================================================"
 
+# コンテナ再起動関数
+restart_container() {
+    echo ""
+    echo ">>> PostgreSQLコンテナを再起動してキャッシュをクリア..."
+    docker restart mv_postgres
+    echo ">>> 起動完了を待機中..."
+    sleep 15
+    # 接続確認
+    until docker exec mv_postgres pg_isready -U postgres > /dev/null 2>&1; do
+        echo ">>> PostgreSQL起動待ち..."
+        sleep 2
+    done
+    echo ">>> PostgreSQL起動完了"
+}
 
+
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1 \
+#   --query-set job \
+#   --exp-suffix _16_1_10 \
+#   --optimization-mode adaptive \
 #   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
+#   --recalc \
+#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_16_1.txt
 # echo "完了時刻: $(date)"
 
+
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_1 \
+#   --query-set job \
+#   --exp-suffix _16_1_10 \
 #   --optimization-mode static \
 #   --static-timestep average \
 #   --use-docker \
+#   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1.txt
 # echo "完了時刻: $(date)"
 
+
+
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
+#   --query-set job \
 #   --optimization-mode dynamic \
-#   --exp-suffix _16_2 \
+#   --exp-suffix _16_1_10 \
 #   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
+#   --recalc \
+#   --ease \
+#   2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
 # echo "完了時刻: $(date)"
 
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_2 \
+#   --query-set job \
+#   --exp-suffix _16_2_10 \
+#   --optimization-mode adaptive \
+#   --use-docker \
+#   --recalc \
+#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_16_2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job \
+#   --exp-suffix _16_2_10 \
 #   --optimization-mode static \
 #   --static-timestep average \
 #   --use-docker \
+#   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2.txt
 # echo "完了時刻: $(date)"
 
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
+#   --query-set job \
 #   --optimization-mode dynamic \
-#   --exp-suffix _16_3 \
+#   --exp-suffix _16_2_10 \
 #   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
+#   --recalc \
+#   --ease \
+#   2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
 # echo "完了時刻: $(date)"
 
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_3 \
+#   --query-set job \
+#   --exp-suffix _16_3_10 \
+#   --optimization-mode adaptive \
+#   --use-docker \
+#   --recalc \
+#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_16_3.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job \
+#   --exp-suffix _16_3_10 \
 #   --optimization-mode static \
 #   --static-timestep average \
 #   --use-docker \
+#   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3.txt
 # echo "完了時刻: $(date)"
 
-
+# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job_real \
+#   --query-set job \
 #   --optimization-mode dynamic \
-#   --exp-suffix _16_1 \
-#   --use-pruning \
-#   --pruning-parallel \
+#   --exp-suffix _16_3_10 \
 #   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
+#   --recalc \
+#   --ease \
 #   2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
 # echo "完了時刻: $(date)"
 
 
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1_opt \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1_opt.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2_opt \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2_opt.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3_opt \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3_opt.txt
-# echo "完了時刻: $(date)"
 
 
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1_5 \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1_5.txt
-# echo "完了時刻: $(date)"
+#####. peak and mono. #####
 
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_1_5 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2_5 \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_2_5 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3_5 \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --exp-suffix _16_3_5 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job_real \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3_5.txt
-# echo "完了時刻: $(date)"
-
+restart_container
 echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
@@ -321,13 +189,16 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
   --query-set job \
   --optimization-mode dynamic \
-  --exp-suffix _16_1_opt \
+  --exp-suffix _16_peak \
+  --use-docker \
   --use-pruning \
   --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_16_peak.txt
 echo "完了時刻: $(date)"
 
+restart_container
 echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
@@ -335,42 +206,16 @@ echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
   --query-set job \
-  --exp-suffix _16_1_opt \
+  --exp-suffix _16_peak \
   --optimization-mode static \
   --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1.txt
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_peak.txt
 echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _16_2_opt \
-  --use-pruning \
-  --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --exp-suffix _16_2_opt \
-  --optimization-mode static \
-  --static-timestep average \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2.txt
-echo "完了時刻: $(date)"
-
+restart_container
 echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
@@ -379,13 +224,16 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
   --query-set job \
   --optimization-mode dynamic \
-  --exp-suffix _16_3_opt \
+  --exp-suffix _16_mono \
+  --use-docker \
   --use-pruning \
   --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_16_mono.txt
 echo "完了時刻: $(date)"
 
+restart_container
 echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
@@ -393,188 +241,16 @@ echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
   --query-set job \
-  --exp-suffix _16_3_opt \
+  --exp-suffix _16_mono \
   --optimization-mode static \
   --static-timestep average \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3.txt
-echo "完了時刻: $(date)"
-
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3.txt
-# echo "完了時刻: $(date)"
-
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_1_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_1_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_2_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_2_5.txt
-# echo "完了時刻: $(date)"
-
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set job \
-#   --optimization-mode dynamic \
-#   --exp-suffix _16_3_5 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   2>&1 | tee ${OUTPUT_DIR}/log_16_3_5.txt
-# echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --optimization-mode dynamic \
-  --exp-suffix _16_1_opt \
-  --use-pruning \
-  --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_1_opt.txt
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_mono.txt
 echo "完了時刻: $(date)"
 
 echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --exp-suffix _16_1_opt \
-  --optimization-mode static \
-  --static-timestep average \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_1_opt.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --optimization-mode dynamic \
-  --exp-suffix _16_2_opt \
-  --use-pruning \
-  --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_2_opt.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --exp-suffix _16_2_opt \
-  --optimization-mode static \
-  --static-timestep average \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_2_opt.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --optimization-mode dynamic \
-  --exp-suffix _16_3_opt \
-  --use-pruning \
-  --pruning-parallel \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_16_3_opt.txt
-echo "完了時刻: $(date)"
-
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job_real \
-  --exp-suffix _16_3_opt \
-  --optimization-mode static \
-  --static-timestep average \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_average_16_3_opt.txt
-echo "完了時刻: $(date)"
+echo "========================================================================"
+echo "全実験完了: $(date)"
+echo "========================================================================"

@@ -12,34 +12,69 @@ from config.settings import Settings
 class SamplingMigrationCostCalculator:
     """サンプリングを使用してMVのサイズを推定するクラス"""
 
-    TARGET_TABLES = [
-        ("cast_info", "ci"),
-        ("movie_info", "mi"),
-        ("movie_companies", "mc"),
-        ("person_info", "pi"),
-        ("movie_keyword", "mk"),
-        ("title", "t"),
-        ("name", "n")
+    # テーブル設定: {table_name: (alias, sampling_rate)}
+    # サンプリング率は母集団サイズに応じて段階的に設定
+    # 優先度順（多側テーブル優先）に並べる
+    TARGET_TABLES = {
+        # === 1. 巨大Fact Tables (10% サンプリング) ===
+        "cast_info": ("ci", 0.10),          # 3.8GB, 36M行 - title/name/char_nameの多側
+        "movie_info": ("mi", 0.10),          # 1.9GB, 15M行 - titleの多側
+        
+        # === 2. 中規模Fact Tables (20% サンプリング) ===
+        "movie_keyword": ("mk", 0.20),       # 361MB, 4.5M行 - title/keywordの多側
+        "movie_companies": ("mc", 0.20),     # 282MB, 2.6M行 - title/company_nameの多側
+        "person_info": ("pi", 0.20),         # 550MB, 3.0M行 - nameの多側
+        "movie_info_idx": ("mi_idx", 0.20),  # 123MB, 1.4M行 - titleの多側
+        "aka_name": ("an", 0.20),            # 125MB, 901K行 - nameの多側
+        
+        # === 3. 小規模Fact Tables (50% サンプリング) ===
+        "aka_title": ("at", 1.0),           # 67MB, 361K行 - titleの多側
+        "complete_cast": ("cc", 1.0),       # 11MB, 135K行 - titleの多側
+        "movie_link": ("ml", 1.0),          # 3MB, 30K行 - titleの多側
+        
+        # === 4. Entity/Dimension Tables (30% サンプリング) ===
+        "title": ("t", 0.30),                # 368MB, 2.5M行 - マスタテーブル
+        "name": ("n", 0.30),                 # 552MB, 4.2M行 - マスタテーブル
+        "char_name": ("chn", 0.30),          # 373MB, 3.1M行 - ディメンションテーブル
+        
+        # === 5. 小規模Dictionary Tables (50% サンプリング) ===
+        "company_name": ("cn", 1.0),        # 31MB, 235K行 - ディメンションテーブル
+        "keyword": ("k", 1.0),              # 12MB, 134K行 - ディメンションテーブル
+        
+        # === 6. Type Tables (100% サンプリング = 全件) ===
+        "info_type": ("it", 1.0),            # 24kB, 113行
+        "kind_type": ("kt", 1.0),            # 24kB, 7行
+        "company_type": ("ct", 1.0),         # 24kB, 4行
+        "role_type": ("rt", 1.0),            # 24kB, 12行
+        "link_type": ("lt", 1.0),            # 24kB, 18行
+        "comp_cast_type": ("cct", 1.0),      # 24kB, 4行
+    }
+    
+    # テーブル優先度順リスト（_rewrite_queryで使用）
+    TABLE_PRIORITY = [
+        "cast_info", "movie_info", "movie_keyword", "movie_companies",
+        "person_info", "movie_info_idx", "aka_name", "aka_title",
+        "complete_cast", "movie_link", "title", "name", "char_name",
+        "company_name", "keyword", "info_type", "kind_type",
+        "company_type", "role_type", "link_type", "comp_cast_type"
     ]
 
-    SAMPLING_RATE = 0.01
-    SCALE_FACTOR = 1.0 / SAMPLING_RATE
-    OVERHEAD_MULTIPLIER = 1.2
-    
-    # PostgreSQLのコスト単位に合わせた書き込みコストパラメータ
-    # postgresql.conf のデフォルト値を参考
-    PAGE_SIZE = 8192            # PostgreSQLのページサイズ (8KB)
-    SEQ_PAGE_COST = 1.0         # シーケンシャルページI/Oコスト
-    CPU_TUPLE_COST = 0.01       # タプル処理コスト
-    WRITE_PAGE_COST = 1.0       # 書き込みページコスト（読み取りと同程度と仮定）
+    # デフォルト設定（互換性のため残す）
+    SAMPLING_RATE = 0.10  # 未使用（各テーブルが個別レートを持つ）
+    SCALE_FACTOR = 1.0 / SAMPLING_RATE  # 未使用
+    OVERHEAD_MULTIPLIER = 1.0
+    # EXPLAIN-based size estimates are typically 64x smaller than actual sizes
+    # (based on analysis of 22 root nodes from JOB workload)
+    EXPLAIN_SIZE_CORRECTION_FACTOR = 1 # 64
 
-    def __init__(self, settings: Settings, query_set: str = "job_like"):
+    def __init__(self, settings: Settings, query_set: str = "job_like", precomputed_costs_file: str = None):
         self.settings = settings
         self.query_set = query_set
         self.json_file_path = Path(__file__).parent.parent / "04_migration" / query_set / "simple_migration_plans.json"
         self.output_dir = self.json_file_path.parent
         self.plans = self._load_plans()
         self.costs = {}
+        self.precomputed_costs_file = precomputed_costs_file
 
     def _load_plans(self) -> Dict[str, Any]:
         with open(self.json_file_path, 'r', encoding='utf-8') as f:
@@ -67,25 +102,58 @@ class SamplingMigrationCostCalculator:
             return False
 
     def create_sample_tables(self, conn):
+        """サンプルテーブルを作成（既存のものは削除）"""
+        # まず既存のサンプルテーブルを削除
+        print("Dropping existing sample tables first...")
+        self.drop_sample_tables(conn)
+        
         print("Creating sample tables...")
-        for table, _ in self.TARGET_TABLES:
+        created_tables = []
+        failed_tables = []
+        
+        for table, (alias, sampling_rate) in self.TARGET_TABLES.items():
             sample_table = f"sample_{table}"
-            # Check if table exists first to avoid errors on missing tables
-            # But for now assuming tables exist as per original script
-            print(f"  Creating {sample_table} ({self.SAMPLING_RATE * 100}% of {table})...")
+            
+            # 各テーブルの個別サンプリング率を使用
+            rate_percent = sampling_rate * 100
+            print(f"  Creating {sample_table} ({rate_percent:.0f}% of {table})")
+            
             sql_text = f"""
-            DROP TABLE IF EXISTS {sample_table};
-            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({self.SAMPLING_RATE * 100});
+            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate_percent});
             ANALYZE {sample_table};
             """
-            if not self._run_sql(conn, sql_text):
+            if self._run_sql(conn, sql_text):
+                created_tables.append(sample_table)
+            else:
                 print(f"  Failed to create {sample_table}")
-                return False
+                failed_tables.append(sample_table)
+        
+        # 作成されたテーブルを確認
+        print(f"\nSample table creation summary:")
+        print(f"  Created: {len(created_tables)}/{len(self.TARGET_TABLES)}")
+        if failed_tables:
+            print(f"  Failed: {failed_tables}")
+            return False
+        
+        # データベースで実際に存在するか確認
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT table_name FROM information_schema.tables WHERE table_name LIKE 'sample_%'")
+                existing = {row[0] for row in cursor.fetchall()}
+                missing = [t for t in created_tables if t not in existing]
+                if missing:
+                    print(f"  Warning: Some tables missing in DB: {missing}")
+                    return False
+                print(f"  All {len(created_tables)} sample tables verified in database.")
+        except Exception as e:
+            print(f"  Error verifying tables: {e}")
+            conn.rollback()
+        
         return True
 
     def drop_sample_tables(self, conn):
         print("Dropping sample tables...")
-        for table, _ in self.TARGET_TABLES:
+        for table in self.TARGET_TABLES.keys():
             sample_table = f"sample_{table}"
             self._run_sql(conn, f"DROP TABLE IF EXISTS {sample_table};")
 
@@ -105,25 +173,46 @@ class SamplingMigrationCostCalculator:
                     return rows, size
             return 0, 0
         except Exception as e:
-            # print(f"Error executing sample query: {e}")
+            print(f"Error executing sample query: {e}")
+            print(f"  Query: {query[:200]}...")
+            conn.rollback()  # トランザクションをロールバックしてエラー状態を解除
             return 0, 0
 
-    def _rewrite_query(self, query) -> Tuple[str, str]:
-        best_table = None
-        for table, alias in self.TARGET_TABLES:
-            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-            if pattern.search(query):
-                best_table = (table, alias)
-                break
+    def _rewrite_query(self, query) -> Tuple[str, str, float]:
+        """クエリ内のテーブルをサンプルテーブルに置換（最初の1件のみ）
         
-        if best_table:
-            table, alias = best_table
-            sample_table = f"sample_{table}"
-            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-            new_query = pattern.sub(f"{sample_table} AS {alias}", query)
-            return new_query, table
+        TABLE_PRIORITYの順序で検索し、最初にマッチしたテーブルを
+        サンプルテーブルに置換する。エイリアスは元のものを保持。
         
-        return None, None
+        Note: FROM/JOIN句のテーブル参照のみマッチし、
+              SELECT句のカラム別名はマッチしない。
+        
+        Returns:
+            Tuple[str, str, float]: (置換後のクエリ, 置換したテーブル名, サンプリング率) 
+            マッチしない場合は (None, None, 1.0)
+        """
+        for table in self.TABLE_PRIORITY:
+            # FROM/JOIN句のテーブル参照にマッチ
+            # パターン: FROM table AS alias / JOIN table AS alias / , table AS alias
+            pattern = re.compile(
+                rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
+                re.IGNORECASE
+            )
+            match = pattern.search(query)
+            if match:
+                alias = match.group(1)  # 元のエイリアスを保持
+                sample_table = f"sample_{table}"
+                sampling_rate = self.TARGET_TABLES[table][1]  # 個別サンプリング率を取得
+                
+                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
+                matched_text = match.group(0)
+                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
+                new_text = f"{prefix} {sample_table} AS {alias}"
+                
+                new_query = query[:match.start()] + new_text + query[match.end():]
+                return new_query, table, sampling_rate
+        
+        return None, None, 1.0
     
     @staticmethod
     def _process_single_node(args: Tuple[str, Dict, Settings, str, float, float]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
@@ -141,14 +230,44 @@ class SamplingMigrationCostCalculator:
         
         node_costs = {}
         overhead_multiplier = 1.2
-        target_tables = [
-            ("cast_info", "ci"),
-            ("movie_info", "mi"),
-            ("movie_companies", "mc"),
-            ("person_info", "pi"),
-            ("movie_keyword", "mk"),
-            ("title", "t"),
-            ("name", "n")
+        # テーブル設定: 辞書形式で各テーブルに個別サンプリング率を設定
+        target_tables = {
+            # === 1. 巨大Fact Tables (10% サンプリング) ===
+            "cast_info": ("ci", 0.10),
+            "movie_info": ("mi", 0.10),
+            # === 2. 中規模Fact Tables (20% サンプリング) ===
+            "movie_keyword": ("mk", 0.20),
+            "movie_companies": ("mc", 0.20),
+            "person_info": ("pi", 0.20),
+            "movie_info_idx": ("mi_idx", 0.20),
+            "aka_name": ("an", 0.20),
+            # === 3. 小規模Fact Tables (50% サンプリング) ===
+            "aka_title": ("at", 0.50),
+            "complete_cast": ("cc", 0.50),
+            "movie_link": ("ml", 0.50),
+            # === 4. Entity/Dimension Tables (30% サンプリング) ===
+            "title": ("t", 0.30),
+            "name": ("n", 0.30),
+            "char_name": ("chn", 0.30),
+            # === 5. 小規模Dictionary Tables (50% サンプリング) ===
+            "company_name": ("cn", 0.50),
+            "keyword": ("k", 0.50),
+            # === 6. Type Tables (100% サンプリング) ===
+            "info_type": ("it", 1.0),
+            "kind_type": ("kt", 1.0),
+            "company_type": ("ct", 1.0),
+            "role_type": ("rt", 1.0),
+            "link_type": ("lt", 1.0),
+            "comp_cast_type": ("cct", 1.0),
+        }
+        
+        # テーブル優先度順リスト
+        table_priority = [
+            "cast_info", "movie_info", "movie_keyword", "movie_companies",
+            "person_info", "movie_info_idx", "aka_name", "aka_title",
+            "complete_cast", "movie_link", "title", "name", "char_name",
+            "company_name", "keyword", "info_type", "kind_type",
+            "company_type", "role_type", "link_type", "comp_cast_type"
         ]
         
         try:
@@ -181,6 +300,7 @@ class SamplingMigrationCostCalculator:
                         pass
                     
                     # サンプリングでサイズを推定
+                    size_source = "explain"  # デフォルトはEXPLAIN
                     match = re.search(r"AS\s+(SELECT.*);", sql, re.IGNORECASE | re.DOTALL)
                     if not match:
                         match = re.search(r"AS\s+(SELECT.*)", sql, re.IGNORECASE | re.DOTALL)
@@ -188,19 +308,34 @@ class SamplingMigrationCostCalculator:
                     if match:
                         select_query = match.group(1)
                         
-                        # クエリを書き換え
-                        best_table = None
-                        for table, alias in target_tables:
-                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-                            if pattern.search(select_query):
-                                best_table = (table, alias)
+                        # クエリを書き換え（FROM/JOIN句のテーブル参照にマッチ）
+                        matched_table = None
+                        rewritten_query = None
+                        table_rate = 1.0
+                        for table in table_priority:
+                            # FROM/JOIN句のテーブル参照にマッチ
+                            pattern = re.compile(
+                                rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
+                                re.IGNORECASE
+                            )
+                            match_result = pattern.search(select_query)
+                            if match_result:
+                                alias = match_result.group(1)  # 元のエイリアスを保持
+                                sample_table = f"sample_{table}"
+                                table_rate = target_tables[table][1]  # 個別サンプリング率を取得
+                                
+                                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
+                                matched_text = match_result.group(0)
+                                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
+                                new_text = f"{prefix} {sample_table} AS {alias}"
+                                
+                                rewritten_query = select_query[:match_result.start()] + new_text + select_query[match_result.end():]
+                                matched_table = table
                                 break
                         
-                        if best_table:
-                            table, alias = best_table
-                            sample_table = f"sample_{table}"
-                            pattern = re.compile(f"\\b{table}\\s+(?:AS\\s+)?{alias}\\b", re.IGNORECASE)
-                            rewritten_query = pattern.sub(f"{sample_table} AS {alias}", select_query)
+                        if rewritten_query:
+                            # テーブル個別のサンプリング率でスケールバック
+                            current_scale_factor = 1.0 / table_rate
                             
                             # サンプルからサイズを取得
                             wrapped_query = f"""
@@ -215,30 +350,36 @@ class SamplingMigrationCostCalculator:
                                         rows = int(result[0]) if result[0] else 0
                                         size = int(result[1]) if result[1] else 0
                                         if rows > 0:
-                                            est_rows = int(rows * scale_factor)
-                                            est_size = int(size * scale_factor * overhead_multiplier)
+                                            est_rows = int(rows * current_scale_factor)
+                                            est_size = int(size * current_scale_factor * overhead_multiplier)
+                                            size_source = "sampling"  # サンプリング成功
                             except Exception:
                                 pass
                     
-                    # 書き込みコストをPostgreSQLのコスト単位で計算
-                    # write_cost = (pages * page_cost) + (rows * cpu_tuple_cost)
-                    # サンプリングで得られた est_rows と est_size を使用
-                    estimated_pages = est_size / SamplingMigrationCostCalculator.PAGE_SIZE
-                    write_cost = (estimated_pages * SamplingMigrationCostCalculator.WRITE_PAGE_COST + 
-                                  est_rows * SamplingMigrationCostCalculator.CPU_TUPLE_COST)
-                    total_cost = cost + write_cost
+                    # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
+                    if size_source == "explain" and est_size > 0:
+                        correction = SamplingMigrationCostCalculator.EXPLAIN_SIZE_CORRECTION_FACTOR
+                        est_size = int(est_size * correction)
+                        est_rows = int(est_rows * correction)
+                    
+                    # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
+                    # 書き込みコスト = ページ書き込み + タプル処理
+                    write_pages = (est_size // 8192) + 1 if est_size > 0 else 0
+                    write_cost = (write_pages * 1.0) + (est_rows * 0.01)  # SEQ_PAGE_COST + CPU_TUPLE_COST
+                    creation_cost = cost + write_cost  # 読み取り + 書き込み
                     
                     node_costs[plan_key] = {
-                        "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
-                        "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
-                        "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                        "cost": creation_cost,  # 作成コスト（読み取り + 書き込み）
+                        "utility": cost,  # 利得（EXPLAINコスト = 読み取りのみ）
                         "rows": est_rows,
                         "width": int(est_size / est_rows) if est_rows > 0 else 0,
-                        "size": est_size
+                        "size": est_size,
+                        "size_source": size_source  # "sampling" or "explain"
                     }
                 else:
                     node_costs[plan_key] = {
                         "cost": 0.0,
+                        "utility": 0.0,
                         "rows": 0,
                         "width": 0,
                         "size": 0
@@ -249,7 +390,14 @@ class SamplingMigrationCostCalculator:
         
         return node, node_costs
 
-    def calculate_all_costs(self, use_parallel: bool = True, max_workers: int = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    def calculate_all_costs(self, use_parallel: bool = False, max_workers: int = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        if self.precomputed_costs_file:
+            print(f"Using precomputed costs from: {self.precomputed_costs_file}")
+            with open(self.precomputed_costs_file, 'r', encoding='utf-8') as f:
+                self.costs = json.load(f)
+            self.save_costs() # Ensure it's saved to the expected location for downstream phases
+            return self.costs
+
         print("\n" + "="*70)
         print(f"Calculating migration costs using SAMPLING ({'PARALLEL' if use_parallel else 'SEQUENTIAL'})...")
         print("="*70)
@@ -334,41 +482,50 @@ class SamplingMigrationCostCalculator:
                                         width = int(plan.get('Plan Width', 0))
                                         est_size = est_rows * width
                             except Exception:
-                                pass
+                                conn.rollback()  # トランザクションをロールバック
 
+                            size_source = "explain"  # デフォルトはEXPLAIN
                             if match:
                                 select_query = match.group(1)
-                                rewritten_query, used_table = self._rewrite_query(select_query)
+                                rewritten_query, used_table, table_rate = self._rewrite_query(select_query)
                                 
                                 if rewritten_query:
                                     rows, size = self._get_sample_estimate(conn, rewritten_query)
                                     if rows > 0:
-                                        est_rows = int(rows * self.SCALE_FACTOR)
-                                        est_size = int(size * self.SCALE_FACTOR * self.OVERHEAD_MULTIPLIER)
+                                        # テーブル個別のサンプリング率でスケールバック
+                                        scale_factor = 1.0 / table_rate
+                                        est_rows = int(rows * scale_factor)
+                                        est_size = int(size * scale_factor * self.OVERHEAD_MULTIPLIER)
+                                        size_source = "sampling"  # サンプリング成功
                                         updated_count += 1
                                     else:
                                         skipped_count += 1
                                 else:
                                     skipped_count += 1
                             
-                            # 書き込みコストをPostgreSQLのコスト単位で計算
-                            # サンプリングで得られた est_rows と est_size を使用
-                            estimated_pages = est_size / self.PAGE_SIZE
-                            write_cost = (estimated_pages * self.WRITE_PAGE_COST + 
-                                          est_rows * self.CPU_TUPLE_COST)
-                            total_cost = cost + write_cost
+                            # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
+                            if size_source == "explain" and est_size > 0:
+                                est_size = int(est_size * self.EXPLAIN_SIZE_CORRECTION_FACTOR)
+                                est_rows = int(est_rows * self.EXPLAIN_SIZE_CORRECTION_FACTOR)
+                            
+                            # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
+                            # 書き込みコスト = ページ書き込み + タプル処理
+                            write_pages = (est_size // 8192) + 1 if est_size > 0 else 0
+                            write_cost = (write_pages * 1.0) + (est_rows * 0.01)  # SEQ_PAGE_COST + CPU_TUPLE_COST
+                            creation_cost = cost + write_cost  # 読み取り + 書き込み
                             
                             self.costs[node][plan_key] = {
-                                "cost": total_cost,  # 読み取り + 書き込みコスト（PostgreSQL Cost Units）
-                                "read_cost": cost,   # 元のEXPLAINコスト（読み取りのみ）
-                                "write_cost": write_cost,  # 書き込みコスト（PostgreSQL Cost Units）
+                                "cost": creation_cost,  # 作成コスト（読み取り + 書き込み）
+                                "utility": cost,  # 利得（EXPLAINコスト = 読み取りのみ）
                                 "rows": est_rows,
                                 "width": int(est_size / est_rows) if est_rows > 0 else 0,
-                                "size": est_size
+                                "size": est_size,
+                                "size_source": size_source  # "sampling" or "explain"
                             }
                         else:
                             self.costs[node][plan_key] = {
                                 "cost": 0.0,
+                                "utility": 0.0,
                                 "rows": 0,
                                 "width": 0,
                                 "size": 0
