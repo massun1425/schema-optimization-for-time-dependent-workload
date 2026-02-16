@@ -57,10 +57,11 @@ class SimpleMigrationCostCalculator:
         )
     
 
-    def _explain_sql(self, sql: str) -> tuple[float, int, int]:
+    def _explain_sql(self, cursor, sql: str) -> tuple[float, int, int]:
         """SQLをEXPLAINし、totalcost、rows、widthを取得
         
         Args:
+            cursor: データベースカーソル（接続の使い回し用）
             sql: 実行するSQL
             
         Returns:
@@ -69,7 +70,7 @@ class SimpleMigrationCostCalculator:
         if not sql or sql.strip() == "" or not isinstance(sql, str):
             return (0.0, 0, 0)
         
-        # \"NON_MIGRATE\" は実際のSQLではないので0を返す
+        # "NON_MIGRATE" は実際のSQLではないので0を返す
         if sql == "NON_MIGRATE":
             return (0.0, 0, 0)
         
@@ -79,28 +80,26 @@ class SimpleMigrationCostCalculator:
         if match:
             sql = match.group(1).strip()
         else:
-            # \"AS\" が見つからない場合はエラー
+            # "AS" が見つからない場合はエラー
             print(f"  CREATE文のパースエラー: {sql[:80]}...")
             return (0.0, 0, 0)
         
         try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cursor:
-                    # EXPLAIN を実行
-                    explain_query = f"EXPLAIN (FORMAT JSON) {sql}"
-                    cursor.execute(explain_query)
-                    result = cursor.fetchone()
+            # EXPLAIN を実行
+            explain_query = f"EXPLAIN (FORMAT JSON) {sql}"
+            cursor.execute(explain_query)
+            result = cursor.fetchone()
 
-                    if result and result[0]:
-                        # JSON形式の結果からtotal_cost、plan_rows、plan_widthを取得
-                        plan = result[0][0]  # 最初のプラン
-                        plan_data = plan.get('Plan', {})
-                        total_cost = float(plan_data.get('Total Cost', 0.0))
-                        plan_rows = int(plan_data.get('Plan Rows', 0))
-                        plan_width = int(plan_data.get('Plan Width', 0))
-                        return (total_cost, plan_rows, plan_width)
-                    else:
-                        return (0.0, 0, 0)
+            if result and result[0]:
+                # JSON形式の結果からtotal_cost、plan_rows、plan_widthを取得
+                plan = result[0][0]  # 最初のプラン
+                plan_data = plan.get('Plan', {})
+                total_cost = float(plan_data.get('Total Cost', 0.0))
+                plan_rows = int(plan_data.get('Plan Rows', 0))
+                plan_width = int(plan_data.get('Plan Width', 0))
+                return (total_cost, plan_rows, plan_width)
+            else:
+                return (0.0, 0, 0)
         except Exception as e:
             print(f"  エラー: EXPLAINの実行失敗 - {e}")
             print(f"  SQL: {sql[:100]}...")
@@ -111,49 +110,76 @@ class SimpleMigrationCostCalculator:
         """すべてのマイグレーションプラン（2パターンのみ）のコストを計算
         
         Returns:
-            ノード名 -> {プランキー: {cost, rows, width, size}} の辞書
+            ノード名 -> {プランキー: {cost, utility, rows, width, size}} の辞書
+            - cost: 作成コスト（読み取り + 書き込み）
+            - utility: 利得（EXPLAINのTotal Cost = 読み取りコストのみ）
         """
         print("\n" + "="*70)
-        print("マイグレーションコストを計算中...")
+        print("マイグレーションコストを計算中（書き込みコスト含む）...")
         print("="*70)
         
         total_nodes = len(self.plans)
         processed = 0
         
-        # simple_migration_plans.jsonから読み込んだ順序を保持（leaf → non_leaf, ID昇順）
-        for node, plans in self.plans.items():
-            processed += 1
-            if processed % 10 == 0 or processed == total_nodes:
-                print(f"  進捗: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
-            
-            self.costs[node] = {}
-            
-            # 2パターンのみ処理（順番を保証するためソート）
-            for plan_key in sorted(plans.keys()):
-                sql = plans[plan_key]
-                
-                if plan_key == "[]":
-                    # 依存MV無しでマイグレーション
-                    cost, rows, width = self._explain_sql(sql)
-                    size = rows * width
-                    self.costs[node][plan_key] = {
-                        "cost": cost,
-                        "rows": rows,
-                        "width": width,
-                        "size": size
-                    }
-                else:
-                    # NON_MIGRATE パターン (str([target_mv])の形式)
-                    # SQLは "NON_MIGRATE" 文字列なので、コストとサイズは0
-                    self.costs[node][plan_key] = {
-                        "cost": 0.0,
-                        "rows": 0,
-                        "width": 0,
-                        "size": 0
-                    }
+        # データベース接続を1回だけ開く（全EXPLAIN実行で使い回し）
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Phase 1と同じ設定を適用（推定精度向上）
+                    cursor.execute("SET enable_bitmapscan = off;")
+                    cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute("SET random_page_cost = 1.1;")
+                    
+                    # simple_migration_plans.jsonから読み込んだ順序を保持（leaf → non_leaf, ID昇順）
+                    for node, plans in self.plans.items():
+                        processed += 1
+                        if processed % 10 == 0 or processed == total_nodes:
+                            print(f"  進捗: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
+                        
+                        self.costs[node] = {}
+                        
+                        # 2パターンのみ処理（順番を保証するためソート）
+                        for plan_key in sorted(plans.keys()):
+                            sql = plans[plan_key]
+                            
+                            if plan_key == "[]":
+                                # 依存MV無しでマイグレーション
+                                total_cost, rows, width = self._explain_sql(cursor, sql)
+                                size = rows * width
+                                
+                                # 書き込みコストを計算
+                                # ページ書き込みコスト = (サイズ / ページサイズ) * SEQ_PAGE_COST
+                                # タプル処理コスト = 行数 * CPU_TUPLE_COST
+                                write_pages = (size // 8192) + 1 if size > 0 else 0
+                                write_cost = (write_pages * 1.0) + (rows * 0.01)
+                                
+                                # 作成コスト = 読み取りコスト + 書き込みコスト
+                                creation_cost = total_cost + write_cost
+                                
+                                self.costs[node][plan_key] = {
+                                    "cost": creation_cost,      # 作成コスト（読み取り + 書き込み）
+                                    "utility": total_cost,      # 利得（EXPLAINコスト = 読み取りのみ）
+                                    "rows": rows,
+                                    "width": width,
+                                    "size": size
+                                }
+                            else:
+                                # NON_MIGRATE パターン (str([target_mv])の形式)
+                                # SQLは "NON_MIGRATE" 文字列なので、コストとサイズは0
+                                self.costs[node][plan_key] = {
+                                    "cost": 0.0,
+                                    "utility": 0.0,
+                                    "rows": 0,
+                                    "width": 0,
+                                    "size": 0
+                                }
 
-        print(f"\n✓ 計算完了: {len(self.costs)}個のノード")
-        print("="*70 + "\n")
+            print(f"\n✓ 計算完了: {len(self.costs)}個のノード")
+            print("="*70 + "\n")
+            
+        except Exception as e:
+            print(f"\nエラー: データベース接続に失敗しました - {e}")
+            raise
         
         # コストをJSONファイルに保存
         self.save_costs()

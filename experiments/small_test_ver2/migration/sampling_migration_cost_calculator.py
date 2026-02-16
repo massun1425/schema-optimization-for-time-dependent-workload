@@ -12,50 +12,60 @@ from config.settings import Settings
 class SamplingMigrationCostCalculator:
     """サンプリングを使用してMVのサイズを推定するクラス"""
 
-    TARGET_TABLES = [
-        # === Fact Tables (巨大・最重要) ===
-        ("cast_info", "ci"),
-        ("movie_info", "mi"),
-        ("movie_companies", "mc"),
-        ("movie_keyword", "mk"),
-        ("movie_info_idx", "mi_idx"),
-        ("person_info", "pi"),
-
-        # === Entity Tables (中心となる実体) ===
-        ("title", "t"),
-        ("name", "n"),
-
-        # === Dictionary/Dimension Tables (フィルタ条件の要) ===
-        ("keyword", "k"),
-        ("info_type", "it"),
-        ("company_name", "cn"),
-        ("company_type", "ct"),
-        ("kind_type", "kt"),
-        ("role_type", "rt"),
-        ("char_name", "chn"),
-        ("aka_name", "an"),
-
-        # === Additional Tables (追加) ===
-        ("movie_link", "ml"),
-        ("link_type", "lt"),
-        ("complete_cast", "cc"),
-        ("comp_cast_type", "cct"),
-        ("aka_title", "at"),
+    # テーブル設定: {table_name: (alias, sampling_rate)}
+    # サンプリング率は母集団サイズに応じて段階的に設定
+    # 優先度順（多側テーブル優先）に並べる
+    TARGET_TABLES = {
+        # === 1. 巨大Fact Tables (10% サンプリング) ===
+        "cast_info": ("ci", 0.10),          # 3.8GB, 36M行 - title/name/char_nameの多側
+        "movie_info": ("mi", 0.10),          # 1.9GB, 15M行 - titleの多側
+        
+        # === 2. 中規模Fact Tables (20% サンプリング) ===
+        "movie_keyword": ("mk", 0.20),       # 361MB, 4.5M行 - title/keywordの多側
+        "movie_companies": ("mc", 0.20),     # 282MB, 2.6M行 - title/company_nameの多側
+        "person_info": ("pi", 0.20),         # 550MB, 3.0M行 - nameの多側
+        "movie_info_idx": ("mi_idx", 0.20),  # 123MB, 1.4M行 - titleの多側
+        "aka_name": ("an", 0.20),            # 125MB, 901K行 - nameの多側
+        
+        # === 3. 小規模Fact Tables (50% サンプリング) ===
+        "aka_title": ("at", 1.0),           # 67MB, 361K行 - titleの多側
+        "complete_cast": ("cc", 1.0),       # 11MB, 135K行 - titleの多側
+        "movie_link": ("ml", 1.0),          # 3MB, 30K行 - titleの多側
+        
+        # === 4. Entity/Dimension Tables (30% サンプリング) ===
+        "title": ("t", 0.30),                # 368MB, 2.5M行 - マスタテーブル
+        "name": ("n", 0.30),                 # 552MB, 4.2M行 - マスタテーブル
+        "char_name": ("chn", 0.30),          # 373MB, 3.1M行 - ディメンションテーブル
+        
+        # === 5. 小規模Dictionary Tables (50% サンプリング) ===
+        "company_name": ("cn", 1.0),        # 31MB, 235K行 - ディメンションテーブル
+        "keyword": ("k", 1.0),              # 12MB, 134K行 - ディメンションテーブル
+        
+        # === 6. Type Tables (100% サンプリング = 全件) ===
+        "info_type": ("it", 1.0),            # 24kB, 113行
+        "kind_type": ("kt", 1.0),            # 24kB, 7行
+        "company_type": ("ct", 1.0),         # 24kB, 4行
+        "role_type": ("rt", 1.0),            # 24kB, 12行
+        "link_type": ("lt", 1.0),            # 24kB, 18行
+        "comp_cast_type": ("cct", 1.0),      # 24kB, 4行
+    }
+    
+    # テーブル優先度順リスト（_rewrite_queryで使用）
+    TABLE_PRIORITY = [
+        "cast_info", "movie_info", "movie_keyword", "movie_companies",
+        "person_info", "movie_info_idx", "aka_name", "aka_title",
+        "complete_cast", "movie_link", "title", "name", "char_name",
+        "company_name", "keyword", "info_type", "kind_type",
+        "company_type", "role_type", "link_type", "comp_cast_type"
     ]
 
-    # 小さいテーブル（数行〜数千行）はサンプリングせず全件使用
-    SMALL_TABLES = {
-        "info_type",      # 113行
-        "kind_type",      # 7行
-        "company_type",   # 4行
-        "role_type",      # 12行
-        "link_type",      # 18行
-        "comp_cast_type", # 4行
-    }
-
-    SAMPLING_RATE = 0.10
-    SCALE_FACTOR = 1.0 / SAMPLING_RATE
-    OVERHEAD_MULTIPLIER = 1.2
+    # デフォルト設定（互換性のため残す）
+    SAMPLING_RATE = 0.10  # 未使用（各テーブルが個別レートを持つ）
+    SCALE_FACTOR = 1.0 / SAMPLING_RATE  # 未使用
+    OVERHEAD_MULTIPLIER = 1.0
+    # EXPLAIN-based size estimates are typically 64x smaller than actual sizes
+    # (based on analysis of 22 root nodes from JOB workload)
+    EXPLAIN_SIZE_CORRECTION_FACTOR = 1 # 64
 
     def __init__(self, settings: Settings, query_set: str = "job_like", precomputed_costs_file: str = None):
         self.settings = settings
@@ -101,19 +111,15 @@ class SamplingMigrationCostCalculator:
         created_tables = []
         failed_tables = []
         
-        for table, _ in self.TARGET_TABLES:
+        for table, (alias, sampling_rate) in self.TARGET_TABLES.items():
             sample_table = f"sample_{table}"
             
-            # 小さいテーブルは100%、それ以外はSAMPLING_RATE
-            if table in self.SMALL_TABLES:
-                rate = 100
-                print(f"  Creating {sample_table} (100% - small table)")
-            else:
-                rate = self.SAMPLING_RATE * 100
-                print(f"  Creating {sample_table} ({rate}% of {table})")
+            # 各テーブルの個別サンプリング率を使用
+            rate_percent = sampling_rate * 100
+            print(f"  Creating {sample_table} ({rate_percent:.0f}% of {table})")
             
             sql_text = f"""
-            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate});
+            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate_percent});
             ANALYZE {sample_table};
             """
             if self._run_sql(conn, sql_text):
@@ -147,7 +153,7 @@ class SamplingMigrationCostCalculator:
 
     def drop_sample_tables(self, conn):
         print("Dropping sample tables...")
-        for table, _ in self.TARGET_TABLES:
+        for table in self.TARGET_TABLES.keys():
             sample_table = f"sample_{table}"
             self._run_sql(conn, f"DROP TABLE IF EXISTS {sample_table};")
 
@@ -172,23 +178,20 @@ class SamplingMigrationCostCalculator:
             conn.rollback()  # トランザクションをロールバックしてエラー状態を解除
             return 0, 0
 
-    def _rewrite_query(self, query) -> Tuple[str, str]:
+    def _rewrite_query(self, query) -> Tuple[str, str, float]:
         """クエリ内のテーブルをサンプルテーブルに置換（最初の1件のみ）
         
-        TARGET_TABLESの順序で検索し、最初にマッチしたテーブルを
+        TABLE_PRIORITYの順序で検索し、最初にマッチしたテーブルを
         サンプルテーブルに置換する。エイリアスは元のものを保持。
         
         Note: FROM/JOIN句のテーブル参照のみマッチし、
               SELECT句のカラム別名はマッチしない。
         
         Returns:
-            Tuple[str, str]: (置換後のクエリ, 置換したテーブル名) 
-            マッチしない場合は (None, None)
+            Tuple[str, str, float]: (置換後のクエリ, 置換したテーブル名, サンプリング率) 
+            マッチしない場合は (None, None, 1.0)
         """
-        for table, _ in self.TARGET_TABLES:
-            # SMALL_TABLESはサンプルテーブルも全件なのでスキップ不要だが、
-            # 大きいテーブルを優先するためそのまま順序通り検索
-            
+        for table in self.TABLE_PRIORITY:
             # FROM/JOIN句のテーブル参照にマッチ
             # パターン: FROM table AS alias / JOIN table AS alias / , table AS alias
             pattern = re.compile(
@@ -199,6 +202,7 @@ class SamplingMigrationCostCalculator:
             if match:
                 alias = match.group(1)  # 元のエイリアスを保持
                 sample_table = f"sample_{table}"
+                sampling_rate = self.TARGET_TABLES[table][1]  # 個別サンプリング率を取得
                 
                 # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
                 matched_text = match.group(0)
@@ -206,9 +210,9 @@ class SamplingMigrationCostCalculator:
                 new_text = f"{prefix} {sample_table} AS {alias}"
                 
                 new_query = query[:match.start()] + new_text + query[match.end():]
-                return new_query, table
+                return new_query, table, sampling_rate
         
-        return None, None
+        return None, None, 1.0
     
     @staticmethod
     def _process_single_node(args: Tuple[str, Dict, Settings, str, float, float]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
@@ -226,32 +230,44 @@ class SamplingMigrationCostCalculator:
         
         node_costs = {}
         overhead_multiplier = 1.2
-        target_tables = [
-            # === Fact Tables ===
-            ("cast_info", "ci"),
-            ("movie_info", "mi"),
-            ("movie_companies", "mc"),
-            ("movie_keyword", "mk"),
-            ("movie_info_idx", "mi_idx"),
-            ("person_info", "pi"),
-            # === Entity Tables ===
-            ("title", "t"),
-            ("name", "n"),
-            # === Dictionary Tables ===
-            ("keyword", "k"),
-            ("info_type", "it"),
-            ("company_name", "cn"),
-            ("company_type", "ct"),
-            ("kind_type", "kt"),
-            ("role_type", "rt"),
-            ("char_name", "chn"),
-            ("aka_name", "an"),
-            # === Additional Tables ===
-            ("movie_link", "ml"),
-            ("link_type", "lt"),
-            ("complete_cast", "cc"),
-            ("comp_cast_type", "cct"),
-            ("aka_title", "at"),
+        # テーブル設定: 辞書形式で各テーブルに個別サンプリング率を設定
+        target_tables = {
+            # === 1. 巨大Fact Tables (10% サンプリング) ===
+            "cast_info": ("ci", 0.10),
+            "movie_info": ("mi", 0.10),
+            # === 2. 中規模Fact Tables (20% サンプリング) ===
+            "movie_keyword": ("mk", 0.20),
+            "movie_companies": ("mc", 0.20),
+            "person_info": ("pi", 0.20),
+            "movie_info_idx": ("mi_idx", 0.20),
+            "aka_name": ("an", 0.20),
+            # === 3. 小規模Fact Tables (50% サンプリング) ===
+            "aka_title": ("at", 0.50),
+            "complete_cast": ("cc", 0.50),
+            "movie_link": ("ml", 0.50),
+            # === 4. Entity/Dimension Tables (30% サンプリング) ===
+            "title": ("t", 0.30),
+            "name": ("n", 0.30),
+            "char_name": ("chn", 0.30),
+            # === 5. 小規模Dictionary Tables (50% サンプリング) ===
+            "company_name": ("cn", 0.50),
+            "keyword": ("k", 0.50),
+            # === 6. Type Tables (100% サンプリング) ===
+            "info_type": ("it", 1.0),
+            "kind_type": ("kt", 1.0),
+            "company_type": ("ct", 1.0),
+            "role_type": ("rt", 1.0),
+            "link_type": ("lt", 1.0),
+            "comp_cast_type": ("cct", 1.0),
+        }
+        
+        # テーブル優先度順リスト
+        table_priority = [
+            "cast_info", "movie_info", "movie_keyword", "movie_companies",
+            "person_info", "movie_info_idx", "aka_name", "aka_title",
+            "complete_cast", "movie_link", "title", "name", "char_name",
+            "company_name", "keyword", "info_type", "kind_type",
+            "company_type", "role_type", "link_type", "comp_cast_type"
         ]
         
         try:
@@ -295,7 +311,8 @@ class SamplingMigrationCostCalculator:
                         # クエリを書き換え（FROM/JOIN句のテーブル参照にマッチ）
                         matched_table = None
                         rewritten_query = None
-                        for table, _ in target_tables:
+                        table_rate = 1.0
+                        for table in table_priority:
                             # FROM/JOIN句のテーブル参照にマッチ
                             pattern = re.compile(
                                 rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
@@ -305,6 +322,7 @@ class SamplingMigrationCostCalculator:
                             if match_result:
                                 alias = match_result.group(1)  # 元のエイリアスを保持
                                 sample_table = f"sample_{table}"
+                                table_rate = target_tables[table][1]  # 個別サンプリング率を取得
                                 
                                 # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
                                 matched_text = match_result.group(0)
@@ -316,6 +334,8 @@ class SamplingMigrationCostCalculator:
                                 break
                         
                         if rewritten_query:
+                            # テーブル個別のサンプリング率でスケールバック
+                            current_scale_factor = 1.0 / table_rate
                             
                             # サンプルからサイズを取得
                             wrapped_query = f"""
@@ -330,11 +350,17 @@ class SamplingMigrationCostCalculator:
                                         rows = int(result[0]) if result[0] else 0
                                         size = int(result[1]) if result[1] else 0
                                         if rows > 0:
-                                            est_rows = int(rows * scale_factor)
-                                            est_size = int(size * scale_factor * overhead_multiplier)
+                                            est_rows = int(rows * current_scale_factor)
+                                            est_size = int(size * current_scale_factor * overhead_multiplier)
                                             size_source = "sampling"  # サンプリング成功
                             except Exception:
                                 pass
+                    
+                    # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
+                    if size_source == "explain" and est_size > 0:
+                        correction = SamplingMigrationCostCalculator.EXPLAIN_SIZE_CORRECTION_FACTOR
+                        est_size = int(est_size * correction)
+                        est_rows = int(est_rows * correction)
                     
                     # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
                     # 書き込みコスト = ページ書き込み + タプル処理
@@ -461,19 +487,26 @@ class SamplingMigrationCostCalculator:
                             size_source = "explain"  # デフォルトはEXPLAIN
                             if match:
                                 select_query = match.group(1)
-                                rewritten_query, used_table = self._rewrite_query(select_query)
+                                rewritten_query, used_table, table_rate = self._rewrite_query(select_query)
                                 
                                 if rewritten_query:
                                     rows, size = self._get_sample_estimate(conn, rewritten_query)
                                     if rows > 0:
-                                        est_rows = int(rows * self.SCALE_FACTOR)
-                                        est_size = int(size * self.SCALE_FACTOR * self.OVERHEAD_MULTIPLIER)
+                                        # テーブル個別のサンプリング率でスケールバック
+                                        scale_factor = 1.0 / table_rate
+                                        est_rows = int(rows * scale_factor)
+                                        est_size = int(size * scale_factor * self.OVERHEAD_MULTIPLIER)
                                         size_source = "sampling"  # サンプリング成功
                                         updated_count += 1
                                     else:
                                         skipped_count += 1
                                 else:
                                     skipped_count += 1
+                            
+                            # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
+                            if size_source == "explain" and est_size > 0:
+                                est_size = int(est_size * self.EXPLAIN_SIZE_CORRECTION_FACTOR)
+                                est_rows = int(est_rows * self.EXPLAIN_SIZE_CORRECTION_FACTOR)
                             
                             # EXPLAINのコストをutilityとし、作成コスト=読み取り+書き込みを計算
                             # 書き込みコスト = ページ書き込み + タプル処理
