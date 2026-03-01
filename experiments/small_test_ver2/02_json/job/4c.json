@@ -1,36 +1,36 @@
 [
   {
     "Plan": {
-      "node_id": "non_leaf_48",
+      "node_id": "non_leaf_49",
       "Node Type": "Nested Loop",
       "Parallel Aware": false,
       "Async Capable": false,
       "Join Type": "Inner",
       "Startup Cost": 1.29,
-      "Total Cost": 12119.82,
-      "Plan Rows": 52,
-      "Plan Width": 199,
+      "Total Cost": 7101.6,
+      "Plan Rows": 5,
+      "Plan Width": 198,
       "Disabled": false,
       "Inner Unique": true,
       "Join Filter": "(mi_idx.movie_id = t.id)",
       "Plans": [
         {
-          "node_id": "non_leaf_47",
+          "node_id": "non_leaf_48",
           "Node Type": "Nested Loop",
           "Parent Relationship": "Outer",
           "Parallel Aware": false,
           "Async Capable": false,
           "Join Type": "Inner",
           "Startup Cost": 0.86,
-          "Total Cost": 12084.31,
-          "Plan Rows": 75,
-          "Plan Width": 105,
+          "Total Cost": 7098.29,
+          "Plan Rows": 7,
+          "Plan Width": 104,
           "Disabled": false,
           "Inner Unique": false,
           "Join Filter": "(it.id = mi_idx.info_type_id)",
           "Plans": [
             {
-              "node_id": "leaf_25",
+              "node_id": "leaf_26",
               "Node Type": "Seq Scan",
               "Parent Relationship": "Outer",
               "Parallel Aware": false,
@@ -45,35 +45,35 @@
               "Filter": "((info)::text = 'rating'::text)"
             },
             {
-              "node_id": "non_leaf_46",
+              "node_id": "non_leaf_47",
               "Node Type": "Nested Loop",
               "Parent Relationship": "Inner",
               "Parallel Aware": false,
               "Async Capable": false,
               "Join Type": "Inner",
               "Startup Cost": 0.86,
-              "Total Cost": 11976.03,
-              "Plan Rows": 8470,
-              "Plan Width": 87,
+              "Total Cost": 7085.55,
+              "Plan Rows": 826,
+              "Plan Width": 86,
               "Disabled": false,
               "Inner Unique": false,
               "Plans": [
                 {
-                  "node_id": "non_leaf_33",
+                  "node_id": "non_leaf_34",
                   "Node Type": "Nested Loop",
                   "Parent Relationship": "Outer",
                   "Parallel Aware": false,
                   "Async Capable": false,
                   "Join Type": "Inner",
                   "Startup Cost": 0.43,
-                  "Total Cost": 9671.35,
-                  "Plan Rows": 4518,
+                  "Total Cost": 6862.12,
+                  "Plan Rows": 438,
                   "Plan Width": 37,
                   "Disabled": false,
                   "Inner Unique": false,
                   "Plans": [
                     {
-                      "node_id": "leaf_19",
+                      "node_id": "leaf_20",
                       "Node Type": "Seq Scan",
                       "Parent Relationship": "Outer",
                       "Parallel Aware": false,
@@ -82,13 +82,13 @@
                       "Alias": "k",
                       "Startup Cost": 0.0,
                       "Total Cost": 2685.12,
-                      "Plan Rows": 134,
+                      "Plan Rows": 13,
                       "Plan Width": 25,
                       "Disabled": false,
                       "Filter": "(keyword ~~ '%sequel%'::text)"
                     },
                     {
-                      "node_id": "leaf_13",
+                      "node_id": "leaf_14",
                       "Node Type": "Index Scan",
                       "Parent Relationship": "Inner",
                       "Parallel Aware": false,
@@ -98,8 +98,8 @@
                       "Relation Name": "movie_keyword",
                       "Alias": "mk",
                       "Startup Cost": 0.43,
-                      "Total Cost": 51.63,
-                      "Plan Rows": 51,
+                      "Total Cost": 318.25,
+                      "Plan Rows": 306,
                       "Plan Width": 12,
                       "Disabled": false,
                       "Index Cond": "(keyword_id = k.id)"
@@ -107,7 +107,7 @@
                   ]
                 },
                 {
-                  "node_id": "leaf_28",
+                  "node_id": "leaf_29",
                   "Node Type": "Index Scan",
                   "Parent Relationship": "Inner",
                   "Parallel Aware": false,
@@ -119,7 +119,7 @@
                   "Startup Cost": 0.43,
                   "Total Cost": 0.49,
                   "Plan Rows": 2,
-                  "Plan Width": 50,
+                  "Plan Width": 49,
                   "Disabled": false,
                   "Index Cond": "(movie_id = mk.movie_id)",
                   "Filter": "(info > '2.0'::text)"
@@ -129,7 +129,7 @@
           ]
         },
         {
-          "node_id": "leaf_23",
+          "node_id": "leaf_24",
           "Node Type": "Index Scan",
           "Parent Relationship": "Inner",
           "Parallel Aware": false,

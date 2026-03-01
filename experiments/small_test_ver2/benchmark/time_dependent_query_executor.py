@@ -51,13 +51,13 @@ class TimeDependentQueryExecutor:
                 database=self.db_config.database
             )
             # 統計情報のターゲットを1000に設定（セッションごとにリセットされるためここで設定）
-            # try:
-            #     with self.connection.cursor() as cursor:
-            #         # cursor.execute("SET default_statistics_target = 1000;")
-            #         # cursor.execute("SET random_page_cost = 1.1;")
-            #     self.connection.commit()
-            # except Exception as e:
-            #     logger.warning(f"Failed to set random_page_cost: {e}")
+            try:
+                with self.connection.cursor() as cursor:
+                    # cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute("SET random_page_cost = 1.1;")
+                self.connection.commit()
+            except Exception as e:
+                logger.warning(f"Failed to set random_page_cost: {e}")
         return self.connection
 
     

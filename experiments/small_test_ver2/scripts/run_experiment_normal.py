@@ -194,8 +194,8 @@ class NormalModeExperiment:
                 # これによりヒストグラムの粒度が上がり、JOBのような偏ったデータの推定精度が向上する
                 # テーブルレベルの永続化は容量とANALYZE時間を圧迫するため、セッションのみで十分
                 try:
-                    cursor.execute("SET default_statistics_target = 1000;")
-                    # cursor.execute("SET random_page_cost = 1.1;")
+                    # cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute("SET random_page_cost = 1.1;")
                 except Exception as e:
                     pass
                 
@@ -435,10 +435,11 @@ class NormalModeExperiment:
         
         # 拡張統計情報（Extended Statistics）を作成
         # JOBクエリの結合順序推定精度を向上させるための多変量統計
-        self.print_info("拡張統計情報を作成中...")
-        if not self._create_extended_statistics():
-            self.print_error("拡張統計情報の作成に失敗しました")
-            # 失敗しても続行（警告のみ）
+
+        # self.print_info("拡張統計情報を作成中...")
+        # if not self._create_extended_statistics():
+        #     self.print_error("拡張統計情報の作成に失敗しました")
+        #     # 失敗しても続行（警告のみ）
         
         # 拡張統計情報を計算するためにANALYZEを再実行
         self.print_info("拡張統計情報を計算するためANALYZEを再実行中...")
@@ -1570,7 +1571,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(1024*1024*1024)
+            B_max = float(100*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")

@@ -170,17 +170,37 @@ async def get_result_files(query_set: str, subfolder: str = "") -> Dict[str, Lis
     if not output_path.exists():
         raise HTTPException(status_code=404, detail="Path not found")
     
+    # Dynamic最適化ファイル (td_mv_optimization_result)
     opt_files = [f.name for f in sorted(output_path.glob("td_mv_optimization_result_*.json"), 
                                          key=lambda f: natural_sort_key(f.name))]
-    bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_*.json"),
+    
+    # Adaptive最適化ファイル (adaptive_mv_optimization_result)
+    adaptive_opt_files = [f.name for f in sorted(output_path.glob("adaptive_mv_optimization_result_*.json"),
+                                                   key=lambda f: natural_sort_key(f.name))]
+    
+    # Dynamicベンチマークファイル (adaptive/static以外)
+    bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_dynamic_*.json"),
                                           key=lambda f: natural_sort_key(f.name))]
+    
+    # Adaptiveベンチマークファイル
+    adaptive_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_adaptive_*.json"),
+                                                    key=lambda f: natural_sort_key(f.name))]
+    
+    # Static最適化ファイル
     static_files = [f.name for f in sorted(output_path.glob("static_mv_optimization_result_*.json"),
                                            key=lambda f: natural_sort_key(f.name))]
+    
+    # Staticベンチマークファイル
+    static_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_static_*.json"),
+                                                  key=lambda f: natural_sort_key(f.name))]
     
     return {
         "optimization": opt_files,
         "benchmark": bench_files,
-        "static": static_files
+        "static": static_files,
+        "adaptive_optimization": adaptive_opt_files,
+        "adaptive_benchmark": adaptive_bench_files,
+        "static_benchmark": static_bench_files
     }
 
 
@@ -249,8 +269,11 @@ async def get_optimization_result(query_set: str, filename: str, subfolder: str 
     # タイムステップでソート
     processed_timesteps.sort(key=lambda x: x['timestep'])
     
+    # ファイル名からモードを判定
+    mode_type = 'adaptive' if 'adaptive' in filename else 'dynamic'
+    
     return {
-        'type': 'dynamic',
+        'type': mode_type,
         'timesteps': [str(t['timestep']) for t in processed_timesteps],
         'timestep_data': processed_timesteps,
         'summary': data.get('summary', {}),
@@ -344,7 +367,10 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
     if "benchmark_results_" in optimization_filename:
         # 入力がベンチマーク結果ファイルの場合
         bench_filename = optimization_filename
-        if "benchmark_results_dynamic_" in optimization_filename:
+        if "benchmark_results_adaptive_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_adaptive_", "adaptive_mv_optimization_result_")
+            mode = "adaptive"
+        elif "benchmark_results_dynamic_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_dynamic_", "td_mv_optimization_result_")
             mode = "dynamic"
         elif "benchmark_results_static_bigsubs_" in optimization_filename:
@@ -353,10 +379,13 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
         elif "benchmark_results_static_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_static_", "static_mv_optimization_result_")
             mode = "static"
-    elif "_mv_optimization_result_" in optimization_filename:
+    elif "_mv_optimization_result_" in optimization_filename or "_optimization_result_" in optimization_filename:
         # 入力が最適化結果ファイルの場合 (互換性のため維持)
         opt_filename = optimization_filename
-        if "static_mv_optimization_result_" in optimization_filename:
+        if "adaptive_mv_optimization_result_" in optimization_filename:
+            bench_filename = optimization_filename.replace("adaptive_mv_optimization_result_", "benchmark_results_adaptive_")
+            mode = "adaptive"
+        elif "static_mv_optimization_result_" in optimization_filename:
             bench_filename = optimization_filename.replace("static_mv_optimization_result_", "benchmark_results_static_")
             mode = "static"
         elif "td_mv_optimization_result_" in optimization_filename:

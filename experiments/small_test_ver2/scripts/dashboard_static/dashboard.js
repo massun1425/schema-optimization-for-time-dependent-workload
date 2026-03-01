@@ -288,6 +288,17 @@ async function onSubfolderChange() {
         resultSelect.appendChild(opt);
     });
 
+    // 適応的最適化ファイル
+    if (files.adaptive_optimization) {
+        files.adaptive_optimization.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[適応的] ${f}`;
+            opt.dataset.type = 'adaptive';
+            resultSelect.appendChild(opt);
+        });
+    }
+
     // 静的最適化ファイル
     files.static.forEach(f => {
         const opt = document.createElement('option');
@@ -992,6 +1003,16 @@ async function loadComparisonFiles() {
             opt.textContent = `[動的] ${f}`;
             fileSelect.appendChild(opt);
         });
+
+        // 適応的ファイル
+        if (files.adaptive_optimization) {
+            files.adaptive_optimization.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[適応的] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
 
         // 静的ファイル
         files.static.forEach(f => {

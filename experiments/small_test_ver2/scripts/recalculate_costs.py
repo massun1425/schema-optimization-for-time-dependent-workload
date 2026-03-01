@@ -311,17 +311,21 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
                 # キャッシュ減衰係数 (Mackert & Lohmanの近似簡易版)
                 # 外側の行数が多いほど、内側のデータはバッファに乗り切る確率が高まる
                 # logを使うことで、回数が増えるほど「新たなディスクI/O」の発生率を下げる
-                if outer_rows >= 100:
-                    # 例: 1000ループ目くらいから効き始める減衰
-                    damping_factor = 1.0 / (math.log(outer_rows, 100))
-                else:
-                    damping_factor = 1.0
+                # if outer_rows >= 1000:
+                #     # 例: 1000ループ目くらいから効き始める減衰
+                #     damping_factor = 1.0 / (math.log(outer_rows, 1000) + 1)
+                # else:
+                #     damping_factor = 1.0
                 
                 # 1回あたりのI/Oコスト: RANDOM_PAGE_COSTにペナルティと減衰を適用
-                effective_random_cost = RANDOM_PAGE_COST * penalty * damping_factor
+                effective_random_cost = RANDOM_PAGE_COST * penalty 
                 
                 # ヒット数が多いとページアクセスも増える（平方根で緩やかに増加）
                 page_io_cost_per_loop = effective_random_cost * math.sqrt(max(1, avg_inner_hits))
+
+                #outer_rowsのスケール
+                fix = 1000000.0
+                outer_rows = fix * math.log1p(outer_rows/fix)  # 0行は1行として扱う（コストは発生しないが、計算上の分母やループ回数として扱うため）
                 
                 # 総コスト: 外側の実行 + ループコスト + タプル処理
                 loop_cost = outer_rows * page_io_cost_per_loop
