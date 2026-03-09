@@ -134,6 +134,11 @@ def phase7_generate_mv_sql(exp_dir: Path, query_set: str, result_data: dict,
                 f.write(f"-- =====================================================\n\n")
                 f.write(f"\\c {settings.database.database}\n\n")
 
+                # 統計情報の詳細度を設定（ファイル全体に適用）
+                # if mvs_to_create:
+                #     f.write(f"-- 統計情報を拡大（statistics_target = 1000）\n")
+                #     f.write(f"SET default_statistics_target = 1000;\n\n")
+
                 if mvs_to_drop:
                     f.write(f"-- 削除する MV: {len(mvs_to_drop)} 個\n")
                     for mv_id in sorted(mvs_to_drop):
@@ -157,7 +162,10 @@ def phase7_generate_mv_sql(exp_dir: Path, query_set: str, result_data: dict,
                                 f.write(f"ANALYZE {mv_id};\n\n")
                                 created_count += 1
 
-                    f.write(f"-- {created_count} 個の MV を作成\n")
+                    f.write(f"-- {created_count} 個の MV を作成\n\n")
+                    # 統計情報の設定を元に戻す
+                    # f.write(f"-- 統計情報の設定を元に戻す\n")
+                    # f.write(f"RESET default_statistics_target;\n")
 
             sql_count = len(mvs_to_create) + len(mvs_to_drop)
             total_sql_count += sql_count
@@ -293,28 +301,133 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
 
     from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
     from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
+    import psycopg2
 
-    # ベーステーブルの ANALYZE
-    print_info("ベンチマーク前にベーステーブルの統計情報を更新中...")
+    # 既存のMVを全て削除（統一された初期状態を保証）
+    # MV削除数が実行ごとに異なるとWAL生成量が変わり、不平等になるため最初に実行
+    print_info("既存のMVをクリーンアップ中...")
     try:
-        result = pg_executor.execute_query(
-            "SELECT schemaname, tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename;"
+        conn = psycopg2.connect(
+            database=settings.database.database,
+            user=settings.database.user,
+            password=settings.database.password,
+            host='localhost'
         )
-        if result:
-            for row in result:
-                table_name = row[1]
-                pg_executor.execute_query(f"ANALYZE {table_name};")
-            print_success(f"  {len(result)} テーブルの ANALYZE 完了")
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'")
+            mvs = cursor.fetchall()
+            dropped_count = 0
+            for (mv_name,) in mvs:
+                try:
+                    cursor.execute(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name} CASCADE;")
+                    dropped_count += 1
+                except Exception:
+                    pass
+        conn.commit()
+        conn.close()
+        print_success(f"{dropped_count}個の既存MVを削除完了")
     except Exception as e:
-        print_info(f"ANALYZE をスキップ: {e}")
+        print_info(f"MV削除をスキップ: {e}")
 
-    # キャッシュクリア
-    print_info("PostgreSQL キャッシュをクリア中...")
+    # ベーステーブルの統計情報を更新（フェーズ1と同様に統計ターゲットを拡大）
+    # 実行ごとにANALYZEを行うことで、最新の統計情報でベンチマークを実行
+    print_info("ベーステーブルの統計情報を更新中...")
+    base_tables = [
+        # 大きなテーブル（主要な結合テーブル）
+        'title', 'cast_info', 'movie_info', 'movie_companies',
+        'movie_keyword', 'name', 'person_info', 'movie_info_idx',
+        # 中規模テーブル
+        'aka_name', 'aka_title', 'char_name', 'complete_cast',
+        'movie_link',
+        # 小さなテーブル（ディメンションテーブル）
+        'keyword', 'company_name', 'company_type', 'info_type',
+        'kind_type', 'role_type', 'link_type', 'comp_cast_type'
+    ]
+    
     try:
-        pg_executor.execute_query("SELECT pg_drop_caches();")
-        print_success("キャッシュクリア完了")
-    except Exception:
-        print_info("pg_drop_caches() は利用できませんでした（スキップ）")
+        conn = psycopg2.connect(
+            database=settings.database.database,
+            user=settings.database.user,
+            password=settings.database.password,
+            host='localhost'
+        )
+        with conn.cursor() as cursor:
+            analyzed_count = 0
+            for table in base_tables:
+                try:
+                    # 統計情報の詳細度を一時的に増やしてANALYZE
+                    cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute(f"ANALYZE {table};")
+                    cursor.execute("RESET default_statistics_target;")
+                    analyzed_count += 1
+                except Exception as e:
+                    print_info(f"  警告: {table} のANALYZEに失敗: {e}")
+        conn.commit()
+        conn.close()
+        print_success(f"{analyzed_count}/{len(base_tables)}個のベーステーブルをANALYZE完了")
+    except Exception as e:
+        print_error(f"ベーステーブルのANALYZEに失敗: {e}")
+        return False
+
+    # PostgreSQLキャッシュをクリア（公平なベンチマークのため）
+    # print_info("PostgreSQLキャッシュをクリア中...")
+    # try:
+    #     pg_executor.execute_query("SELECT pg_drop_caches();")
+    #     print_success("キャッシュクリア完了")
+    # except Exception:
+    #     try:
+    #         pg_executor.execute_query("DISCARD ALL;")
+    #         print_info("セッションキャッシュをクリア（DISCARD ALL）")
+    #     except Exception:
+    #         print_info("キャッシュクリアをスキップ")
+
+    # Autovacuumを無効化（ベンチマーク中のバックグラウンド処理を抑制）
+    # print_info("Autovacuumを無効化中...")
+    # try:
+    #     conn = psycopg2.connect(
+    #         database=settings.database.database,
+    #         user=settings.database.user,
+    #         password=settings.database.password,
+    #         host='localhost'
+    #     )
+    #     with conn.cursor() as cursor:
+    #         cursor.execute("""
+    #             SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    #             UNION
+    #             SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'
+    #         """)
+    #         tables = cursor.fetchall()
+    #         disabled_count = 0
+    #         for (table_name,) in tables:
+    #             try:
+    #                 cursor.execute(f"ALTER TABLE {table_name} SET (autovacuum_enabled = false);")
+    #                 disabled_count += 1
+    #             except Exception:
+    #                 pass
+    #     conn.commit()
+    #     conn.close()
+    #     print_success(f"Autovacuumを無効化: {disabled_count}個のテーブル/MV")
+    # except Exception as e:
+    #     print_info(f"Autovacuum無効化をスキップ: {e}")
+
+    # 強制チェックポイントを実行（WALバッファをクリアして同じ初期状態から開始）
+    print_info("強制チェックポイントを実行中（WALバッファをクリア）...")
+    try:
+        conn = psycopg2.connect(
+            database=settings.database.database,
+            user=settings.database.user,
+            password=settings.database.password,
+            host='localhost'
+        )
+        checkpoint_start = time.time()
+        with conn.cursor() as cursor:
+            cursor.execute("CHECKPOINT;")
+        conn.commit()
+        conn.close()
+        checkpoint_time = time.time() - checkpoint_start
+        print_success(f"チェックポイント完了 ({checkpoint_time:.2f}秒)")
+    except Exception as e:
+        print_info(f"チェックポイント実行をスキップ: {e}")
 
     # 頻度情報読み込み
     print_info("頻度情報を読み込み中...")
@@ -385,8 +498,37 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
         import traceback
         traceback.print_exc()
         return False
-    finally:
-        executor.close()
+    # finally:
+    #     # Autovacuumを有効化（元に戻す）
+    #     print_info("Autovacuumを有効化中...")
+    #     try:
+    #         conn = psycopg2.connect(
+    #             database=settings.database.database,
+    #             user=settings.database.user,
+    #             password=settings.database.password,
+    #             host='localhost'
+    #         )
+    #         with conn.cursor() as cursor:
+    #             cursor.execute("""
+    #                 SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+    #                 UNION
+    #                 SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'
+    #             """)
+    #             tables = cursor.fetchall()
+    #             enabled_count = 0
+    #             for (table_name,) in tables:
+    #                 try:
+    #                     cursor.execute(f"ALTER TABLE {table_name} RESET (autovacuum_enabled);")
+    #                     enabled_count += 1
+    #                 except Exception:
+    #                     pass
+    #         conn.commit()
+    #         conn.close()
+    #         print_success(f"Autovacuumを有効化: {enabled_count}個のテーブル/MV")
+    #     except Exception as e:
+    #         print_info(f"Autovacuum有効化エラー: {e}")
+    #     
+    #     executor.close()
 
 
 # ============================================================

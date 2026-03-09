@@ -28,6 +28,7 @@ from experiments.small_test_ver2.core.io_loaders import (
 from experiments.small_test_ver2.core.utility_v2 import UtilityOptimizerV2
 from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
 from experiments.small_test_ver2.core.utility_pruner import UtilityPruner
+from experiments.small_test_ver2.core.utility_pruner_iterative import UtilityPrunerIterative
 
 
 # ========== ヘルパー関数 ==========
@@ -121,6 +122,15 @@ def main():
     parser.add_argument(
         "--freq-suffix", type=str, default="",
         help="頻度ファイルのサフィックス (e.g. _16_1_10)"
+    )
+    parser.add_argument(
+        "--pruning-method", type=str, default="basic",
+        choices=["basic", "iterative"],
+        help="候補削減手法 (basic: 事前近傍拡大, iterative: 反復的拡大) (default: basic)"
+    )
+    parser.add_argument(
+        "--max-iterations", type=int, default=5,
+        help="反復的削減の最大イテレーション数/ノード (default: 5)"
     )
     args = parser.parse_args()
 
@@ -266,8 +276,10 @@ def main():
 
     # ========== 7b. WST 階層的絞り込み (Step 2-3) ==========
     print_header("Step 2-3: WST 階層的絞り込み")
-
-    pruner = UtilityPruner(
+    print_info(f"削減手法: {args.pruning_method}")
+    
+    # 共通パラメータ
+    pruner_kwargs = dict(
         node_list=qp.node_list,
         u_ij=base_u_ij,
         X=qp.X,
@@ -282,14 +294,31 @@ def main():
         deeplist=getattr(qp, "deeplist", []),
         gurobi_output=0,
     )
+    
+    # 削減手法の選択
+    wst_start = time.time()
+    if args.pruning_method == "iterative":
+        print_info(f"反復的削減: 最大イテレーション数/ノード = {args.max_iterations}")
+        pruner = UtilityPrunerIterative(
+            **pruner_kwargs,
+            max_iterations=args.max_iterations,
+        )
+    else:
+        pruner = UtilityPruner(**pruner_kwargs)
 
     promising_candidates = pruner.prune_candidates()
     pruning_info = pruner.get_pruning_info(promising_candidates)
+    wst_elapsed = time.time() - wst_start
 
     reduction_rate = pruning_info["reduction_rate"]
     print_info(f"WST 後の有望候補数: {len(promising_candidates)} / {len(all_candidates_with_utility)} "
                f"({reduction_rate*100:.1f}% 削減)")
-    print_info(f"WST 実行時間: {pruning_info['pruning_time_sec']:.2f} 秒")
+    print_info(f"WST 実行時間: {wst_elapsed:.2f} 秒")
+    
+    # 反復的手法の場合、追加統計を表示
+    if args.pruning_method == "iterative":
+        print_info(f"総イテレーション数: {pruning_info['total_iterations']}")
+        print_info(f"平均イテレーション/ノード: {pruning_info['avg_iterations_per_node']:.2f}")
 
     # ========== 8. 全時刻での時間依存最適化 (Step 4) ==========
     print_header("Step 4: 全時刻での時間依存最適化 (候補フィルタリング済み)")
@@ -323,6 +352,21 @@ def main():
     
     pipeline_elapsed = time.time() - pipeline_start
     print_info(f"  総実行時間（ステップ1〜4合計）: {pipeline_elapsed:.2f} 秒")
+    
+    # === 時間の詳細な内訳 ===
+    time_breakdown = {
+        "initial_solution_time_sec": total_elapsed,
+        "wst_pruning_time_sec": wst_elapsed,
+        "final_optimization_time_sec": td_elapsed,
+        "total_pipeline_time_sec": pipeline_elapsed,
+    }
+    
+    print()
+    print_info(f"時間内訳:")
+    print_info(f"  初期解生成 (Step 1): {time_breakdown['initial_solution_time_sec']:.2f} 秒")
+    print_info(f"  WST候補削減 (Step 2-3): {time_breakdown['wst_pruning_time_sec']:.2f} 秒")
+    print_info(f"  最終最適化 (Step 4): {time_breakdown['final_optimization_time_sec']:.2f} 秒")
+    print_info(f"  合計: {time_breakdown['total_pipeline_time_sec']:.2f} 秒")
 
     # タイムステップごとの MV 数を表示
     print()
@@ -346,6 +390,8 @@ def main():
             "storage_mb": args.storage_mb,
             "freq_suffix": args.freq_suffix,
             "num_timesteps": len(timesteps),
+            "pruning_method": args.pruning_method,
+            "max_iterations": args.max_iterations if args.pruning_method == "iterative" else None,
         },
         "candidate_selection": {
             "total_candidates": len(all_candidates_with_utility),
@@ -489,11 +535,22 @@ def main():
             ),
         },
         "pruning_info": {
-            "method": "utility_based_candidate_selection",
+            "method": f"utility_based_candidate_selection_{args.pruning_method}",
             "total_candidates": len(all_candidates_with_utility),
+            "initial_solution_mvs": sorted([qp.node_list[j] for j in seed_union]),
+            "initial_solution_count": len(seed_union),
             "promising_candidates": len(promising_candidates),
+            "promising_mv_names": sorted([qp.node_list[j] for j in promising_candidates]),
+            "filtered_out": len(all_candidates_with_utility) - len(promising_candidates),
+            "retention_rate": 1.0 - reduction_rate,
             "reduction_rate": reduction_rate,
+            "static_protected_count": 0,
+            "static_protected_mv_names": [],
+            **({"total_iterations": pruning_info["total_iterations"],
+                "avg_iterations_per_node": pruning_info["avg_iterations_per_node"]}
+               if args.pruning_method == "iterative" else {}),
         },
+        "time_breakdown": time_breakdown,
     }
 
     td_filename = f"td_mv_optimization_result_utility{args.freq_suffix}.json"

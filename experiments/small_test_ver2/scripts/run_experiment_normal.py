@@ -43,7 +43,7 @@ from utils.postgres_executor import PostgresExecutor, add_docker_args
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False):
+    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False, window_size: int = 4):
         """初期化
         
         Args:
@@ -52,11 +52,13 @@ class NormalModeExperiment:
             exp_suffix: 実験識別用サフィックス (例: _16_2, _16_4)
             use_docker: Dockerを使用するかどうか (None: 環境変数から判定)
             recalc_mode: 再計算コストを使用するかどうか
+            window_size: 適応的最適化で使用する移動平均の幅（デフォルト: 4）
         """
         self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
         self.exp_suffix = exp_suffix  # サフィックスを保存
         self.recalc_mode = recalc_mode
+        self.window_size = window_size  # 移動平均の幅を保存
         
         # PostgreSQL Executorを初期化
         self.pg_executor = PostgresExecutor(use_docker=use_docker)
@@ -194,7 +196,7 @@ class NormalModeExperiment:
                 # これによりヒストグラムの粒度が上がり、JOBのような偏ったデータの推定精度が向上する
                 # テーブルレベルの永続化は容量とANALYZE時間を圧迫するため、セッションのみで十分
                 try:
-                    # cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute("SET default_statistics_target = 1000;")
                     cursor.execute("SET random_page_cost = 1.1;")
                 except Exception as e:
                     pass
@@ -295,6 +297,135 @@ class NormalModeExperiment:
             
         except Exception as e:
             self.print_error(f"キャッシュクリアエラー: {e}")
+            return False
+    
+    def _disable_autovacuum(self):
+        """全テーブルのautovacuumを無効化（ベンチマーク用）
+        
+        すべてのユーザーテーブル（ベーステーブルとMV）に対してautovacuumを無効化します。
+        これにより、ベンチマーク中のバックグラウンド処理による時間のばらつきを軽減します。
+        """
+        import psycopg2
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            disabled_count = 0
+            with conn.cursor() as cursor:
+                # publicスキーマ内のすべてのテーブルとMVを取得
+                cursor.execute("""
+                    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+                    UNION
+                    SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'
+                """)
+                tables = cursor.fetchall()
+                
+                # 各テーブル/MVに対してautovacuumを無効化
+                for (table_name,) in tables:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table_name} SET (autovacuum_enabled = false);")
+                        disabled_count += 1
+                    except Exception as e:
+                        # テーブルが削除されている場合などはスキップ
+                        pass
+            
+            conn.commit()
+            conn.close()
+            
+            self.print_success(f"Autovacuumを無効化: {disabled_count}個のテーブル/MV")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"Autovacuum無効化エラー: {e}")
+            return False
+    
+    def _enable_autovacuum(self):
+        """全テーブルのautovacuumを有効化（デフォルトに戻す）
+        
+        ベンチマーク終了後、すべてのテーブルのautovacuum設定をデフォルトに戻します。
+        """
+        import psycopg2
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            enabled_count = 0
+            with conn.cursor() as cursor:
+                # publicスキーマ内のすべてのテーブルとMVを取得
+                cursor.execute("""
+                    SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+                    UNION
+                    SELECT matviewname FROM pg_matviews WHERE schemaname = 'public'
+                """)
+                tables = cursor.fetchall()
+                
+                # 各テーブル/MVのautovacuum設定をリセット（デフォルトに戻す）
+                for (table_name,) in tables:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table_name} RESET (autovacuum_enabled);")
+                        enabled_count += 1
+                    except Exception as e:
+                        # テーブルが削除されている場合などはスキップ
+                        pass
+            
+            conn.commit()
+            conn.close()
+            
+            self.print_success(f"Autovacuumを有効化: {enabled_count}個のテーブル/MV")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"Autovacuum有効化エラー: {e}")
+            return False
+    
+    def _force_checkpoint(self):
+        """強制的にチェックポイントを実行
+        
+        ベンチマーク前にチェックポイントを実行することで：
+        - WAL（Write-Ahead Log）バッファをクリアして同じ状態からスタート
+        - ベンチマーク中の不規則なチェックポイント発生を遅らせる
+        - 各実行で同じ初期条件を保証し、時間のばらつきを軽減
+        
+        チェックポイントは数十秒〜数百秒かかることがあるため、ベンチマーク中に
+        ランダムに発生すると大きなばらつきの原因になる。
+        """
+        import psycopg2
+        
+        try:
+            conn = psycopg2.connect(
+                database=self.settings.database.database,
+                user=self.settings.database.user,
+                password=self.settings.database.password,
+                host='localhost'
+            )
+            
+            self.print_info("強制チェックポイントを実行中（WALバッファをクリア）...")
+            checkpoint_start = time.time()
+            
+            with conn.cursor() as cursor:
+                # CHECKPOINTコマンドを実行
+                # これにより全てのダーティバッファがディスクに書き込まれる
+                cursor.execute("CHECKPOINT;")
+            
+            conn.commit()
+            conn.close()
+            
+            checkpoint_time = time.time() - checkpoint_start
+            self.print_success(f"チェックポイント完了 ({checkpoint_time:.2f}秒)")
+            return True
+            
+        except Exception as e:
+            self.print_error(f"チェックポイント実行エラー: {e}")
             return False
     
     def _convert_select_to_star(self, query: str) -> str:
@@ -426,12 +557,14 @@ class NormalModeExperiment:
             self.print_error("MVの削除に失敗しました")
             # 失敗しても続行（警告のみ）
         
-        # ベーステーブルのANALYZEを実行
-        # NOTE: 拡張統計作成後のANALYZEで基本統計も一緒に計算されるため、1回目は省略
-        # self.print_info("ベーステーブルの統計情報を更新中...")
-        # if not self._analyze_base_tables():
-        #     self.print_error("ベーステーブルのANALYZEに失敗しました")
-        #     # 失敗しても続行（警告のみ）
+        # ベーステーブルの統計情報を更新（実験全体で統計を固定するため）
+        # NOTE: Phase 9のベンチマークでは実行しない（統計情報のばらつき防止）
+        # ANALYZEはランダムサンプリングを使用するため、実行ごとに微妙に異なる統計が生成され、
+        # クエリプランが変動してベンチマーク結果にばらつきが生じる可能性がある
+        self.print_info("ベーステーブルの統計情報を更新中（実験全体で固定）...")
+        if not self._analyze_base_tables():
+            self.print_error("ベーステーブルのANALYZEに失敗しました")
+            # 失敗しても続行（警告のみ）
         
         # 拡張統計情報（Extended Statistics）を作成
         # JOBクエリの結合順序推定精度を向上させるための多変量統計
@@ -441,14 +574,9 @@ class NormalModeExperiment:
         #     self.print_error("拡張統計情報の作成に失敗しました")
         #     # 失敗しても続行（警告のみ）
         
-        # 拡張統計情報を計算するためにANALYZEを再実行
-        self.print_info("拡張統計情報を計算するためANALYZEを再実行中...")
-        if not self._analyze_base_tables():
-            self.print_error("ANALYZEの再実行に失敗しました")
-        
         # PostgreSQLキャッシュをクリア
-        self.print_info("PostgreSQLキャッシュをクリア中...")
-        self._clear_caches()
+        # self.print_info("PostgreSQLキャッシュをクリア中...")
+        # self._clear_caches()
         # クリーンアップが完了してから計測開始
         phase_start = time.time()
         
@@ -894,7 +1022,7 @@ class NormalModeExperiment:
         if mode == 'static':
             return self.phase6b_optimize_static(timestep_position=static_timestep, static_algorithm=static_algorithm)
         elif mode == 'adaptive':
-            return self.phase6c_optimize_adaptive()
+            return self.phase6c_optimize_adaptive(window_size=self.window_size)
         
         # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
@@ -936,7 +1064,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -1265,7 +1393,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1531,15 +1659,21 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
 
-    def phase6c_optimize_adaptive(self):
+    def phase6c_optimize_adaptive(self, window_size: Optional[int] = None):
         """フェーズ6c: 適応的MV最適化（スライディングウィンドウ方式）
         
         2タイムステップILPを用いた適応的最適化。
         - 初期MV: 全時刻の平均頻度で計算
         - 各ステップ: 現在のMVを固定し、次のMVを最適化
         
+        Args:
+            window_size: 移動平均の幅（Noneの場合はself.window_sizeを使用）
+        
         出力形式は動的最適化と同じ構造。
         """
+        if window_size is None:
+            window_size = self.window_size
+        
         self.print_header("ILP最適化（適応型）", 6)
         
         if not self.pickle_path.exists():
@@ -1571,7 +1705,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -1600,18 +1734,17 @@ class NormalModeExperiment:
             
             b_j = b_j_from_migration
             
-            # 平均頻度計算
-            self.print_info("平均頻度を計算中...")
-            avg_freq = [0.0] * query_count
-            for ts in timesteps:
-                for i in range(query_count):
-                    avg_freq[i] += frequencies[ts][i]
-            for i in range(query_count):
-                avg_freq[i] /= len(timesteps)
+            # 最初のタイムステップの頻度を取得
+            self.print_info("最初のタイムステップの頻度を使用...")
+            initial_freq = frequencies[timesteps[0]]
             
-            # === 初期MV計算（平均頻度で静的最適化）===
-            self.print_info("初期MVを計算中（平均頻度）...")
+            # === 初期MV計算（最初のタイムステップの頻度で静的最適化）===
+            # 初期MVはマイグレーションコストを考慮せず、純粋にワークロードに最適なものを選択
+            self.print_info("初期MVを計算中（最初のタイムステップの頻度、マイグレーションコストなし）...")
             initial_start = time.time()
+            
+            # マイグレーションコストを0にする（初期MVでは考慮しない）
+            zero_migration_cost = {j: 0.0 for j in range(len(self.qp.node_list))}
             
             initial_optimizer = TimeDependentOptimizer(
                 node_list=self.qp.node_list,
@@ -1620,8 +1753,8 @@ class NormalModeExperiment:
                 b_j=b_j,
                 B_max=B_max,
                 timesteps=["initial"],
-                migration_cost=migration_cost,
-                query_frequency_by_timestep={"initial": avg_freq},
+                migration_cost=zero_migration_cost,  # マイグレーションコストを0に設定
+                query_frequency_by_timestep={"initial": initial_freq},
                 gurobi_output=0,
             )
             initial_result = initial_optimizer.optimize()
@@ -1632,15 +1765,16 @@ class NormalModeExperiment:
             self.print_success(f"  初期MV数: {len(current_mvs)}, 計算時間: {initial_solve_time:.2f}s")
             
             # === 各タイムステップで適応的最適化 ===
-            # 適応的最適化の原則:
-            # - t=0: 初期MV使用、(avg_freq, freq[0])で最適化 → 結果はt=1で使用
-            # - t>0: 前回の最適化結果を使用、(freq[t-1], freq[t])で最適化 → 結果はt+1で使用
-            self.print_info("適応的最適化を開始...")
+            # 適応的最適化の原則（過去N時刻の単純移動平均を使用）:
+            # - 時刻tのビューは時刻(t-N+1, ..., t-1, t)の平均頻度で最適化
+            # - 例: window_size=4の場合、時刻5のビューは時刻2,3,4,5の平均頻度で最適化
+            # - タイムステップが不足する場合は、最初のタイムステップを拡張して使用
+            self.print_info(f"適応的最適化を開始（過去{window_size}時刻の単純移動平均使用）...")
             
             z_by_timestep = []
             step_solve_times = []
             migration_analysis = []
-            prev_freq = avg_freq
+            prev_freq = initial_freq
             
             # pending_migration: 次のタイムステップで記録する移行情報
             pending_migration = None
@@ -1653,7 +1787,28 @@ class NormalModeExperiment:
                 z_t = [1 if j in current_mvs else 0 for j in range(len(self.qp.node_list))]
                 z_by_timestep.append(z_t)
                 
-                curr_freq = frequencies[ts_name]
+                # N時刻の単純移動平均を計算（過去N時刻: t-N+1, ..., t-1, t）
+                # 時刻tのビューは時刻t-N+1, ..., t-1, tの平均頻度で最適化
+                freq_window = []
+                for offset in range(-window_size + 1, 1):  # -N+1, ..., -1, 0
+                    target_idx = t + offset
+                    if target_idx < 0:
+                        # タイムステップが足りない場合、最初のタイムステップを拡張して使用
+                        freq_window.append(frequencies[timesteps[0]])
+                    else:
+                        # 通常のタイムステップ
+                        freq_window.append(frequencies[timesteps[target_idx]])
+                
+                # N時刻の平均を計算
+                query_count = len(self.qp.u_ij)
+                curr_freq = [0.0] * query_count
+                for i in range(query_count):
+                    total = sum(freq_window[j][i] for j in range(window_size))
+                    curr_freq[i] = total / window_size
+                
+                # どの時刻の平均を使用したかをログ出力
+                used_indices = [max(0, t + offset) for offset in range(-window_size + 1, 1)]
+                self.print_info(f"    {window_size}時刻移動平均: timesteps[{used_indices}] の平均を使用")
                 
                 # 2タイムステップILP（現在のMVを固定、次のMVを最適化）
                 step_optimizer = TwoStepOptimizer(
@@ -1744,15 +1899,20 @@ class NormalModeExperiment:
             
             total_solve_time = time.time() - phase_start
             
+            # 純粋な最適化時間の合計（初期MV + 各ステップ）
+            total_optimization_time = initial_solve_time + sum(step_solve_times)
+            
             # 結果を動的最適化形式で構築
             result = {
                 "algorithm": "adaptive_sliding_window",
                 "timesteps": timesteps,
                 "node_list": self.qp.node_list,
                 # "z_by_timestep": z_by_timestep,
-                "solve_time_sec": total_solve_time,
+                "phase_time_sec": total_solve_time,  # フェーズ全体の実行時間
+                "total_optimization_time_sec": total_optimization_time,  # 純粋な最適化時間の合計
                 "initial_solve_time_sec": initial_solve_time,
                 "step_solve_times_sec": step_solve_times,
+                "avg_step_time_sec": round(sum(step_solve_times) / len(step_solve_times), 2) if step_solve_times else 0,
                 "migration_analysis": migration_analysis,
                 "summary": {
                     "total_timesteps": len(timesteps),
@@ -1782,8 +1942,10 @@ class NormalModeExperiment:
             # サマリー表示
             self.print_info(f"\n=== 最適化サマリー ===")
             self.print_info(f"  初期MV計算時間: {initial_solve_time:.2f}s")
+            self.print_info(f"  各ステップ計算時間合計: {sum(step_solve_times):.2f}s")
             self.print_info(f"  ステップ平均計算時間: {sum(step_solve_times)/len(step_solve_times):.2f}s")
-            self.print_info(f"  総計算時間: {total_solve_time:.2f}s")
+            self.print_info(f"  純粋な最適化時間合計: {total_optimization_time:.2f}s")
+            self.print_info(f"  フェーズ総実行時間: {total_solve_time:.2f}s")
             self.print_info(f"  平均MV数: {result['summary']['avg_mvs_per_timestep']}")
             self.print_info(f"  総作成MV数: {result['summary']['total_mvs_created']}")
             self.print_info(f"  総削除MV数: {result['summary']['total_mvs_deleted']}")
@@ -1909,6 +2071,11 @@ class NormalModeExperiment:
                     f.write(f"-- =====================================================\n\n")
                     f.write(f"\\c {self.settings.database.database}\n\n")
                     
+                    # 統計情報の詳細度を設定（ファイル全体に適用）
+                    # if mvs_to_create:
+                    #     f.write(f"-- 統計情報を拡大（statistics_target = 1000）\n")
+                    #     f.write(f"SET default_statistics_target = 1000;\n\n")
+                    
                     # 削除が必要なMV
                     if mvs_to_drop:
                         f.write(f"-- 削除するMV: {len(mvs_to_drop)}個\n")
@@ -1940,7 +2107,10 @@ class NormalModeExperiment:
                                     f.write(f"ANALYZE {mv_id};\n\n")
                                     created_count += 1
                         
-                        f.write(f"-- {created_count}個のMVを作成\n")
+                        f.write(f"-- {created_count}個のMVを作成\n\n")
+                        # 統計情報の設定を元に戻す
+                        # f.write(f"-- 統計情報の設定を元に戻す\n")
+                        # f.write(f"RESET default_statistics_target;\n")
                 
                 sql_count = len(mvs_to_create) + len(mvs_to_drop)
                 total_sql_count += sql_count
@@ -2012,6 +2182,11 @@ class NormalModeExperiment:
             sql_statements.append(f"\\c {self.settings.database.database}")
             sql_statements.append("")
             
+            # 統計情報の詳細度を設定（ファイル全体に適用）
+            # sql_statements.append(f"-- 統計情報を拡大（statistics_target = 1000）")
+            # sql_statements.append(f"SET default_statistics_target = 1000;")
+            # sql_statements.append("")
+            
             created_count = 0
             for node_id in selected_mvs:
                 if node_id in migration_plans and "[]" in migration_plans[node_id]:
@@ -2022,6 +2197,10 @@ class NormalModeExperiment:
                         sql_statements.append(f"ANALYZE {node_id};")
                         sql_statements.append("")
                         created_count += 1
+            
+            # 統計情報の設定を元に戻す
+            # sql_statements.append(f"-- 統計情報の設定を元に戻す")
+            # sql_statements.append(f"RESET default_statistics_target;")
             
             # SQLファイルを保存
             output_dir = self.exp_dir / "time_dependent_output" / self.query_set
@@ -2346,13 +2525,34 @@ class NormalModeExperiment:
         self.print_header(f"時間依存型ベンチマーク実行 - {mode_names.get(mode, mode)}", 9)
         phase_start = time.time()
         
-        # ベンチマーク実行前に統計情報を更新
-        self.print_info("ベンチマーク前にベーステーブルの統計情報を更新中...")
-        self._analyze_base_tables()
+        # 既存のMVを全て削除（統一された初期状態を保証）
+        # MV削除数が実行ごとに異なるとWAL生成量が変わり、不平等になるため最初に実行
+        self.print_info("既存のMVをクリーンアップ中...")
+        if not self._drop_all_mvs():
+            self.print_error("MVの削除に失敗しました")
+            # 失敗しても続行（警告のみ）
+        
+        # ベーステーブルの統計情報を更新（フェーズ1と同様に統計ターゲットを拡大）
+        # 実行ごとにANALYZEを行うことで、最新の統計情報でベンチマークを実行
+        self.print_info("ベーステーブルの統計情報を更新中...")
+        if not self._analyze_base_tables():
+            self.print_error("ベーステーブルのANALYZEに失敗しました")
+            # 失敗しても続行（警告のみ）
         
         # PostgreSQLキャッシュをクリア（公平なベンチマークのため）
-        self.print_info("PostgreSQLキャッシュをクリア中...")
-        self._clear_caches()       
+        # self.print_info("PostgreSQLキャッシュをクリア中...")
+        # self._clear_caches()
+        
+        # Autovacuumを無効化（ベンチマーク中のバックグラウンド処理を抑制）
+        # NOTE: 一旦コメントアウト - 実行時間への影響を検証するため
+        self.print_info("Autovacuumを無効化中...")
+        self._disable_autovacuum()
+        
+        # 強制チェックポイントを実行（WALバッファをクリアして同じ初期状態から開始）
+        # MV削除により生成されたWALもここで処理される
+        # これによりベンチマーク中の不規則なチェックポイント発生を遅らせ、
+        # 実行時間のばらつきを軽減する
+        self._force_checkpoint()       
         
         from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
         from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
@@ -2548,6 +2748,11 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         finally:
+            # Autovacuumを有効化（元に戻す）
+            # NOTE: 無効化をコメントアウトしているため、こちらも実行不要
+            self.print_info("Autovacuumを有効化中...")
+            self._enable_autovacuum()
+            
             executor.close()
 
     
@@ -2821,6 +3026,12 @@ def main():
         action='store_true',
         help='再計算されたコスト（simple_migration_costs.json）を使用してマイグレーションと利得を計算する'
     )
+    parser.add_argument(
+        '--window-size',
+        type=int,
+        default=4,
+        help='適応的最適化で使用する移動平均の幅（デフォルト: 4）'
+    )
     
     # Docker/Local switching arguments
     add_docker_args(parser)
@@ -2832,7 +3043,8 @@ def main():
         query_set=args.query_set, 
         exp_suffix=args.exp_suffix,
         use_docker=args.use_docker,
-        recalc_mode=args.recalc
+        recalc_mode=args.recalc,
+        window_size=args.window_size
     )
     
     # 接続モードを表示

@@ -115,6 +115,11 @@ def get_operator(qm, node_id: str) -> str:
     return "Unknown"
 
 
+def is_leaf_node(qm, node_id: str) -> bool:
+    """Check if a node is a leaf node."""
+    return node_id in qm.leaf_nodes_map_r
+
+
 def get_rows_from_migration_costs(migration_costs: dict, node_id: str) -> int:
     """Get scaled rows for a node from migration_costs.json."""
     if node_id in migration_costs:
@@ -135,7 +140,8 @@ def get_width_from_migration_costs(migration_costs: dict, node_id: str) -> int:
 
 
 def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, penalty_stats: dict = None, 
-                       parent_operator: str = None, is_nlj_inner: bool = False) -> tuple:
+                       parent_operator: str = None, is_nlj_inner: bool = False,
+                       is_child_of_hash_all_leaf: bool = False) -> tuple:
     """
     Recursively calculate cost for a node using C-Store style model.
     
@@ -147,8 +153,10 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
         penalty_stats: Dictionary to track penalty application statistics
             - 'leaf_penalties': Set of leaf node_ids with penalties applied
             - 'nlj_penalties': Set of NLJ node_ids with penalties applied
+            - 'hash_leaf_zeros': Set of Hash/Leaf node_ids with utility=0
         parent_operator: Operator type of parent node (for context-aware utility calculation)
         is_nlj_inner: True if this node is the inner side of a Nested Loop Join
+        is_child_of_hash_all_leaf: True if this node is a child of a Hash node whose all children are leaves
     
     Returns:
         Tuple of (exec_cost, creation_cost, utility, output_rows)
@@ -158,10 +166,10 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
         - output_rows: 出力行数
     """
     if penalty_stats is None:
-        penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set()}
+        penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set(), 'hash_leaf_zeros': set()}
     # Memoization: avoid recalculating the same node
     # Note: We don't use memo for nodes with context (parent info) to ensure correct utility calculation
-    cache_key = (node_id, parent_operator, is_nlj_inner)
+    cache_key = (node_id, parent_operator, is_nlj_inner, is_child_of_hash_all_leaf)
     if cache_key in memo:
         return memo[cache_key]
     
@@ -228,11 +236,15 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
         # MV read cost (cost to read the MV)
         mv_read_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
         
-        # Utility calculation: Filter condition check
-        # Special case: If this node is the inner side of a Nested Loop Join with Index Scan,
+        # Utility calculation
+        # Special case 1: Child of Hash node where all children are leaves (ephemeral hash table)
+        if is_child_of_hash_all_leaf:
+            utility = 0.0  # No utility: leaf under Hash node with all-leaf children, part of ephemeral hash table
+            penalty_stats['hash_leaf_zeros'].add(node_id)
+        # Special case 2: If this node is the inner side of a Nested Loop Join with Index Scan,
         # creating an MV without an index provides no benefit (or negative benefit).
         # The index is critical for efficient NLJ performance.
-        if is_nlj_inner and 'Index' in operator and 'Scan' in operator:
+        elif is_nlj_inner and 'Index' in operator and 'Scan' in operator:
             utility = 0.0  # No utility: MV without index cannot replace indexed NLJ access
             penalty_stats['nlj_inner_index_scans'].add(node_id)
         elif filter_cond is None or str(filter_cond).strip() == "":
@@ -249,6 +261,10 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
     children_exec_costs = []  # execution costs (for cost propagation)
     children_rows = []
     
+    # Check if this is a Hash node with all children being leaf nodes
+    is_hash_all_leaf = (operator == 'Hash' and 
+                        all(is_leaf_node(qm, c) for c in children))
+    
     # Determine if children are inner side of Nested Loop
     current_operator = operator
     for i, child_id in enumerate(children):
@@ -258,7 +274,8 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
         c_exec, c_creation, c_utility, c_rows = calculate_node_cost(
             qm, child_id, migration_costs, memo, penalty_stats,
             parent_operator=current_operator,
-            is_nlj_inner=is_child_nlj_inner
+            is_nlj_inner=is_child_nlj_inner,
+            is_child_of_hash_all_leaf=is_hash_all_leaf
         )
         children_exec_costs.append(c_exec)
         children_rows.append(c_rows)
@@ -371,7 +388,12 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
     mv_read_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
     
     # Net utility = execution cost - MV read cost
-    utility = max(0, exec_cost - mv_read_cost)
+    # Special case: Hash node with all children being leaf nodes (ephemeral hash table, not worth materializing)
+    if is_hash_all_leaf:
+        utility = 0.0  # No utility: Hash nodes with all-leaf children are ephemeral, minimal benefit from materialization
+        penalty_stats['hash_leaf_zeros'].add(node_id)
+    else:
+        utility = max(0, exec_cost - mv_read_cost)
     
     memo[cache_key] = (exec_cost, creation_cost, utility, output_rows)
     return exec_cost, creation_cost, utility, output_rows
@@ -403,11 +425,24 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
     
     print(f"Identified {len(nlj_inner_nodes)} nodes as NLJ inner children")
     
+    # Pre-compute nodes that are children of Hash nodes (where all children are leaves)
+    hash_all_leaf_children = set()
+    for node_id in qm.non_leaf_nodes_map_r.keys():
+        operator = get_operator(qm, node_id)
+        if operator == 'Hash':
+            children = get_children(qm, node_id)
+            # Check if all children are leaf nodes
+            if children and all(is_leaf_node(qm, c) for c in children):
+                # Add all children to the set
+                hash_all_leaf_children.update(children)
+    
+    print(f"Identified {len(hash_all_leaf_children)} nodes as children of Hash nodes with all-leaf children")
+    
     # Memoization dictionary for recursive calculation
     memo = {}
     
     # Penalty statistics tracking (using sets to avoid duplicate counting)
-    penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set()}
+    penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set(), 'hash_leaf_zeros': set()}
     
     updated_count = 0
     
@@ -422,11 +457,15 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
         # Determine if this node is an NLJ inner child
         is_nlj_inner = node_id in nlj_inner_nodes
         
+        # Determine if this node is a child of Hash node with all-leaf children
+        is_hash_child = node_id in hash_all_leaf_children
+        
         # Calculate cost using recursive method (now returns 4 values)
         exec_cost, creation_cost, utility, output_rows = calculate_node_cost(
             qm, node_id, migration_costs, memo, penalty_stats,
             parent_operator='Nested Loop' if is_nlj_inner else None,
-            is_nlj_inner=is_nlj_inner
+            is_nlj_inner=is_nlj_inner,
+            is_child_of_hash_all_leaf=is_hash_child
         )
         
         # Update the JSON data
@@ -446,6 +485,8 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
     print(f"\n--- Utility Adjustments ---")
     print(f"NLJ Inner Index Scans (utility=0): {len(penalty_stats['nlj_inner_index_scans'])}")
     print(f"  (These nodes rely on index for NLJ performance; MV without index provides no benefit)")
+    print(f"Hash nodes with all-leaf children + their leaf children (utility=0): {len(penalty_stats.get('hash_leaf_zeros', set()))}")
+    print(f"  (Hash nodes with all-leaf children are ephemeral and provide minimal materialization benefit)")
     print(f"--------------------------\n")
     
     # Save to output file

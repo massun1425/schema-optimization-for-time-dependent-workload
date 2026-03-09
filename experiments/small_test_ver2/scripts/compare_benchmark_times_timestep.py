@@ -6,12 +6,12 @@ from pathlib import Path
 from collections import defaultdict
 
 # Paths
-base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2/time_dependent_output/job")
+base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2/time_dependent_output/job/result_1G_hash")
 dynamic_file = base_dir / "benchmark_results_dynamic_16_peak.json"
-static_file = base_dir / "benchmark_results_static_16_peak.json"
+static_file = base_dir / "benchmark_results_dynamic_16_peakp.json"
 
 # Filter timesteps 1-3 only
-TIMESTEP_FILTER = [9,10,11]
+TIMESTEP_FILTER = [10]
 
 # Load JSON files
 with open(dynamic_file, 'r', encoding='utf-8') as f:

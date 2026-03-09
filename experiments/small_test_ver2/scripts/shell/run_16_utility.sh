@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # 実験を順次実行するスクリプト
-# 使い方: nohup bash run_experiments.sh > experiments.log 2>&1 &
+# 使い方: nohup bash run_experiments.sh > experiments.log 2>&1 &. --pruning-method iterative
 
 set -e  # エラーが発生したら停止
 
 # 実験設定
-STORAGE_MB=100  # ストレージ容量（MB）
+STORAGE_MB=1024  # ストレージ容量（MB）
 
 SCRIPT_DIR="experiments/small_test_ver2/scripts"
 OUTPUT_DIR="experiments/small_test_ver2/time_dependent_output/job/log"
@@ -30,6 +30,22 @@ restart_container() {
     echo ">>> PostgreSQL起動完了"
 }
 
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_utility_optimization.py \
+  --query-set job \
+  --storage-mb ${STORAGE_MB} \
+  --freq-suffix _16_4g \
+  --pruning-method iterative \
+
+python ${SCRIPT_DIR}/run_utility_benchmark.py \
+  --query-set job \
+  --freq-suffix _16_4g \
+  2>&1 | tee ${OUTPUT_DIR}/log_16_4g.txt
+echo "完了時刻: $(date)"
 
 restart_container
 echo ""
@@ -40,6 +56,7 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_1_10 \
+  --pruning-method iterative \
 
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
@@ -57,6 +74,7 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_2_10 \
+  --pruning-method iterative \
 
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
@@ -74,6 +92,7 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_3_10 \
+  --pruning-method iterative \
 
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
@@ -91,6 +110,7 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_peak \
+  --pruning-method iterative \
 
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
@@ -108,6 +128,7 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_mono \
+  --pruning-method iterative \
 
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
@@ -125,7 +146,8 @@ python ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set job \
   --storage-mb ${STORAGE_MB} \
   --freq-suffix _16_sin \
-
+  --pruning-method iterative \
+  
 python ${SCRIPT_DIR}/run_utility_benchmark.py \
   --query-set job \
   --freq-suffix _16_sin \
