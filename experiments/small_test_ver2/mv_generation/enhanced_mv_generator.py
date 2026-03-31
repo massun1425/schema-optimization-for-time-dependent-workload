@@ -388,13 +388,23 @@ FROM {from_clause}{where_clause};"""
         # 例: "note IS NULL" → "it.note IS NULL"
         # 例: "note IS NOT NULL" → "it.note IS NOT NULL"
         # ただし、関数名や既にエイリアスが付いているものは除外
+        
+        # SQL型キーワードと予約語のリスト（::double precision などのために）
+        SQL_TYPE_KEYWORDS = {
+            'AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'NULL',
+            'PRECISION', 'TIMESTAMP', 'INTEGER', 'VARCHAR', 'CHAR',
+            'TEXT', 'BOOLEAN', 'FLOAT', 'DOUBLE', 'REAL', 'NUMERIC',
+            'DATE', 'TIME', 'INTERVAL', 'ARRAY', 'JSON', 'JSONB',
+            'WITH', 'WITHOUT', 'ZONE'
+        }
+        
         def replace_bare_column(match):
             prefix = match.group(1)  # 前の文字（スペースや括弧）
             column_name = match.group(2)
             suffix = match.group(3)  # 後ろの文字（演算子など）
             
-            # 既にエイリアスが付いている、または関数名の可能性がある場合はスキップ
-            if '.' in column_name or column_name.upper() in ['AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'NULL']:
+            # 既にエイリアスが付いている、SQL型キーワード、関数名の可能性がある場合はスキップ
+            if '.' in column_name or column_name.upper() in SQL_TYPE_KEYWORDS:
                 return match.group(0)
             
             return f"{prefix}{table_alias}.{column_name}{suffix}"
@@ -402,8 +412,25 @@ FROM {from_clause}{where_clause};"""
         # 単語境界で囲まれたカラム名を検出（演算子の前など）
         # IS NOT NULL や IS NULL のパターンも考慮
         # (?<![.]) で「直前がドットでない」ことを確認
-        result = re.sub(r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY|IS\s+NOT\s+NULL|IS\s+NULL))', 
+        # [a-zA-Z_]で始まる識別子のみマッチ（数値リテラルを除外）
+        result = re.sub(r'(\s|\(|^)([a-zA-Z_][a-zA-Z0-9_]*)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY|IS\s+NOT\s+NULL|IS\s+NULL))', 
                        replace_bare_column, result, flags=re.IGNORECASE)
+        
+        # 演算子の後にあるカラム名も処理（例: "1928 < production_year"）
+        def replace_bare_column_after_op(match):
+            op = match.group(1)  # 演算子
+            space = match.group(2)  # スペース
+            column_name = match.group(3)
+            
+            # 既にエイリアスが付いている、SQL型キーワード、関数名の可能性がある場合はスキップ
+            if '.' in column_name or column_name.upper() in SQL_TYPE_KEYWORDS:
+                return match.group(0)
+            
+            return f"{op}{space}{table_alias}.{column_name}"
+        
+        # 演算子の後のカラム名を検出（例: "< production_year", "> age"）
+        result = re.sub(r'(=|!=|<|>|<=|>=|~|!~)(\s+)([a-zA-Z_][a-zA-Z0-9_]*)(?![\.(])', 
+                       replace_bare_column_after_op, result, flags=re.IGNORECASE)
         
         return result
     

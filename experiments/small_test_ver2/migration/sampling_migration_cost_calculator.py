@@ -17,15 +17,15 @@ class SamplingMigrationCostCalculator:
     # 優先度順（多側テーブル優先）に並べる
     TARGET_TABLES = {
         # === 1. 巨大Fact Tables (10% サンプリング) ===
-        "cast_info": ("ci", 0.10),          # 3.8GB, 36M行 - title/name/char_nameの多側
-        "movie_info": ("mi", 0.10),          # 1.9GB, 15M行 - titleの多側
+        "cast_info": ("ci", 0.01),          # 3.8GB, 36M行 - title/name/char_nameの多側
+        "movie_info": ("mi", 0.01),          # 1.9GB, 15M行 - titleの多側
         
         # === 2. 中規模Fact Tables (20% サンプリング) ===
-        "movie_keyword": ("mk", 0.20),       # 361MB, 4.5M行 - title/keywordの多側
-        "movie_companies": ("mc", 0.20),     # 282MB, 2.6M行 - title/company_nameの多側
-        "person_info": ("pi", 0.20),         # 550MB, 3.0M行 - nameの多側
-        "movie_info_idx": ("mi_idx", 0.20),  # 123MB, 1.4M行 - titleの多側
-        "aka_name": ("an", 0.20),            # 125MB, 901K行 - nameの多側
+        "movie_keyword": ("mk", 0.05),       # 361MB, 4.5M行 - title/keywordの多側
+        "movie_companies": ("mc", 0.05),     # 282MB, 2.6M行 - title/company_nameの多側
+        "person_info": ("pi", 0.05),         # 550MB, 3.0M行 - nameの多側
+        "movie_info_idx": ("mi_idx", 0.05),  # 123MB, 1.4M行 - titleの多側
+        "aka_name": ("an", 0.05),            # 125MB, 901K行 - nameの多側
         
         # === 3. 小規模Fact Tables (50% サンプリング) ===
         "aka_title": ("at", 1.0),           # 67MB, 361K行 - titleの多側
@@ -33,9 +33,9 @@ class SamplingMigrationCostCalculator:
         "movie_link": ("ml", 1.0),          # 3MB, 30K行 - titleの多側
         
         # === 4. Entity/Dimension Tables (30% サンプリング) ===
-        "title": ("t", 0.30),                # 368MB, 2.5M行 - マスタテーブル
-        "name": ("n", 0.30),                 # 552MB, 4.2M行 - マスタテーブル
-        "char_name": ("chn", 0.30),          # 373MB, 3.1M行 - ディメンションテーブル
+        "title": ("t", 0.10),                # 368MB, 2.5M行 - マスタテーブル
+        "name": ("n", 0.10),                 # 552MB, 4.2M行 - マスタテーブル
+        "char_name": ("chn", 0.10),          # 373MB, 3.1M行 - ディメンションテーブル
         
         # === 5. 小規模Dictionary Tables (50% サンプリング) ===
         "company_name": ("cn", 1.0),        # 31MB, 235K行 - ディメンションテーブル
@@ -102,8 +102,7 @@ class SamplingMigrationCostCalculator:
             return False
 
     def create_sample_tables(self, conn):
-        """サンプルテーブルを作成（既存のものは削除）"""
-        # まず既存のサンプルテーブルを削除
+        """サンプルテーブルを作成（ハッシュベースのCorrelated Samplingを採用しZero-tuple問題を防止）"""
         print("Dropping existing sample tables first...")
         self.drop_sample_tables(conn)
         
@@ -113,17 +112,60 @@ class SamplingMigrationCostCalculator:
         
         for table, (alias, sampling_rate) in self.TARGET_TABLES.items():
             sample_table = f"sample_{table}"
-            
-            # 各テーブルの個別サンプリング率を使用
             rate_percent = sampling_rate * 100
             print(f"  Creating {sample_table} ({rate_percent:.0f}% of {table})")
             
-            sql_text = f"""
-            CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate_percent});
-            ANALYZE {sample_table};
-            """
+            # ハッシュベースサンプリングによるテーブル作成
+            # 結合キーになりやすいカラムを優先してハッシュキーとして選定する
+            hash_key = None
+            if table in ["cast_info", "movie_info", "movie_keyword", "movie_companies", "movie_info_idx", "complete_cast", "movie_link", "aka_title"]:
+                hash_key = "movie_id"
+            elif table in ["person_info", "aka_name"]:
+                hash_key = "person_id"
+            elif table in ["title", "name", "char_name", "company_name", "keyword"]:
+                hash_key = "id"
+            
+            if hash_key and sampling_rate < 1.0:
+                # Correlated Sampling (同じIDは確実にすべてのテーブルで選ばれる/落とされる)
+                sql_text = f"""
+                CREATE TABLE {sample_table} AS 
+                SELECT * FROM {table} 
+                WHERE mod(abs(hashtext({hash_key}::text)), 100) < {rate_percent};
+                """
+            elif sampling_rate < 1.0:
+                # 結合キーが無いか不明な場合はBERNOULLI
+                sql_text = f"""
+                CREATE TABLE {sample_table} AS SELECT * FROM {table} TABLESAMPLE BERNOULLI ({rate_percent});
+                """
+            else:
+                # 100%の場合は全件コピー
+                sql_text = f"""
+                CREATE TABLE {sample_table} AS SELECT * FROM {table};
+                """
+                
             if self._run_sql(conn, sql_text):
                 created_tables.append(sample_table)
+                
+                # 最低限必要なJOIN用インデックスを付与
+                index_sqls = []
+                if table in ["title", "name", "char_name", "company_name", "keyword"]:
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(id);")
+                if table in ["cast_info", "movie_info", "movie_keyword", "movie_companies", "movie_info_idx", "complete_cast", "movie_link", "aka_title"]:
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(movie_id);")
+                if table in ["cast_info", "person_info", "aka_name"]:
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(person_id);")
+                if table == "movie_keyword":
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(keyword_id);")
+                if table == "movie_companies":
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(company_id);")
+                if table == "cast_info":
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(person_role_id);")
+                    index_sqls.append(f"CREATE INDEX ON {sample_table}(role_id);")
+                
+                for idx_sql in index_sqls:
+                    self._run_sql(conn, idx_sql)
+                
+                self._run_sql(conn, f"ANALYZE {sample_table};")
             else:
                 print(f"  Failed to create {sample_table}")
                 failed_tables.append(sample_table)
@@ -178,41 +220,49 @@ class SamplingMigrationCostCalculator:
             conn.rollback()  # トランザクションをロールバックしてエラー状態を解除
             return 0, 0
 
-    def _rewrite_query(self, query) -> Tuple[str, str, float]:
-        """クエリ内のテーブルをサンプルテーブルに置換（最初の1件のみ）
-        
-        TABLE_PRIORITYの順序で検索し、最初にマッチしたテーブルを
-        サンプルテーブルに置換する。エイリアスは元のものを保持。
-        
-        Note: FROM/JOIN句のテーブル参照のみマッチし、
-              SELECT句のカラム別名はマッチしない。
+    def _rewrite_query(self, query) -> Tuple[str, List[str], float]:
+        """クエリ内のテーブルを可能な限りすべてサンプルテーブルに置換
         
         Returns:
-            Tuple[str, str, float]: (置換後のクエリ, 置換したテーブル名, サンプリング率) 
-            マッチしない場合は (None, None, 1.0)
+            Tuple[str, List[str], float]: (置換後のクエリ, 置換したテーブル名のリスト, 総合スケールファクタ) 
+            マッチしない場合は (None, [], 1.0)
         """
+        new_query = query
+        replaced_tables = set()
+        
         for table in self.TABLE_PRIORITY:
             # FROM/JOIN句のテーブル参照にマッチ
-            # パターン: FROM table AS alias / JOIN table AS alias / , table AS alias
             pattern = re.compile(
                 rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
                 re.IGNORECASE
             )
-            match = pattern.search(query)
-            if match:
-                alias = match.group(1)  # 元のエイリアスを保持
+            
+            def replace_func(match):
+                alias = match.group(1)
+                prefix = match.group(0).split()[0]  # FROM, JOIN, or ,
                 sample_table = f"sample_{table}"
-                sampling_rate = self.TARGET_TABLES[table][1]  # 個別サンプリング率を取得
-                
-                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
-                matched_text = match.group(0)
-                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
-                new_text = f"{prefix} {sample_table} AS {alias}"
-                
-                new_query = query[:match.start()] + new_text + query[match.end():]
-                return new_query, table, sampling_rate
+                replaced_tables.add(table)
+                return f"{prefix} {sample_table} AS {alias}"
+
+            modified_query = pattern.sub(replace_func, new_query)
+            if modified_query != new_query:
+                new_query = modified_query
         
-        return None, None, 1.0
+        if not replaced_tables:
+            return None, [], 1.0
+            
+        # Correlated Sampling (ハッシュベース) を使用する場合は、
+        # JOIN時の一致率が保たれるため、「最も小さいサンプリング率（最も強い圧縮）」を基準のスケールファクタとするのが実態に近くなる。
+        # 単純なBERNOULLIの乗算（1/(0.1*0.1) = 100）だと過大評価になるため修正。
+        min_sampling_rate = 1.0
+        for table in replaced_tables:
+            rate = self.TARGET_TABLES[table][1]
+            if rate < min_sampling_rate:
+                min_sampling_rate = rate
+                
+        total_scale_factor = 1.0 / min_sampling_rate
+        
+        return new_query, list(replaced_tables), total_scale_factor
     
     @staticmethod
     def _process_single_node(args: Tuple[str, Dict, Settings, str, float, float]) -> Tuple[str, Dict[str, Dict[str, Any]]]:
@@ -308,34 +358,35 @@ class SamplingMigrationCostCalculator:
                     if match:
                         select_query = match.group(1)
                         
-                        # クエリを書き換え（FROM/JOIN句のテーブル参照にマッチ）
-                        matched_table = None
-                        rewritten_query = None
-                        table_rate = 1.0
+                        # クエリを書き換え（すべての対象テーブルを置換）
+                        matched_tables = set()
+                        rewritten_query = select_query
+                        
                         for table in table_priority:
                             # FROM/JOIN句のテーブル参照にマッチ
                             pattern = re.compile(
                                 rf"(?:FROM|JOIN|,)\s+{table}\s+(?:AS\s+)?(\w+)\b",
                                 re.IGNORECASE
                             )
-                            match_result = pattern.search(select_query)
-                            if match_result:
-                                alias = match_result.group(1)  # 元のエイリアスを保持
+                            def replace_func(match):
+                                alias = match.group(1)
+                                prefix = match.group(0).split()[0]
                                 sample_table = f"sample_{table}"
-                                table_rate = target_tables[table][1]  # 個別サンプリング率を取得
-                                
-                                # マッチした部分の先頭（FROM/JOIN/,）を保持して置換
-                                matched_text = match_result.group(0)
-                                prefix = matched_text.split()[0]  # FROM, JOIN, or ,
-                                new_text = f"{prefix} {sample_table} AS {alias}"
-                                
-                                rewritten_query = select_query[:match_result.start()] + new_text + select_query[match_result.end():]
-                                matched_table = table
-                                break
+                                matched_tables.add(table)
+                                return f"{prefix} {sample_table} AS {alias}"
+
+                            modified_query = pattern.sub(replace_func, rewritten_query)
+                            if modified_query != rewritten_query:
+                                rewritten_query = modified_query
                         
-                        if rewritten_query:
-                            # テーブル個別のサンプリング率でスケールバック
-                            current_scale_factor = 1.0 / table_rate
+                        if matched_tables:
+                            min_sampling_rate = 1.0
+                            for table in matched_tables:
+                                rate = target_tables[table][1]
+                                if rate < min_sampling_rate:
+                                    min_sampling_rate = rate
+                                    
+                            total_scale_factor_parallel = 1.0 / min_sampling_rate
                             
                             # サンプルからサイズを取得
                             wrapped_query = f"""
@@ -344,17 +395,19 @@ class SamplingMigrationCostCalculator:
                             """
                             try:
                                 with conn.cursor() as cursor:
+                                    cursor.execute("SET statement_timeout = '10s';")
                                     cursor.execute(wrapped_query)
                                     result = cursor.fetchone()
                                     if result and len(result) >= 2:
                                         rows = int(result[0]) if result[0] else 0
                                         size = int(result[1]) if result[1] else 0
                                         if rows > 0:
-                                            est_rows = int(rows * current_scale_factor)
-                                            est_size = int(size * current_scale_factor * overhead_multiplier)
+                                            est_rows = int(rows * total_scale_factor_parallel)
+                                            est_size = int(size * total_scale_factor_parallel * overhead_multiplier)
                                             size_source = "sampling"  # サンプリング成功
                             except Exception:
                                 pass
+
                     
                     # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
                     if size_source == "explain" and est_size > 0:
@@ -484,25 +537,44 @@ class SamplingMigrationCostCalculator:
                             except Exception:
                                 conn.rollback()  # トランザクションをロールバック
 
-                            size_source = "explain"  # デフォルトはEXPLAIN
-                            if match:
-                                select_query = match.group(1)
-                                rewritten_query, used_table, table_rate = self._rewrite_query(select_query)
-                                
-                                if rewritten_query:
-                                    rows, size = self._get_sample_estimate(conn, rewritten_query)
-                                    if rows > 0:
-                                        # テーブル個別のサンプリング率でスケールバック
-                                        scale_factor = 1.0 / table_rate
-                                        est_rows = int(rows * scale_factor)
-                                        est_size = int(size * scale_factor * self.OVERHEAD_MULTIPLIER)
-                                        size_source = "sampling"  # サンプリング成功
-                                        updated_count += 1
-                                    else:
-                                        skipped_count += 1
-                                else:
+                            select_query = match.group(1) if match else sql
+                            size_source = "explain"
+
+                            # クエリを書き換え（すべての対象テーブルを置換）
+                            rewritten_query, matched_tables, total_scale_factor_seq = self._rewrite_query(select_query)
+                        
+                            if rewritten_query and matched_tables:
+                                # サンプルからサイズを取得
+                                wrapped_query = f"""
+                                SELECT count(*), sum(pg_column_size(sub)) 
+                                FROM ({rewritten_query}) as sub;
+                                """
+                                try:
+                                    with conn.cursor() as cursor:
+                                        cursor.execute("SET statement_timeout = '10s';")
+                                        cursor.execute(wrapped_query)
+                                        result = cursor.fetchone()
+                                        if result and len(result) >= 2:
+                                            rows = int(result[0]) if result[0] else 0
+                                            size = int(result[1]) if result[1] else 0
+                                            if rows > 0:
+                                                est_rows = int(rows * total_scale_factor_seq)
+                                                est_size = int(size * total_scale_factor_seq * self.OVERHEAD_MULTIPLIER)
+                                                size_source = "sampling"  # サンプリング成功
+                                                updated_count += 1
+                                            else:
+                                                skipped_count += 1
+                                        else:
+                                            skipped_count += 1
+                                except psycopg2.errors.QueryCanceled:
                                     skipped_count += 1
-                            
+                                    pass # タイムアウト時は黙ってEXPLAINにフォールバック
+                                except Exception:
+                                    skipped_count += 1
+                                    pass
+                            else:
+                                skipped_count += 1
+                                
                             # EXPLAINベースの場合、サイズを補正（実測との乖離を考慮）
                             if size_source == "explain" and est_size > 0:
                                 est_size = int(est_size * self.EXPLAIN_SIZE_CORRECTION_FACTOR)

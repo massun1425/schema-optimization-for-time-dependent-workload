@@ -1,16 +1,14 @@
-"""反復的近傍拡大による候補選出 + WST 階層的絞り込み (UtilityPrunerIterative).
+"""Seed + 親境界による候補選出 + WST 階層的絞り込み (UtilityPrunerIterative).
 
 UtilityPruner との違い:
-- 事前に全近傍を拡大せず、各 WST ノードで反復的に拡大
+- 事前の近傍拡大なし、各 WST ノードで Seed + 親境界のみで最適化
 - 各ノードでの処理:
-  1. Seed のみで最適化
-  2. 選ばれた MV の近傍を追加
-  3. 拡大した候補で再最適化
-  4. 収束するまで繰り返し
+  1. Seed + 親境界 MV を候補として収集
+  2. その候補で最適化（1回のみ、繰り返しなし）
 
 期待される効果:
-- より効率的な候補絞り込み（必要な近傍のみ追加）
-- 解の品質向上（反復的な探索）
+- より高速な候補絞り込み（近傍拡大の繰り返しなし）
+- シンプルな処理フロー
 """
 
 from __future__ import annotations
@@ -29,15 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class UtilityPrunerIterative:
-    """反復的近傍拡大 + WST 階層的絞り込み.
+    """Seed + 親境界による WST 階層的絞り込み.
 
     処理の流れ:
     1. 各タイムステップの Seed (UtilityOptimizerV2 結果) を受け取る
-    2. WST を構築し、各ノードで反復的最適化:
-       a. Seed + 親境界 MV で最適化
-       b. 選ばれた MV の近傍を追加
-       c. 拡大候補で再最適化
-       d. 選択が変わらなくなるまで繰り返し
+    2. WST を構築し、各ノードで最適化:
+       a. Seed + 親境界 MV を候補として収集
+       b. その候補で最適化（1回のみ）
     3. 全ノードで選ばれた MV の和集合を「有望候補」として返す
     """
 
@@ -212,7 +208,6 @@ class UtilityPrunerIterative:
         self.total_iterations = 0
 
         logger.info(f"WST: depth={tree.get_depth()}, nodes={self.total_nodes}")
-        logger.info(f"最大イテレーション数/ノード: {self.max_iterations}")
         logger.info("-" * 70)
 
         # --- 再帰的に反復最適化を実行 ---
@@ -331,13 +326,11 @@ class UtilityPrunerIterative:
         parent_boundary_mvs: Set[int],
         aggregated_freq: Dict[str, List[float]],
     ) -> dict:
-        """WST ノードで反復的最適化を実行.
+        """WST ノードで最適化を実行（1回のみ、繰り返しなし）.
 
         処理フロー:
         1. 初期候補 = Seed + 親境界 MV で最適化
-        2. 選ばれた MV の近傍を追加
-        3. 拡大した候補で再最適化
-        4. 選択が変わらなくなるまで繰り返し
+        2. 結果を返す（近傍拡大の繰り返しなし）
 
         Args:
             tree_node: 現在の WST ノード
@@ -346,92 +339,55 @@ class UtilityPrunerIterative:
             aggregated_freq: 集約済み頻度
 
         Returns:
-            最終最適化結果（selected_mvs_by_timestep, pool_mvs など）
+            最適化結果（selected_mvs_by_timestep, pool_mvs など）
         """
         timestep_indices = [tree_node.min_idx, tree_node.median_idx, tree_node.max_idx]
         
-        # 初期候補: Seed のみ + 親境界
-        current_candidates, initial_stats = self._build_initial_candidates(tree_node, parent_boundary_mvs)
+        # 候補: Seed + 親境界
+        candidates, initial_stats = self._build_initial_candidates(tree_node, parent_boundary_mvs)
         
         indent = "  " * tree_node.depth
-        logger.info(f"{indent}  反復最適化開始: 初期候補 {len(current_candidates)} MVs "
+        logger.info(f"{indent}  最適化実行: 候補 {len(candidates)} MVs "
                    f"(Seed: {initial_stats['num_seeds']}, Boundary: {initial_stats['num_boundary']})")
-        print(f"{indent}  反復最適化開始: 初期候補 {len(current_candidates)} MVs")
+        print(f"{indent}  最適化実行: 候補 {len(candidates)} MVs")
         
-        previous_selected: Optional[Set[int]] = None
-        iteration = 0
+        self.total_iterations += 1
         
-        while iteration < self.max_iterations:
-            iteration += 1
-            self.total_iterations += 1
-            
-            # 最適化実行
-            local_optimizer = LocalILPOptimizer(
-                node_list=self.node_list,
-                u_ij=self.u_ij,
-                X=self.X,
-                b_j=self.b_j,
-                B_max=self.B_max,
-                timestep_indices=timestep_indices,
-                all_timesteps=self.timesteps,
-                migration_cost=self.migration_cost,
-                query_frequency_by_timestep=aggregated_freq,
-                fixed_mvs_by_timestep=fixed_mvs_by_timestep,
-                candidate_indices=sorted(current_candidates),
-                gurobi_output=self.gurobi_output,
-            )
-            
-            result = local_optimizer.optimize()
-            
-            # 選択された MV の集計
-            current_selected: Set[int] = set()
-            for mvs in result["selected_mvs_by_timestep"].values():
-                current_selected.update(mvs)
-            
-            pool_mvs = result.get("pool_mvs", set())
-            current_selected_all = current_selected | pool_mvs
-            
-            logger.info(
-                f"{indent}  Iter {iteration}: 候補 {len(current_candidates)}, "
-                f"選択 {len(current_selected_all)} MVs "
-                f"(optimal: {len(current_selected)}, pool: {len(pool_mvs)})"
-            )
-            print(
-                f"{indent}  Iter {iteration}: 候補 {len(current_candidates)}, "
-                f"選択 {len(current_selected_all)} MVs"
-            )
-            
-            # 収束判定
-            if previous_selected is not None and current_selected == previous_selected:
-                logger.info(f"{indent}  → 収束（選択が変化なし）")
-                print(f"{indent}  → 収束（選択が変化なし、{iteration}回で完了）")
-                break
-            
-            # 近傍拡大
-            expanded_candidates = self.expand_neighbors(current_selected_all, silent=True)
-            
-            # 親境界を含める
-            expanded_candidates.update(parent_boundary_mvs)
-            
-            new_candidates = expanded_candidates - current_candidates
-            
-            if not new_candidates:
-                logger.info(f"{indent}  → 収束（新規候補なし）")
-                print(f"{indent}  → 収束（新規候補なし、{iteration}回で完了）")
-                break
-            
-            logger.info(f"{indent}  → 近傍拡大: +{len(new_candidates)} 新規候補")
-            print(f"{indent}  → 近傍拡大: +{len(new_candidates)} 新規候補")
-            
-            # 次イテレーションの準備
-            current_candidates = expanded_candidates
-            previous_selected = current_selected.copy()
+        # 最適化実行（1回のみ）
+        local_optimizer = LocalILPOptimizer(
+            node_list=self.node_list,
+            u_ij=self.u_ij,
+            X=self.X,
+            b_j=self.b_j,
+            B_max=self.B_max,
+            timestep_indices=timestep_indices,
+            all_timesteps=self.timesteps,
+            migration_cost=self.migration_cost,
+            query_frequency_by_timestep=aggregated_freq,
+            fixed_mvs_by_timestep=fixed_mvs_by_timestep,
+            candidate_indices=sorted(candidates),
+            gurobi_output=self.gurobi_output,
+        )
         
-        if iteration >= self.max_iterations:
-            logger.info(f"{indent}  → 最大イテレーション数 ({self.max_iterations}) に到達")
-            print(f"{indent}  → 最大イテレーション数 ({self.max_iterations}) に到達")
+        result = local_optimizer.optimize()
         
-        print(f"{indent}  反復最適化完了: 総イテレーション数 {iteration}回")
+        # 選択された MV の集計
+        selected: Set[int] = set()
+        for mvs in result["selected_mvs_by_timestep"].values():
+            selected.update(mvs)
+        
+        pool_mvs = result.get("pool_mvs", set())
+        selected_all = selected | pool_mvs
+        
+        logger.info(
+            f"{indent}  選択 {len(selected_all)} MVs "
+            f"(optimal: {len(selected)}, pool: {len(pool_mvs)})"
+        )
+        print(
+            f"{indent}  選択 {len(selected_all)} MVs "
+            f"(optimal: {len(selected)}, pool: {len(pool_mvs)})"
+        )
+        
         return result
 
     def _recursive_solve(
@@ -499,7 +455,7 @@ class UtilityPrunerIterative:
         # --- 頻度の集約 ---
         aggregated_freq = self._aggregate_frequencies(tree_node)
 
-        # --- 反復的最適化の実行 ---
+        # --- 最適化の実行（1回のみ） ---
         result = self._iterative_node_optimization(
             tree_node=tree_node,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,

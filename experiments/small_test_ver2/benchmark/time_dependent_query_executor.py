@@ -442,7 +442,7 @@ class TimeDependentQueryExecutor:
                 
                 if migration_sql_file.exists():
                     logger.info(f"Creating initial MVs from {migration_sql_file.name}...")
-                    success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+                    success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
                     migration_time = elapsed
                     migration_success = success
                     migration_error = error
@@ -459,7 +459,7 @@ class TimeDependentQueryExecutor:
                 
                 if migration_sql_file.exists():
                     logger.info(f"Executing migration SQL: {migration_sql_file.name}...")
-                    success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+                    success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
                     migration_time = elapsed
                     migration_success = success
                     migration_error = error
@@ -730,7 +730,7 @@ class TimeDependentQueryExecutor:
         
         if migration_sql_file.exists():
             logger.info(f"Creating initial MVs from {migration_sql_file.name}...")
-            success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+            success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
             initial_mv_creation_time = elapsed
             
             if success:

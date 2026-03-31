@@ -1,20 +1,25 @@
-"""Seed + 親境界による候補選出 + WST 階層的絞り込み (UtilityPrunerIterative).
+"""反復的近傍拡大による候補選出 + WST 階層的絞り込み (UtilityPrunerIterative).
 
 UtilityPruner との違い:
-- 事前の近傍拡大なし、各 WST ノードで Seed + 親境界のみで最適化
+- 事前に全近傍を拡大せず、各 WST ノードで反復的に拡大
 - 各ノードでの処理:
-  1. Seed + 親境界 MV を候補として収集
-  2. その候補で最適化（1回のみ、繰り返しなし）
+  1. (Seed + 近傍) ∪ (親境界 MV + 近傍) で最適化（イテレーション1）
+  2. 選ばれた MV の近傍をさらに追加
+  3. 拡大した候補で再最適化
+  4. 収束するまで繰り返し
 
 期待される効果:
-- より高速な候補絞り込み（近傍拡大の繰り返しなし）
-- シンプルな処理フロー
+- より効率的な候補絞り込み（必要な近傍のみ追加）
+- 解の品質向上（反復的な探索）
+- 親境界MVの近傍も含めることで探索範囲を拡大
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Dict, List, Set, Optional
 
 from experiments.small_test_ver2.core.local_ilp_optimizer import LocalILPOptimizer
@@ -27,13 +32,15 @@ logger = logging.getLogger(__name__)
 
 
 class UtilityPrunerIterative:
-    """Seed + 親境界による WST 階層的絞り込み.
+    """反復的近傍拡大 + WST 階層的絞り込み.
 
     処理の流れ:
     1. 各タイムステップの Seed (UtilityOptimizerV2 結果) を受け取る
-    2. WST を構築し、各ノードで最適化:
-       a. Seed + 親境界 MV を候補として収集
-       b. その候補で最適化（1回のみ）
+    2. WST を構築し、各ノードで反復的最適化:
+       a. (Seed + 近傍) ∪ (親境界 MV + 近傍) で最適化
+       b. 選ばれた MV の近傍をさらに追加
+       c. 拡大した候補で再最適化
+       d. 選択が変わらなくなるまで繰り返し
     3. 全ノードで選ばれた MV の和集合を「有望候補」として返す
     """
 
@@ -54,6 +61,8 @@ class UtilityPrunerIterative:
         deeplist: List,
         gurobi_output: int = 0,
         max_iterations: int = 5,  # 各ノードでの最大イテレーション数
+        use_parallel: bool = False,
+        max_workers: Optional[int] = None,
     ):
         """初期化.
 
@@ -72,6 +81,8 @@ class UtilityPrunerIterative:
             deeplist: 各クエリの深さ情報
             gurobi_output: Gurobi 出力レベル (0=off)
             max_iterations: 各ノードでの最大イテレーション数
+            use_parallel: 並列処理を有効にするか (default: False)
+            max_workers: 最大ワーカー数 (default: CPU数)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -93,6 +104,13 @@ class UtilityPrunerIterative:
         self.I = len(u_ij)
         self.T = len(timesteps)
         self.J = len(node_list)
+
+        # 並列処理設定
+        self.use_parallel = use_parallel
+        if max_workers is None:
+            self.max_workers = os.cpu_count() or 1
+        else:
+            self.max_workers = max_workers
 
         # 進捗トラッキング用
         self.node_count = 0
@@ -178,7 +196,9 @@ class UtilityPrunerIterative:
 
         処理:
         1. WST を構築
-        2. 各ノードで反復的最適化（近傍拡大なしから開始）
+        2. 各ノードで反復的最適化
+           - Seed + その近傍 + 親境界MV + その近傍から開始
+           - 反復的に候補を拡大しながら最適化
         3. 全ノードで選ばれた MV の和集合を返す
 
         Returns:
@@ -190,12 +210,12 @@ class UtilityPrunerIterative:
 
         t0 = time.time()
 
-        # Seed の統計（近傍拡大は行わない）
+        # Seed の統計（初期候補構築時に近傍拡大される）
         all_seed_union = set()
         for seeds in self.per_timestep_seeds.values():
             all_seed_union.update(seeds)
 
-        logger.info(f"全 Seed 和集合: {len(all_seed_union)} candidates (近傍拡大前)")
+        logger.info(f"全 Seed 和集合: {len(all_seed_union)} candidates (各ノードで近傍拡大)")
 
         # --- WST 構築 ---
         if self.T < 3:
@@ -208,19 +228,17 @@ class UtilityPrunerIterative:
         self.total_iterations = 0
 
         logger.info(f"WST: depth={tree.get_depth()}, nodes={self.total_nodes}")
+        logger.info(f"最大イテレーション数/ノード: {self.max_iterations}")
+        logger.info(f"モード: {'並列' if self.use_parallel else '直列'}")
+        if self.use_parallel:
+            logger.info(f"ワーカー数: {self.max_workers}")
         logger.info("-" * 70)
 
-        # --- 再帰的に反復最適化を実行 ---
-        promising_mvs: Set[int] = set()
-
-        self._recursive_solve(
-            tree_node=tree.root,
-            parent_min_mvs=set(),
-            parent_max_mvs=set(),
-            promising_mvs=promising_mvs,
-            is_left_child=False,
-            is_right_child=False,
-        )
+        # --- 並列 or 直列で実行 ---
+        if self.use_parallel:
+            promising_mvs = self._prune_candidates_parallel(tree)
+        else:
+            promising_mvs = self._prune_candidates_sequential(tree)
 
         elapsed = time.time() - t0
 
@@ -239,14 +257,128 @@ class UtilityPrunerIterative:
 
         return promising_mvs
 
+    def _prune_candidates_sequential(self, tree: WorkloadSummaryTree) -> Set[int]:
+        """直列実装: 再帰的に WST を走査して候補を収集."""
+        promising_mvs: Set[int] = set()
+
+        self._recursive_solve(
+            tree_node=tree.root,
+            parent_min_mvs=set(),
+            parent_max_mvs=set(),
+            promising_mvs=promising_mvs,
+            is_left_child=False,
+            is_right_child=False,
+        )
+
+        return promising_mvs
+
+    def _prune_candidates_parallel(self, tree: WorkloadSummaryTree) -> Set[int]:
+        """並列実装: レベルごとに BFS で WST を走査し、同じレベルのノードを並列処理.
+
+        各レベルのノードは独立しているため、並列実行可能。
+        親ノードの結果を子ノードに渡すため、レベルごとに同期する。
+        """
+        promising_mvs: Set[int] = set()
+
+        if not tree.root:
+            return promising_mvs
+
+        # レベルごとに処理 (BFS アプローチ)
+        # 各要素: (node, parent_min_mvs, parent_max_mvs, is_left, is_right)
+        current_level = [(tree.root, set(), set(), False, False)]
+
+        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+            while current_level:
+                logger.info(f"並列処理: レベル処理開始 ({len(current_level)} ノード)")
+
+                # 同じレベルのノードを並列実行
+                futures = {}
+                for node, parent_min_mvs, parent_max_mvs, is_left, is_right in current_level:
+                    future = executor.submit(
+                        _solve_node_iterative_static,
+                        node=node,
+                        parent_min_mvs=parent_min_mvs,
+                        parent_max_mvs=parent_max_mvs,
+                        is_left_child=is_left,
+                        is_right_child=is_right,
+                        # データ
+                        node_list=self.node_list,
+                        u_ij=self.u_ij,
+                        X=self.X,
+                        b_j=self.b_j,
+                        B_max=self.B_max,
+                        timesteps=self.timesteps,
+                        migration_cost=self.migration_cost,
+                        freq=self.freq,
+                        per_timestep_seeds=self.per_timestep_seeds,
+                        qm=self.qm,
+                        position_node_id=self.position_node_id,
+                        deeplist=self.deeplist,
+                        gurobi_output=self.gurobi_output,
+                        max_iterations=self.max_iterations,
+                    )
+                    futures[future] = node
+
+                # 結果を収集し、次のレベルを準備
+                next_level = []
+                for future in as_completed(futures):
+                    node = futures[future]
+                    try:
+                        result = future.result()
+
+                        # 進捗カウント
+                        self.node_count += 1
+                        self.total_iterations += result.get("iterations_used", 0)
+
+                        # 有望候補に追加
+                        selected_mvs_all = result["selected_mvs"] | result.get("pool_mvs", set())
+                        before_count = len(promising_mvs)
+                        promising_mvs.update(selected_mvs_all)
+                        new_mvs = len(promising_mvs) - before_count
+
+                        progress = f"[{self.node_count}/{self.total_nodes}]"
+                        logger.info(
+                            f"{progress} 完了: timesteps "
+                            f"[{node.min_idx}, {node.median_idx}, {node.max_idx}], "
+                            f"selected={len(selected_mvs_all)}, +{new_mvs} new"
+                        )
+                        print(
+                            f"{progress} 完了: T[{node.min_idx},{node.median_idx},{node.max_idx}] "
+                            f"選択={len(selected_mvs_all)}, イテレーション={result.get('iterations_used', 0)}"
+                        )
+
+                        # 子ノードを次のレベルに追加
+                        min_mvs = result["min_mvs"]
+                        median_mvs = result["median_mvs"]
+                        max_mvs = result["max_mvs"]
+
+                        if node.left_child:
+                            next_level.append(
+                                (node.left_child, min_mvs, median_mvs, True, False)
+                            )
+
+                        if node.right_child:
+                            next_level.append(
+                                (node.right_child, median_mvs, max_mvs, False, True)
+                            )
+
+                    except Exception as e:
+                        logger.error(f"ノード処理エラー: {e}")
+                        raise
+
+                # 次のレベルへ
+                current_level = next_level
+
+        return promising_mvs
+
     def _build_initial_candidates(
         self,
         tree_node: TreeNode,
         parent_boundary_mvs: Set[int],
     ) -> tuple[Set[int], dict]:
-        """初期候補集合を構築（近傍拡大なし）.
+        """初期候補集合を構築（近傍拡大あり）.
 
-        候補 = 範囲内タイムステップの Seed 和集合 ∪ 親境界 MV
+        候補 = (範囲内タイムステップの Seed + 近傍拡大) ∪ (親境界 MV + 近傍拡大)
 
         Args:
             tree_node: 現在の WST ノード
@@ -262,13 +394,22 @@ class UtilityPrunerIterative:
                 if ts_name in self.per_timestep_seeds:
                     seed_indices.update(self.per_timestep_seeds[ts_name])
 
-        candidate_set = seed_indices | parent_boundary_mvs
-        boundary_indices = parent_boundary_mvs - seed_indices
+        # Seedを近傍拡大
+        expanded_seeds = self.expand_neighbors(seed_indices, silent=True)
+        seed_neighbors = expanded_seeds - seed_indices
+        
+        # 親境界MVも近傍拡大
+        expanded_boundary = self.expand_neighbors(parent_boundary_mvs, silent=True)
+        boundary_neighbors = expanded_boundary - parent_boundary_mvs
+        
+        # 統合
+        candidate_set = expanded_seeds | expanded_boundary
         
         stats = {
             "num_seeds": len(seed_indices),
-            "num_neighbors": 0,  # 初期候補では近傍拡大なし
-            "num_boundary": len(boundary_indices),
+            "num_seed_neighbors": len(seed_neighbors),
+            "num_boundary": len(parent_boundary_mvs),
+            "num_boundary_neighbors": len(boundary_neighbors),
             "total": len(candidate_set)
         }
         
@@ -326,11 +467,13 @@ class UtilityPrunerIterative:
         parent_boundary_mvs: Set[int],
         aggregated_freq: Dict[str, List[float]],
     ) -> dict:
-        """WST ノードで最適化を実行（1回のみ、繰り返しなし）.
+        """WST ノードで反復的最適化を実行.
 
         処理フロー:
-        1. 初期候補 = Seed + 親境界 MV で最適化
-        2. 結果を返す（近傍拡大の繰り返しなし）
+        1. 初期候補 = (Seed + 近傍) ∪ (親境界MV + 近傍) で最適化
+        2. 選ばれた MV の近傍をさらに追加
+        3. 拡大した候補で再最適化
+        4. 選択が変わらなくなるまで繰り返し
 
         Args:
             tree_node: 現在の WST ノード
@@ -339,55 +482,96 @@ class UtilityPrunerIterative:
             aggregated_freq: 集約済み頻度
 
         Returns:
-            最適化結果（selected_mvs_by_timestep, pool_mvs など）
+            最終最適化結果（selected_mvs_by_timestep, pool_mvs など）
         """
         timestep_indices = [tree_node.min_idx, tree_node.median_idx, tree_node.max_idx]
         
-        # 候補: Seed + 親境界
-        candidates, initial_stats = self._build_initial_candidates(tree_node, parent_boundary_mvs)
+        # 初期候補: Seed + 近傍 + 親境界 + その近傍
+        current_candidates, initial_stats = self._build_initial_candidates(tree_node, parent_boundary_mvs)
         
         indent = "  " * tree_node.depth
-        logger.info(f"{indent}  最適化実行: 候補 {len(candidates)} MVs "
-                   f"(Seed: {initial_stats['num_seeds']}, Boundary: {initial_stats['num_boundary']})")
-        print(f"{indent}  最適化実行: 候補 {len(candidates)} MVs")
+        logger.info(f"{indent}  反復最適化開始: 初期候補 {len(current_candidates)} MVs "
+                   f"(Seed: {initial_stats['num_seeds']}, "
+                   f"Seed近傍: {initial_stats['num_seed_neighbors']}, "
+                   f"Boundary: {initial_stats['num_boundary']}, "
+                   f"Boundary近傍: {initial_stats['num_boundary_neighbors']})")
+        print(f"{indent}  反復最適化開始: 初期候補 {len(current_candidates)} MVs "
+              f"(Seed+Neighbor+Boundary+BoundaryNeighbor)")
         
-        self.total_iterations += 1
+        previous_selected: Optional[Set[int]] = None
+        iteration = 0
         
-        # 最適化実行（1回のみ）
-        local_optimizer = LocalILPOptimizer(
-            node_list=self.node_list,
-            u_ij=self.u_ij,
-            X=self.X,
-            b_j=self.b_j,
-            B_max=self.B_max,
-            timestep_indices=timestep_indices,
-            all_timesteps=self.timesteps,
-            migration_cost=self.migration_cost,
-            query_frequency_by_timestep=aggregated_freq,
-            fixed_mvs_by_timestep=fixed_mvs_by_timestep,
-            candidate_indices=sorted(candidates),
-            gurobi_output=self.gurobi_output,
-        )
+        while iteration < self.max_iterations:
+            iteration += 1
+            self.total_iterations += 1
+            
+            # 最適化実行
+            local_optimizer = LocalILPOptimizer(
+                node_list=self.node_list,
+                u_ij=self.u_ij,
+                X=self.X,
+                b_j=self.b_j,
+                B_max=self.B_max,
+                timestep_indices=timestep_indices,
+                all_timesteps=self.timesteps,
+                migration_cost=self.migration_cost,
+                query_frequency_by_timestep=aggregated_freq,
+                fixed_mvs_by_timestep=fixed_mvs_by_timestep,
+                candidate_indices=sorted(current_candidates),
+                gurobi_output=self.gurobi_output,
+            )
+            
+            result = local_optimizer.optimize()
+            
+            # 選択された MV の集計
+            current_selected: Set[int] = set()
+            for mvs in result["selected_mvs_by_timestep"].values():
+                current_selected.update(mvs)
+            
+            pool_mvs = result.get("pool_mvs", set())
+            current_selected_all = current_selected | pool_mvs
+            
+            logger.info(
+                f"{indent}  Iter {iteration}: 候補 {len(current_candidates)}, "
+                f"選択 {len(current_selected_all)} MVs "
+                f"(optimal: {len(current_selected)}, pool: {len(pool_mvs)})"
+            )
+            print(
+                f"{indent}  Iter {iteration}: 候補 {len(current_candidates)}, "
+                f"選択 {len(current_selected_all)} MVs"
+            )
+            
+            # 収束判定
+            if previous_selected is not None and current_selected == previous_selected:
+                logger.info(f"{indent}  → 収束（選択が変化なし）")
+                print(f"{indent}  → 収束（選択が変化なし、{iteration}回で完了）")
+                break
+            
+            # 近傍拡大
+            expanded_candidates = self.expand_neighbors(current_selected_all, silent=True)
+            
+            # 親境界を含める
+            expanded_candidates.update(parent_boundary_mvs)
+            
+            new_candidates = expanded_candidates - current_candidates
+            
+            if not new_candidates:
+                logger.info(f"{indent}  → 収束（新規候補なし）")
+                print(f"{indent}  → 収束（新規候補なし、{iteration}回で完了）")
+                break
+            
+            logger.info(f"{indent}  → 近傍拡大: +{len(new_candidates)} 新規候補")
+            print(f"{indent}  → 近傍拡大: +{len(new_candidates)} 新規候補")
+            
+            # 次イテレーションの準備
+            current_candidates = expanded_candidates
+            previous_selected = current_selected.copy()
         
-        result = local_optimizer.optimize()
+        if iteration >= self.max_iterations:
+            logger.info(f"{indent}  → 最大イテレーション数 ({self.max_iterations}) に到達")
+            print(f"{indent}  → 最大イテレーション数 ({self.max_iterations}) に到達")
         
-        # 選択された MV の集計
-        selected: Set[int] = set()
-        for mvs in result["selected_mvs_by_timestep"].values():
-            selected.update(mvs)
-        
-        pool_mvs = result.get("pool_mvs", set())
-        selected_all = selected | pool_mvs
-        
-        logger.info(
-            f"{indent}  選択 {len(selected_all)} MVs "
-            f"(optimal: {len(selected)}, pool: {len(pool_mvs)})"
-        )
-        print(
-            f"{indent}  選択 {len(selected_all)} MVs "
-            f"(optimal: {len(selected)}, pool: {len(pool_mvs)})"
-        )
-        
+        print(f"{indent}  反復最適化完了: 総イテレーション数 {iteration}回")
         return result
 
     def _recursive_solve(
@@ -449,13 +633,14 @@ class UtilityPrunerIterative:
         # ターミナルへの詳細出力
         indent = "  " * tree_node.depth
         print(f"{indent}Node {progress} T[{tree_node.min_idx}:{tree_node.max_idx}] "
-              f"Seed:{initial_stats['num_seeds']}, Neighbor:{initial_stats['num_neighbors']}, "
-              f"Boundary:{initial_stats['num_boundary']} -> Initial:{initial_stats['total']}")
+              f"Seed:{initial_stats['num_seeds']}+{initial_stats['num_seed_neighbors']}, "
+              f"Boundary:{initial_stats['num_boundary']}+{initial_stats['num_boundary_neighbors']} "
+              f"-> Initial:{initial_stats['total']}")
 
         # --- 頻度の集約 ---
         aggregated_freq = self._aggregate_frequencies(tree_node)
 
-        # --- 最適化の実行（1回のみ） ---
+        # --- 反復的最適化の実行 ---
         result = self._iterative_node_optimization(
             tree_node=tree_node,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
@@ -527,3 +712,163 @@ class UtilityPrunerIterative:
             "total_iterations": self.total_iterations,
             "avg_iterations_per_node": self.total_iterations / self.total_nodes if self.total_nodes > 0 else 0.0,
         }
+
+
+# ==============================================================================
+# モジュールレベル関数（並列処理用）
+# ==============================================================================
+
+def _solve_node_iterative_static(
+    node: TreeNode,
+    parent_min_mvs: Set[int],
+    parent_max_mvs: Set[int],
+    is_left_child: bool,
+    is_right_child: bool,
+    node_list: List[str],
+    u_ij: List[List[float]],
+    X: List[List[int]],
+    b_j: List[float],
+    B_max: float,
+    timesteps: List[str],
+    migration_cost: Dict[int, float],
+    freq: Dict[str, List[float]],
+    per_timestep_seeds: Dict[str, Set[int]],
+    qm,
+    position_node_id: Dict,
+    deeplist: List,
+    gurobi_output: int,
+    max_iterations: int,
+) -> dict:
+    """WST ノードで反復的最適化を実行（並列処理用の静的関数）.
+
+    Args:
+        node: 現在の WST ノード
+        parent_min_mvs: 親の min 時刻の MV
+        parent_max_mvs: 親の max 時刻の MV
+        is_left_child: 左子ノードかどうか
+        is_right_child: 右子ノードかどうか
+        (その他のパラメータは UtilityPrunerIterative と同じ)
+
+    Returns:
+        最適化結果の辞書
+    """
+    from experiments.small_test_ver2.core.utility_pruner_iterative_helpers import (
+        build_initial_candidates_static,
+        aggregate_frequencies_static,
+        expand_neighbors_static,
+    )
+
+    # --- 固定境界の構築 ---
+    fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
+
+    if is_left_child and parent_min_mvs:
+        fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+    if is_left_child and parent_max_mvs:
+        fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+
+    if is_right_child and parent_min_mvs:
+        fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+    if is_right_child and parent_max_mvs:
+        fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+
+    # 親境界 MV の集約
+    parent_boundary_mvs = set()
+    for fixed_set in fixed_mvs_by_timestep.values():
+        parent_boundary_mvs.update(fixed_set)
+
+    # --- 初期候補の構築 ---
+    current_candidates, initial_stats = build_initial_candidates_static(
+        tree_node=node,
+        parent_boundary_mvs=parent_boundary_mvs,
+        timesteps=timesteps,
+        per_timestep_seeds=per_timestep_seeds,
+        node_list=node_list,
+        qm=qm,
+        position_node_id=position_node_id,
+        deeplist=deeplist,
+    )
+
+    # --- 頻度の集約 ---
+    num_queries = len(u_ij)
+    aggregated_freq = aggregate_frequencies_static(
+        tree_node=node,
+        timesteps=timesteps,
+        freq=freq,
+        num_queries=num_queries,
+    )
+
+    # --- 反復的最適化 ---
+    timestep_indices = [node.min_idx, node.median_idx, node.max_idx]
+    previous_selected: Optional[Set[int]] = None
+    iteration = 0
+
+    while iteration < max_iterations:
+        iteration += 1
+
+        # ILP 最適化を実行
+        local_optimizer = LocalILPOptimizer(
+            node_list=node_list,
+            u_ij=u_ij,
+            X=X,
+            b_j=b_j,
+            B_max=B_max,
+            timestep_indices=timestep_indices,
+            all_timesteps=timesteps,
+            migration_cost=migration_cost,
+            query_frequency_by_timestep=aggregated_freq,
+            fixed_mvs_by_timestep=fixed_mvs_by_timestep,
+            candidate_indices=sorted(current_candidates),
+            gurobi_output=gurobi_output,
+        )
+
+        result = local_optimizer.optimize()
+
+        # 選択された MV の集計
+        current_selected: Set[int] = set()
+        for mvs in result["selected_mvs_by_timestep"].values():
+            current_selected.update(mvs)
+
+        pool_mvs = result.get("pool_mvs", set())
+        current_selected_all = current_selected | pool_mvs
+
+        # 収束判定
+        if previous_selected is not None and current_selected == previous_selected:
+            break
+
+        # 近傍拡大
+        expanded_candidates = expand_neighbors_static(
+            current_selected_all, node_list, qm, position_node_id, deeplist
+        )
+
+        # 親境界を含める
+        expanded_candidates.update(parent_boundary_mvs)
+
+        new_candidates = expanded_candidates - current_candidates
+
+        if not new_candidates:
+            break
+
+        # 次イテレーションの準備
+        current_candidates = expanded_candidates
+        previous_selected = current_selected.copy()
+
+    # --- 結果の抽出 ---
+    selected_mvs_optimal: Set[int] = set()
+    for t_idx, mvs in result["selected_mvs_by_timestep"].items():
+        selected_mvs_optimal.update(mvs)
+
+    pool_mvs = result.get("pool_mvs", set())
+
+    # 境界 MV の抽出
+    min_mvs = result["selected_mvs_by_timestep"].get(node.min_idx, set())
+    median_mvs = result["selected_mvs_by_timestep"].get(node.median_idx, set())
+    max_mvs = result["selected_mvs_by_timestep"].get(node.max_idx, set())
+
+    return {
+        "selected_mvs": selected_mvs_optimal,
+        "pool_mvs": pool_mvs,
+        "min_mvs": min_mvs,
+        "median_mvs": median_mvs,
+        "max_mvs": max_mvs,
+        "iterations_used": iteration,
+    }

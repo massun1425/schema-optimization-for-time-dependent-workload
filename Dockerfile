@@ -85,3 +85,12 @@ EOSQL\n\
     chmod +x /docker-entrypoint-initdb.d/01_load_imdb.sh
 
 WORKDIR /
+
+# PostgreSQLのリソース最適化設定 (work_memは128MBに設定)
+CMD ["postgres", \
+     "-c", "shared_buffers=2GB", \
+     "-c", "work_mem=128MB", \
+     "-c", "effective_cache_size=6GB", \
+     "-c", "random_page_cost=1.1", \
+     "-c", "maintenance_work_mem=1GB"]
+

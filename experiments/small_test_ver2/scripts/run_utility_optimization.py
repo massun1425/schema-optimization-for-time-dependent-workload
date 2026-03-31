@@ -132,6 +132,14 @@ def main():
         "--max-iterations", type=int, default=5,
         help="反復的削減の最大イテレーション数/ノード (default: 5)"
     )
+    parser.add_argument(
+        "--use-parallel", action="store_true",
+        help="WSTノードの並列処理を有効にする (default: False)"
+    )
+    parser.add_argument(
+        "--max-workers", type=int, default=None,
+        help="並列処理の最大ワーカー数 (default: CPU数)"
+    )
     args = parser.parse_args()
 
     exp_dir = project_root / "experiments" / "small_test_ver2"
@@ -299,9 +307,13 @@ def main():
     wst_start = time.time()
     if args.pruning_method == "iterative":
         print_info(f"反復的削減: 最大イテレーション数/ノード = {args.max_iterations}")
+        if args.use_parallel:
+            print_info(f"並列処理: 有効, ワーカー数 = {args.max_workers or 'CPU数'}")
         pruner = UtilityPrunerIterative(
             **pruner_kwargs,
             max_iterations=args.max_iterations,
+            use_parallel=args.use_parallel,
+            max_workers=args.max_workers,
         )
     else:
         pruner = UtilityPruner(**pruner_kwargs)

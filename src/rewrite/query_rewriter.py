@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 class QueryRewriter:
     """クエリ書き換え管理"""
 
-    def __init__(self, query_manager: Any = None, containment_matrix: list = None, node_list: list = None):
+    def __init__(self, query_manager: Any = None, containment_matrix: list = None, node_list: list = None, query_set: str = "job"):
         """初期化
 
         Args:
             query_manager: クエリ管理オブジェクトまたはSettings
             containment_matrix: X行列（包含関係）。X[i][j]=1 ならノードiがノードjを包含
             node_list: ノードIDのリスト（X行列のインデックスに対応）
+            query_set: クエリセット名（未指定時はjob）
         """
         # settingsオブジェクトが渡された場合の対応
         if hasattr(query_manager, 'database'):
@@ -40,6 +41,7 @@ class QueryRewriter:
         # 包含行列（冗長MV除去に使用）
         self.containment_matrix = containment_matrix
         self.node_list = node_list
+        self.query_set = query_set or "job"
         if containment_matrix is not None and node_list is not None:
             self._node_to_idx = {node_id: idx for idx, node_id in enumerate(node_list)}
             logger.info(f"Containment matrix enabled: {len(node_list)} nodes")
@@ -49,6 +51,20 @@ class QueryRewriter:
         
         self.sql_parser = SQLParser()
         self.mv_generator = MVGenerator()
+
+    def _get_query_dir(self) -> Path:
+        """書き換え対象クエリのディレクトリを解決
+
+        後方互換のため、query_set未指定時はjobを使用。
+        """
+        if self.settings:
+            base_dir = Path(self.settings.benchmark.sql_dir)
+            target_dir = base_dir / self.query_set
+            if target_dir.exists():
+                return target_dir
+            return base_dir / "job"
+
+        return Path("dataset/RED_SQL/job")
     
     def rewrite_queries(self, selected_views: list) -> dict[str, str]:
         """選択されたMVを使ってクエリを書き換える
@@ -67,10 +83,7 @@ class QueryRewriter:
         query_to_mvs = self._build_query_mv_mapping(selected_views)
         
         # 元のクエリファイルのパスを取得
-        if self.settings:
-            query_dir = Path(self.settings.benchmark.sql_dir) / "job"
-        else:
-            query_dir = Path("dataset/RED_SQL/job")
+        query_dir = self._get_query_dir()
         
         rewritten = {}
         
@@ -110,12 +123,9 @@ class QueryRewriter:
         Returns:
             {query_id: [MaterializedView, ...]} の辞書
         """
-        # クエリ番号（0-112）からファイル名へのマッピングを作成
+        # クエリ番号（0ベース）からファイル名へのマッピングを作成
         # optimizationフェーズと同じnatural_sort_keyを使用
-        if self.settings:
-            query_dir = Path(self.settings.benchmark.sql_dir) / "job"
-        else:
-            query_dir = Path("dataset/RED_SQL/job")
+        query_dir = self._get_query_dir()
         
         # optimizationフェーズと同じソート順を使用（natural_sort_key）
         query_files = sorted(query_dir.glob("*.sql"), key=lambda x: natural_sort_key(str(x)))
