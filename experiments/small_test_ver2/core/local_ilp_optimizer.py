@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Set, Tuple, Optional
 
 import gurobipy as gp
 
@@ -44,6 +44,7 @@ class LocalILPOptimizer:
         fixed_mvs_by_timestep: Dict[int, Set[int]] = None,
         candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
         gurobi_output: int = 0,
+        mip_gap: Optional[float] = None,
         use_solution_pool: bool = False,  # Solution Pool機能を使用するか
         pool_solutions: int = 10,  # 保持する解の個数
         pool_gap: float = 0.001,  # 許容する相対ギャップ（0.1%）
@@ -63,6 +64,7 @@ class LocalILPOptimizer:
             fixed_mvs_by_timestep: Optional constraints {timestep_idx: set of MV indices to fix}
             candidate_indices: Optional pre-computed candidate indices (avoids redundant filtering)
             gurobi_output: Gurobi log level (0=off, 1=on)
+            mip_gap: Optional relative MIP gap tolerance for Gurobi (e.g., 0.01 = 1%)
             use_solution_pool: Enable Solution Pool to capture near-optimal solutions
             pool_solutions: Number of solutions to keep in pool (default: 10)
             pool_gap: Relative gap tolerance for pool solutions (default: 0.10 = 10%)
@@ -95,6 +97,11 @@ class LocalILPOptimizer:
         self.J = len(self.node_list)  # Number of MV candidates
         self.T = len(unique_indices)  # 2 or 3 unique timesteps
 
+        # Sparse utility index (candidate-filtered):
+        # y[i,j,t] is created only when u_ij[i][j] > 0 and j is in cand_j.
+        self.pos_is_by_j: Dict[int, List[int]] = {}
+        self.pos_js_by_i: Dict[int, List[int]] = {}
+
         # マイグレーションコストへの重み付け
         self.migration_ratio = 1.0 # float(self.T/len(all_timesteps))
         
@@ -106,6 +113,9 @@ class LocalILPOptimizer:
         else:
             self.cand_j = self._initialize_candidates()
             logger.debug(f"Computed candidates: {len(self.cand_j)} candidates")
+
+        # Build sparse utility mapping after cand_j is fixed
+        self._build_sparse_utility_index()
         
         if self.T == 2:
             logger.debug(f"Detected 2-timestep node: {timestep_indices} -> {unique_indices}")
@@ -117,6 +127,7 @@ class LocalILPOptimizer:
         # self.a removed
         
         self.gurobi_output = gurobi_output
+        self.mip_gap = mip_gap
         
         # Solution Pool settings
         self.use_solution_pool = use_solution_pool
@@ -140,6 +151,21 @@ class LocalILPOptimizer:
             if has_utility:
                 candidates.append(j)
         return candidates
+
+    def _build_sparse_utility_index(self) -> None:
+        """Build sparse index for positive utility pairs on current candidate set."""
+        self.pos_is_by_j = {j: [] for j in self.cand_j}
+        self.pos_js_by_i = {i: [] for i in range(self.I)}
+
+        for i in range(self.I):
+            for j in self.cand_j:
+                if self.u_ij[i][j] > 0:
+                    self.pos_js_by_i[i].append(j)
+                    self.pos_is_by_j[j].append(i)
+
+    def _get_y(self, i: int, j: int, t: int):
+        """Get y[i,j,t] variable/constant (returns 0 for non-created sparse entries)."""
+        return self.y.get((i, j, t), 0)
     
     def _build_variables(self) -> None:
         """Create all Gurobi variables, handling fixed MVs as constants."""
@@ -151,6 +177,7 @@ class LocalILPOptimizer:
         # Track counts
         var_count = 0
         fixed_count = 0
+        y_var_count = 0
         
         # Create variables in same order as TimeDependentOptimizer
         for t in range(self.T):
@@ -176,23 +203,30 @@ class LocalILPOptimizer:
                 # Optimization: If z[j,t] is fixed to 0, then c, y must be 0
                 if z_val == 0:
                     self.c[j, t] = 0
-                    for i in range(self.I):
-                        self.y[i, j, t] = 0
                 else:
                     # If z is 1 or variable, we generally need variables for c, y
                     # (c could be fixed if z[t-1] is known, but let's keep logic simple)
                     
-                    # c[j,t]
-                    self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
+                    # c[j,t] is continuous in [0, 1] (relaxation)
+                    self.c[j, t] = m.addVar(
+                        vtype=gp.GRB.CONTINUOUS,
+                        lb=0.0,
+                        ub=1.0,
+                        name=f"c_{j}_{t}",
+                    )
                     var_count += 1
                     
-                    # y[i,j,t]
-                    for i in range(self.I):
+                    # y[i,j,t] only for positive-utility pairs (sparse)
+                    for i in self.pos_is_by_j.get(j, []):
                         self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
                         var_count += 1
+                        y_var_count += 1
         
         m.update()
-        logger.debug(f"Created {var_count} variables (skipped {fixed_count} fixed z-vars + associated y/c)")
+        logger.debug(
+            f"Created {var_count} variables (y-vars: {y_var_count}, "
+            f"skipped {fixed_count} fixed z-vars + sparse y omissions)"
+        )
 
     def _add_safe_constr(self, constr, name: str) -> None:
         """Add constraint to model only if it's not trivially True."""
@@ -212,24 +246,26 @@ class LocalILPOptimizer:
         
         logger.debug("Adding usage and storage constraints...")
         constraint_count = 0
+        cand_size = max(len(self.cand_j), 1)
         
         for t in range(self.T):
             for i in range(self.I):
-                for j in self.cand_j:
+                for j in self.pos_js_by_i.get(i, []):
                     # Usage implies materialization (y[i,j,t] <= z[j,t])
                     # If y=0 and z=0, 0<=0 (True). If y var and z=1, y<=1.
                     self._add_safe_constr(
-                        self.y[i, j, t] <= self.z[j, t],
+                        self._get_y(i, j, t) <= self.z[j, t],
                         name=f"use_le_mat_{i}_{j}_{t}"
                     )
                     constraint_count += 1
                     
                     # Inclusion/overlap exclusion
                     # Note: Normalization by len(cand_j) matches NormalOptimizer behavior
-                    lhs = self.y[i, j, t] + gp.quicksum(
-                        self.y[i, u, t] * self.X[j][u] 
-                        for u in self.cand_j if u != j
-                    ) / len(self.cand_j)
+                    lhs = self._get_y(i, j, t) + gp.quicksum(
+                        self._get_y(i, u, t) * self.X[j][u]
+                        for u in self.pos_js_by_i.get(i, [])
+                        if u != j and self.X[j][u] != 0
+                    ) / cand_size
                     self._add_safe_constr(
                         lhs <= 1,
                         name=f"inclusive_excl_{i}_{j}_{t}"
@@ -293,10 +329,10 @@ class LocalILPOptimizer:
         """Build the objective function (minimize workload + migration cost)."""
         # Workload cost: -sum(u_ij * freq * y_ijt)
         workload = gp.quicksum(
-            -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
+            -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self._get_y(i, j, t)
             for t in range(self.T)
             for i in range(self.I)
-            for j in self.cand_j
+            for j in self.pos_js_by_i.get(i, [])
         )
         
         # Migration cost: sum(fixed_cost * c_jt)
@@ -325,6 +361,10 @@ class LocalILPOptimizer:
         self.model = gp.Model("LocalILP")
         try:
             self.model.Params.OutputFlag = self.gurobi_output
+            if self.mip_gap is not None:
+                self.model.Params.MIPGap = self.mip_gap
+            # self.model.Params.MIPFocus = 1
+            # self.model.Params.Heuristics = 0.5
             if time_limit is not None:
                 self.model.Params.TimeLimit = time_limit
             # self.model.Params.Threads = 4  # Multi-threaded for consistency

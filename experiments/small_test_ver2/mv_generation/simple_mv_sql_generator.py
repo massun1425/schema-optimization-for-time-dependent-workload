@@ -62,7 +62,8 @@ class SimpleMVSQLGenerator:
             mv_generator = EnhancedMVGenerator(
                 query_manager=self.qp.qm,
                 schema_provider=self.schema_provider,
-                selected_mvs=set()  # 既存MVなしで純粋なクエリを生成
+                selected_mvs=set(),  # 既存MVなしで純粋なクエリを生成
+                query_parser=self.qp,  # 元SQL JOIN条件へのアクセスを提供
             )
             
             original_sql = mv_generator.generate_mv_sql(node_id)

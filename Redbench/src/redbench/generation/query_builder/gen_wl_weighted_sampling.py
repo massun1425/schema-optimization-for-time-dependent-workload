@@ -154,6 +154,7 @@ def create_workload(
         include_ctas=config.get("include_ctas", False),
         exclude_tables_never_read=config.get("redset_exclude_tables_never_read", False),
         limit_rows=config.get("limit_redset_rows_read", None),
+        only_select=config.get("only_select", False),
     )
 
     randstate = np.random.RandomState(config["seed"])

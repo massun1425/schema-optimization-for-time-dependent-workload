@@ -739,6 +739,23 @@ async def get_frequency_files(query_set: str) -> List[str]:
     return sorted(files, key=natural_sort_key)
 
 
+@app.get("/api/all-frequency-files")
+async def get_all_frequency_files() -> Dict[str, List[str]]:
+    """全クエリセットの頻度ファイル一覧を階層化して取得"""
+    result = {}
+    if not QUERIES_DIR.exists():
+        return result
+    
+    for d in QUERIES_DIR.iterdir():
+        if d.is_dir() and not d.name.startswith('.'):
+            files = [f.name for f in d.glob("frequency_*.json")]
+            if files:
+                result[d.name] = sorted(files, key=natural_sort_key)
+                
+    # クエリセット名でソート
+    return {k: result[k] for k in sorted(result.keys(), key=natural_sort_key)}
+
+
 @app.get("/api/frequency-data/{query_set}/{filename}")
 async def get_frequency_data(query_set: str, filename: str) -> Dict:
     """頻度ファイルのデータを取得"""

@@ -53,6 +53,7 @@ class UtilityPruner:
         position_node_id: Dict,
         deeplist: List,
         gurobi_output: int = 0,
+        local_mip_gap: Optional[float] = None,
     ):
         """初期化.
 
@@ -70,6 +71,7 @@ class UtilityPruner:
             position_node_id: (query_id, position) → node_id マッピング
             deeplist: 各クエリの深さ情報
             gurobi_output: Gurobi 出力レベル (0=off)
+            local_mip_gap: WSTローカルILPに適用するGurobi相対ギャップ (例: 0.01=1%)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -81,6 +83,7 @@ class UtilityPruner:
         self.freq = query_frequency_by_timestep
         self.per_timestep_seeds = per_timestep_seeds
         self.gurobi_output = gurobi_output
+        self.local_mip_gap = local_mip_gap
 
         # 近傍拡大用
         self.qm = qm
@@ -431,6 +434,7 @@ class UtilityPruner:
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
             candidate_indices=node_candidates,
             gurobi_output=self.gurobi_output,
+            mip_gap=self.local_mip_gap,
         )
 
         result = local_optimizer.optimize()

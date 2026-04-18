@@ -60,6 +60,7 @@ class UtilityPrunerIterative:
         position_node_id: Dict,
         deeplist: List,
         gurobi_output: int = 0,
+        local_mip_gap: Optional[float] = None,
         max_iterations: int = 5,  # 各ノードでの最大イテレーション数
         use_parallel: bool = False,
         max_workers: Optional[int] = None,
@@ -80,6 +81,7 @@ class UtilityPrunerIterative:
             position_node_id: (query_id, position) → node_id マッピング
             deeplist: 各クエリの深さ情報
             gurobi_output: Gurobi 出力レベル (0=off)
+            local_mip_gap: WSTローカルILPに適用するGurobi相対ギャップ (例: 0.01=1%)
             max_iterations: 各ノードでの最大イテレーション数
             use_parallel: 並列処理を有効にするか (default: False)
             max_workers: 最大ワーカー数 (default: CPU数)
@@ -94,6 +96,7 @@ class UtilityPrunerIterative:
         self.freq = query_frequency_by_timestep
         self.per_timestep_seeds = per_timestep_seeds
         self.gurobi_output = gurobi_output
+        self.local_mip_gap = local_mip_gap
         self.max_iterations = max_iterations
 
         # 近傍拡大用
@@ -315,6 +318,7 @@ class UtilityPrunerIterative:
                         position_node_id=self.position_node_id,
                         deeplist=self.deeplist,
                         gurobi_output=self.gurobi_output,
+                        local_mip_gap=self.local_mip_gap,
                         max_iterations=self.max_iterations,
                     )
                     futures[future] = node
@@ -519,6 +523,7 @@ class UtilityPrunerIterative:
                 fixed_mvs_by_timestep=fixed_mvs_by_timestep,
                 candidate_indices=sorted(current_candidates),
                 gurobi_output=self.gurobi_output,
+                mip_gap=self.local_mip_gap,
             )
             
             result = local_optimizer.optimize()
@@ -737,6 +742,7 @@ def _solve_node_iterative_static(
     position_node_id: Dict,
     deeplist: List,
     gurobi_output: int,
+    local_mip_gap: Optional[float],
     max_iterations: int,
 ) -> dict:
     """WST ノードで反復的最適化を実行（並列処理用の静的関数）.
@@ -819,6 +825,7 @@ def _solve_node_iterative_static(
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
             candidate_indices=sorted(current_candidates),
             gurobi_output=gurobi_output,
+            mip_gap=local_mip_gap,
         )
 
         result = local_optimizer.optimize()

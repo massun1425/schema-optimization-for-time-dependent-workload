@@ -218,64 +218,6 @@ class NormalModeExperiment:
             self.print_error(f"ANALYZE実行エラー: {e}")
             return False
 
-    def _apply_enable_nestloop_off_persistent(self):
-        """enable_nestloop=off を永続設定として反映
-
-        新規接続にも効くように、まず ROLE + DATABASE スコープで設定し、
-        権限不足などで失敗した場合は DATABASE スコープを試す。
-        """
-        import psycopg2
-
-        db_name = self.settings.database.database
-        user_name = self.settings.database.user
-
-        try:
-            conn = psycopg2.connect(
-                database=db_name,
-                user=user_name,
-                password=self.settings.database.password,
-                host='localhost'
-            )
-            conn.autocommit = True
-
-            with conn.cursor() as cursor:
-                # 1) もっとも安全な範囲: 指定ロール + 指定DB
-                try:
-                    cursor.execute(
-                        f"ALTER ROLE {user_name} IN DATABASE {db_name} SET enable_nestloop = off;"
-                    )
-                    self.print_success(
-                        f"enable_nestloop=off を永続設定しました（ROLE+DATABASE: {user_name}@{db_name}）"
-                    )
-                    conn.close()
-                    return True
-                except Exception as role_err:
-                    self.print_info(
-                        f"ROLE+DATABASE設定はスキップ: {role_err}"
-                    )
-
-                # 2) フォールバック: DB全体
-                try:
-                    cursor.execute(
-                        f"ALTER DATABASE {db_name} SET enable_nestloop = off;"
-                    )
-                    self.print_success(
-                        f"enable_nestloop=off を永続設定しました（DATABASE: {db_name}）"
-                    )
-                    conn.close()
-                    return True
-                except Exception as db_err:
-                    self.print_error(
-                        f"enable_nestloop永続設定に失敗しました: {db_err}"
-                    )
-
-            conn.close()
-            return False
-
-        except Exception as e:
-            self.print_error(f"DB接続エラー（enable_nestloop設定）: {e}")
-            return False
-
     def _update_u_ij_if_recalc(self):
         """--recalcモードが有効な場合、コストを読み込んでu_ijを更新する
         
@@ -608,11 +550,6 @@ class NormalModeExperiment:
     def phase1_generate_explain_json(self):
         """フェーズ1: EXPLAIN JSON 生成"""
         self.print_header("EXPLAIN JSON 生成", 1)
-
-        # enable_nestloop設定を永続反映（新規接続にも適用）
-        self.print_info("enable_nestloop=off を永続設定として反映中...")
-        if not self._apply_enable_nestloop_off_persistent():
-            self.print_info("enable_nestloop永続設定は反映できませんでした（既存設定で続行）")
         
         # 既存のMVを全て削除
         self.print_info("既存のMVをクリーンアップ中...")
@@ -782,7 +719,8 @@ class NormalModeExperiment:
                 self.qp.query_parse(
                     q_num=0,
                     path=str(self.json_dir),
-                    insert_query=self.settings.optimization.insert_queries
+                    insert_query=self.settings.optimization.insert_queries,
+                    sql_dir=str(self.queries_dir)
                 )
             finally:
                 # 元の関数に戻す
@@ -1456,7 +1394,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float(1024*1024*1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1471,9 +1409,9 @@ class NormalModeExperiment:
                 selected_frequencies = frequencies[selected_timestep]
                 self.print_info(f"使用タイムステップ: {selected_timestep} (最初)")
             elif timestep_position == 'average':
-                # 全時刻での頻度の和を計算（平均ではなく和を使用）
+                # 全時刻での頻度の和を計算（normal/bigsubs用には和、utilityではこれを後で平均化）
                 selected_timestep = "average"
-                self.print_info(f"使用タイムステップ: 全時刻の頻度和")
+                self.print_info(f"使用タイムステップ: 全時刻の頻度平均/和")
                 
                 # 各クエリについて全タイムステップでの頻度の和を計算
                 query_count = len(self.qp.u_ij)
@@ -1487,11 +1425,17 @@ class NormalModeExperiment:
                     else:
                         timestep_freq = timestep_freq[:query_count]
                     
-                    # 累積加算（平均化しない）
+                    # 累積加算
                     for i in range(query_count):
                         selected_frequencies[i] += timestep_freq[i]
                 
-                self.print_info(f"  {len(timesteps)}個のタイムステップの頻度を合計")
+                num_timesteps = len(timesteps)
+                if static_algorithm == 'utility':
+                    for i in range(query_count):
+                        selected_frequencies[i] /= num_timesteps
+                    self.print_info(f"  {num_timesteps}個のタイムステップの頻度を平均化（Utility用）")
+                else:
+                    self.print_info(f"  {num_timesteps}個のタイムステップの頻度を合計")
             elif timestep_position == 'addmv':
                 # 頻度の和で重み付け（MV作成コストとスケールを合わせるため）
                 selected_timestep = "addmv"
@@ -1649,6 +1593,63 @@ class NormalModeExperiment:
                     json.dump(static_result, f, indent=2, ensure_ascii=False)
                 self.print_success(f"NormalOptimizer結果を {result_file} に保存")
             
+            # utility実行
+            if static_algorithm == 'utility':
+                from experiments.small_test_ver2.core.utility_v2 import UtilityOptimizerV2
+                
+                self.print_info(f"UtilityOptimizerV2 で最適化を実行中...")
+                
+                utility_optimizer = UtilityOptimizerV2(
+                    qm=self.qp.qm,
+                    s_num=len(self.qp.node_list),
+                    m_cost=m_cost,
+                    node_list=self.qp.node_list,
+                    B_max=B_max,
+                    b_j=b_j_from_migration,
+                    u_ij=weighted_u_ij,
+                    X=self.qp.X,
+                    q_s_list=self.qp.q_s_list,
+                    settings=self.settings
+                )
+                
+                utility_result = utility_optimizer.optimize()
+                
+                # 結果の整形
+                # UtilityOptimizerV2 の場合は最適化結果が dict 形式で一部キーが異なるかもしれないが、
+                # 返される OptimizationResult オブジェクトか辞書かに応じて対処（ここでは BaseILPOptimizer.create_result の返り値が辞書だと想定）
+                if isinstance(utility_result, dict):
+                    utility_selected_mvs = utility_result.get("selected_mvs_t1", utility_result.get("materialized_nodes", []))
+                    utility_total_size = utility_result.get("storage_used", 0)
+                    utility_objective = utility_result.get("objective_value", 0)
+                    utility_execution_time = utility_result.get("execution_time", 0)
+                else:
+                    utility_selected_mvs = [mv.node_id for mv in utility_result.selected_views]
+                    utility_total_size = utility_result.total_storage
+                    utility_objective = utility_result.total_utility
+                    utility_execution_time = utility_result.execution_time
+                
+                utility_static_result = {
+                    "algorithm": "static_utility",
+                    "timestep": selected_timestep,
+                    "selected_mvs": utility_selected_mvs,
+                    "mv_count": len(utility_selected_mvs),
+                    "total_size": utility_total_size,
+                    "storage_budget": B_max,
+                    "utilization_percent": (utility_total_size / B_max * 100) if B_max > 0 else 0,
+                    "objective_value": utility_objective,
+                    "execution_time": utility_execution_time
+                }
+                
+                self.print_success("UtilityOptimizerV2 完了")
+                self.print_info(f"  選択されたMV数: {len(utility_selected_mvs)}")
+                self.print_info(f"  使用ストレージ: {utility_total_size / 1024 / 1024:.2f} MB")
+                
+                # 結果保存（averageモードと同様に上書き可能にするか別名にするか、指定によりaverage形式に合わせる）
+                utility_result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
+                with open(utility_result_file, 'w', encoding='utf-8') as f:
+                    json.dump(utility_static_result, f, indent=2, ensure_ascii=False)
+                self.print_success(f"UtilityOptimizerV2結果を {utility_result_file} に保存")
+
             # BigSubsOptimizer実行 (bigsubs or both)
             if static_algorithm in ('bigsubs', 'both'):
                 from src.optimization.bigsubs import BigSubsOptimizer
@@ -2433,6 +2434,12 @@ class NormalModeExperiment:
             
             # Create output directory for this timestep
             timestep_output_dir = base_output_dir / f"timestep_{t_idx}_{timestep_name}"
+            if timestep_output_dir.exists():
+                existing_sql_files = list(timestep_output_dir.glob("*.sql"))
+                if existing_sql_files:
+                    self.print_info(f"  既存SQLをクリーンアップ: {len(existing_sql_files)}個")
+                    for sql_file in existing_sql_files:
+                        sql_file.unlink()
             timestep_output_dir.mkdir(parents=True, exist_ok=True)
             
             # Rewrite queries using QueryRewriter with settings
@@ -2554,6 +2561,12 @@ class NormalModeExperiment:
                 output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static_bigsubs"
             else:
                 output_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs" / "rewritten_static"
+            if output_dir.exists():
+                existing_sql_files = list(output_dir.glob("*.sql"))
+                if existing_sql_files:
+                    self.print_info(f"  静的モード既存SQLをクリーンアップ: {len(existing_sql_files)}個")
+                    for sql_file in existing_sql_files:
+                        sql_file.unlink()
             output_dir.mkdir(parents=True, exist_ok=True)
             
             for query_id, rewritten_sql in rewritten_queries.items():
@@ -2744,7 +2757,7 @@ class NormalModeExperiment:
                     query_files=original_query_files,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timesteps=timesteps,
-                    timeout_minutes=30,
+                    timeout_minutes=60,
                     verbose=True,
                     ease_mode=ease_mode
                 )
@@ -2757,7 +2770,7 @@ class NormalModeExperiment:
                     rewritten_queries_base_dir = rewritten_queries_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
                     timesteps=timesteps, # Pass timesteps for static mode as well
-                    timeout_minutes=30,
+                    timeout_minutes=60,
                     verbose=True,
                     static_algorithm=static_algorithm,
                     ease_mode=ease_mode
@@ -2770,7 +2783,7 @@ class NormalModeExperiment:
                     #query_files=query_files, # Not used directly, rewritten_queries_base_dir is used
                     rewritten_queries_base_dir = rewritten_queries_base_dir,
                     frequencies_by_timestep=frequencies_by_timestep,
-                    timeout_minutes=30,
+                    timeout_minutes=60,
                     verbose=True,
                     ease_mode=ease_mode
                 )
@@ -3078,8 +3091,8 @@ def main():
         '--static-algorithm',
         type=str,
         default='normal',
-        choices=['normal', 'bigsubs', 'both'],
-        help='静的最適化で使用するアルゴリズム (normal: 通常ILP, bigsubs: BigSubs, both: 両方)'
+        choices=['normal', 'bigsubs', 'both', 'utility'],
+        help='静的最適化で使用するアルゴリズム (normal: 通常ILP, bigsubs: BigSubs, both: 両方, utility: UtilityOptimizerV2)'
     )
     parser.add_argument(
         '--ease',
@@ -3162,7 +3175,7 @@ def main():
             use_static_protection=args.static_protection
         )
     elif args.phase == '6.5':
-        success = exp.phase6b_optimize_static(timestep_position=args.static_timestep)
+        success = exp.phase6b_optimize_static(timestep_position=args.static_timestep, static_algorithm=args.static_algorithm)
     elif args.phase == '7':
         success = exp.phase7_generate_mv_sql(mode=args.optimization_mode)
     elif args.phase == '8':

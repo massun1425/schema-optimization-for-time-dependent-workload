@@ -140,6 +140,10 @@ def main():
         "--max-workers", type=int, default=None,
         help="並列処理の最大ワーカー数 (default: CPU数)"
     )
+    parser.add_argument(
+        "--gurobi-output", type=int, default=0, choices=[0, 1],
+        help="Gurobiログ出力 (0=off, 1=on, default: 0)"
+    )
     args = parser.parse_args()
 
     exp_dir = project_root / "experiments" / "small_test_ver2"
@@ -150,6 +154,7 @@ def main():
     print_info(f"クエリセット: {query_set}")
     print_info(f"ストレージ予算: {args.storage_mb:.0f} MB ({B_max:.0f} bytes)")
     print_info(f"頻度サフィックス: '{args.freq_suffix}'")
+    print_info(f"Gurobiログ: {'ON' if args.gurobi_output == 1 else 'OFF'}")
 
     # ========== 1. Pickle読み込み ==========
     pickle_path = exp_dir / "03_parsed" / query_set / "qp_class.pkl"
@@ -209,6 +214,7 @@ def main():
         settings=settings,
         position_node_id=getattr(qp, "position_node_id", {}),
         deeplist=getattr(qp, "deeplist", []),
+        gurobi_output=args.gurobi_output,
     )
 
     # ========== 5. 各タイムステップで最適化実行 (Step 1) ==========
@@ -285,6 +291,7 @@ def main():
     # ========== 7b. WST 階層的絞り込み (Step 2-3) ==========
     print_header("Step 2-3: WST 階層的絞り込み")
     print_info(f"削減手法: {args.pruning_method}")
+    print_info("WSTローカルILP MIPGap: 5.0%")
     
     # 共通パラメータ
     pruner_kwargs = dict(
@@ -301,6 +308,7 @@ def main():
         position_node_id=getattr(qp, "position_node_id", {}),
         deeplist=getattr(qp, "deeplist", []),
         gurobi_output=0,
+        local_mip_gap=0.0001,
     )
     
     # 削減手法の選択
@@ -349,7 +357,7 @@ def main():
 
     # 候補をフィルタリング（Phase 6 と同じ方法）
     original_cand_count = len(td_optimizer.cand_j)
-    td_optimizer.cand_j = [j for j in td_optimizer.cand_j if j in promising_candidates]
+    td_optimizer.set_candidates([j for j in td_optimizer.cand_j if j in promising_candidates])
     print_info(f"候補をフィルタリング: {original_cand_count} → {len(td_optimizer.cand_j)}")
 
     td_start = time.time()

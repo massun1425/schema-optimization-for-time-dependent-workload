@@ -260,6 +260,12 @@ def phase8_rewrite_queries(exp_dir: Path, query_set: str, result_data: dict,
 
         # タイムステップごとの出力ディレクトリ
         timestep_output_dir = base_output_dir / f"timestep_{t_idx}_{timestep_name}"
+        if timestep_output_dir.exists():
+            existing_sql_files = list(timestep_output_dir.glob("*.sql"))
+            if existing_sql_files:
+                print_info(f"  既存SQLをクリーンアップ: {len(existing_sql_files)}個")
+                for sql_file in existing_sql_files:
+                    sql_file.unlink()
         timestep_output_dir.mkdir(parents=True, exist_ok=True)
 
         # クエリ書き換え実行
@@ -269,7 +275,8 @@ def phase8_rewrite_queries(exp_dir: Path, query_set: str, result_data: dict,
         rewriter = QueryRewriter(
             rewrite_settings,
             containment_matrix=qp.X,
-            node_list=qp.node_list
+            node_list=qp.node_list,
+            query_set=query_set
         )
         rewritten_queries = rewriter.rewrite_queries(mv_objects)
 
@@ -470,7 +477,7 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
             migration_sql_dir=migration_sql_dir,
             rewritten_queries_base_dir=rewritten_queries_base_dir,
             frequencies_by_timestep=frequencies_by_timestep,
-            timeout_minutes=30,
+            timeout_minutes=60,
             verbose=True,
             ease_mode=ease_mode
         )
