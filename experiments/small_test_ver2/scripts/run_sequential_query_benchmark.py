@@ -216,7 +216,7 @@ def main() -> int:
     parser.add_argument(
         "--output-json",
         type=Path,
-        default=Path("experiments/small_test_ver2/time_dependent_output/cluster_55_26_3/sequential_benchmark_results.json"),
+        default=Path("experiments/small_test_ver2/time_dependent_output/cluster_55_25_26_3/sequential_benchmark_results.json"),
         help="Output JSON file path",
     )
     parser.add_argument("--host", type=str, default="localhost")
