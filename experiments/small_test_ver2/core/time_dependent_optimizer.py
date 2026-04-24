@@ -78,6 +78,12 @@ class TimeDependentOptimizer:
         # Initialize candidate filtering
         self.cand_j = self.initialize_candidates()
 
+        # Sparse utility index on candidates:
+        # y[i,j,t] is created only when u_ij[i][j] > 0 and j in cand_j.
+        self.pos_js_by_i: Dict[int, List[int]] = {}
+        self.pos_is_by_j: Dict[int, List[int]] = {}
+        self._build_sparse_utility_index()
+
         self.model: gp.Model | None = None
         self.y: Dict[tuple, gp.Var] = {}  # y[i,j,t]: query i uses MV j at time t
         self.z: Dict[tuple, gp.Var] = {}  # z[j,t]: MV j exists at time t
@@ -90,6 +96,30 @@ class TimeDependentOptimizer:
         logger.info(f"Initialized TimeDependentOptimizer: I={self.I}, J={self.J}, T={self.T}")
         logger.info(f"Filtered to {len(self.cand_j)} candidates (from {self.J} total nodes)")
         logger.info(f"Migration cost weight: {self.migration_cost_weight}")
+
+    def _build_sparse_utility_index(self) -> None:
+        """Build sparse index for positive-utility (i, j) pairs on candidates."""
+        self.pos_js_by_i = {i: [] for i in range(self.I)}
+        self.pos_is_by_j = {j: [] for j in self.cand_j}
+
+        for i in range(self.I):
+            for j in self.cand_j:
+                if self.u_ij[i][j] > 0:
+                    self.pos_js_by_i[i].append(j)
+                    self.pos_is_by_j[j].append(i)
+
+    def set_candidates(self, candidates: List[int]) -> None:
+        """Replace candidate set and rebuild sparse utility indexes.
+
+        This must be called whenever cand_j is changed after initialization.
+        """
+        unique_sorted = sorted(set(candidates))
+        self.cand_j = [j for j in unique_sorted if 0 <= j < self.J]
+        self._build_sparse_utility_index()
+
+    def _get_y(self, i: int, j: int, t: int):
+        """Return y variable if exists, otherwise 0 (sparse y)."""
+        return self.y.get((i, j, t), 0)
 
     def initialize_candidates(self) -> list[int]:
         """Initialize MV candidates based on utility.
@@ -118,10 +148,11 @@ class TimeDependentOptimizer:
         for t in range(self.T):
             for j in self.cand_j:  # Only create variables for candidates
                 self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
-                self.c[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_{t}")
+                # c is a derived creation flag; relaxation to continuous is exact under current constraints.
+                self.c[j, t] = m.addVar(vtype=gp.GRB.CONTINUOUS, lb=0.0, ub=1.0, name=f"c_{j}_{t}")
 
             for i in range(self.I):
-                for j in self.cand_j:  # Only create variables for candidates
+                for j in self.pos_js_by_i.get(i, []):  # Sparse y: only positive-utility pairs
                     self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
 
         m.update()
@@ -137,10 +168,10 @@ class TimeDependentOptimizer:
 
         for t in range(self.T):
             for i in range(self.I):
-                for j in self.cand_j:  # Only iterate over candidates
+                for j in self.pos_js_by_i.get(i, []):
                     # Usage implies materialization
                     m.addConstr(
-                        self.y[i, j, t] <= self.z[j, t],
+                        self._get_y(i, j, t) <= self.z[j, t],
                         name=f"use_le_mat_{i}_{j}_{t}"
                     )
                     constraint_count += 1
@@ -148,7 +179,14 @@ class TimeDependentOptimizer:
                     # Inclusion/overlap exclusion
                     # Note: Normalization by len(cand_j) matches NormalOptimizer behavior
                     m.addConstr(
-                        self.y[i, j, t] + gp.quicksum(self.y[i, u, t] * self.X[j][u] for u in self.cand_j if u != j) / len(self.cand_j) <= 1,
+                        self._get_y(i, j, t)
+                        + gp.quicksum(
+                            self._get_y(i, u, t) * self.X[j][u]
+                            for u in self.pos_js_by_i.get(i, [])
+                            if u != j and self.X[j][u] != 0
+                        )
+                        / max(1, len(self.cand_j))
+                        <= 1,
                         name=f"inclusive_excl_{i}_{j}_{t}",
                     )
                     constraint_count += 1
@@ -206,10 +244,10 @@ class TimeDependentOptimizer:
 
         # Workload cost: -(benefit) weighted by query frequency
         workload_cost = gp.quicksum(
-            -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
+            -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self._get_y(i, j, t)
             for t in range(self.T)
             for i in range(self.I)
-            for j in self.cand_j  # Only sum over candidates
+            for j in self.pos_js_by_i.get(i, [])
         )
 
         # Migration cost: sum of fixed costs when creating MVs
@@ -282,7 +320,8 @@ class TimeDependentOptimizer:
             for t in range(self.T):
                 for j in self.cand_j:
                     z_by_t[t][j] = int(round(self.z[j, t].X))
-                    for i in range(self.I):
+                for i in range(self.I):
+                    for j in self.pos_js_by_i.get(i, []):
                         y_by_t[t][i][j] = int(round(self.y[i, j, t].X))
             
             obj = float(self.model.objVal)
@@ -290,10 +329,10 @@ class TimeDependentOptimizer:
             # Calculate objective breakdown
             workload_val = float(
                 gp.quicksum(
-                    -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self.y[i, j, t]
+                    -float(self.u_ij[i][j]) * float(self.freq[self.timesteps[t]][i]) * self._get_y(i, j, t)
                     for t in range(self.T)
                     for i in range(self.I)
-                    for j in self.cand_j  # Only sum over candidates
+                    for j in self.pos_js_by_i.get(i, [])
                 ).getValue()
             )
             migration_val = float(

@@ -19,13 +19,14 @@ logger = logging.getLogger(__name__)
 class QueryRewriter:
     """クエリ書き換え管理"""
 
-    def __init__(self, query_manager: Any = None, containment_matrix: list = None, node_list: list = None):
+    def __init__(self, query_manager: Any = None, containment_matrix: list = None, node_list: list = None, query_set: str = "job"):
         """初期化
 
         Args:
             query_manager: クエリ管理オブジェクトまたはSettings
             containment_matrix: X行列（包含関係）。X[i][j]=1 ならノードiがノードjを包含
             node_list: ノードIDのリスト（X行列のインデックスに対応）
+            query_set: クエリセット名（未指定時はjob）
         """
         # settingsオブジェクトが渡された場合の対応
         if hasattr(query_manager, 'database'):
@@ -40,6 +41,7 @@ class QueryRewriter:
         # 包含行列（冗長MV除去に使用）
         self.containment_matrix = containment_matrix
         self.node_list = node_list
+        self.query_set = query_set or "job"
         if containment_matrix is not None and node_list is not None:
             self._node_to_idx = {node_id: idx for idx, node_id in enumerate(node_list)}
             logger.info(f"Containment matrix enabled: {len(node_list)} nodes")
@@ -49,6 +51,20 @@ class QueryRewriter:
         
         self.sql_parser = SQLParser()
         self.mv_generator = MVGenerator()
+
+    def _get_query_dir(self) -> Path:
+        """書き換え対象クエリのディレクトリを解決
+
+        後方互換のため、query_set未指定時はjobを使用。
+        """
+        if self.settings:
+            base_dir = Path(self.settings.benchmark.sql_dir)
+            target_dir = base_dir / self.query_set
+            if target_dir.exists():
+                return target_dir
+            return base_dir / "job"
+
+        return Path("dataset/RED_SQL/job")
     
     def rewrite_queries(self, selected_views: list) -> dict[str, str]:
         """選択されたMVを使ってクエリを書き換える
@@ -67,10 +83,7 @@ class QueryRewriter:
         query_to_mvs = self._build_query_mv_mapping(selected_views)
         
         # 元のクエリファイルのパスを取得
-        if self.settings:
-            query_dir = Path(self.settings.benchmark.sql_dir) / "job"
-        else:
-            query_dir = Path("dataset/RED_SQL/job")
+        query_dir = self._get_query_dir()
         
         rewritten = {}
         
@@ -110,12 +123,9 @@ class QueryRewriter:
         Returns:
             {query_id: [MaterializedView, ...]} の辞書
         """
-        # クエリ番号（0-112）からファイル名へのマッピングを作成
+        # クエリ番号（0ベース）からファイル名へのマッピングを作成
         # optimizationフェーズと同じnatural_sort_keyを使用
-        if self.settings:
-            query_dir = Path(self.settings.benchmark.sql_dir) / "job"
-        else:
-            query_dir = Path("dataset/RED_SQL/job")
+        query_dir = self._get_query_dir()
         
         # optimizationフェーズと同じソート順を使用（natural_sort_key）
         query_files = sorted(query_dir.glob("*.sql"), key=lambda x: natural_sort_key(str(x)))
@@ -308,31 +318,165 @@ class QueryRewriter:
             'where': '',
             'group_by': ''
         }
-        
-        # SELECT句 - FROM句の直前まで（行頭または空白の後のFROMを検出）
-        select_match = re.search(r'SELECT\s+(.+?)\s+FROM\s+', sql, re.IGNORECASE | re.DOTALL)
-        if not select_match:
-            # フォールバック: 単にFROMまで
-            select_match = re.search(r'SELECT\s+(.+?)\sFROM\s', sql, re.IGNORECASE | re.DOTALL)
-        if select_match:
-            parts['select'] = select_match.group(1).strip()
-        
-        # FROM句
-        from_match = re.search(r'FROM\s+(.+?)(?:\s+WHERE|\s+GROUP\s+BY|;|$)', sql, re.IGNORECASE)
-        if from_match:
-            parts['from'] = from_match.group(1).strip()
-        
-        # WHERE句
-        where_match = re.search(r'WHERE\s+(.+?)(?:\s+GROUP\s+BY|;|$)', sql, re.IGNORECASE)
-        if where_match:
-            parts['where'] = where_match.group(1).strip()
-        
-        # GROUP BY句
-        group_match = re.search(r'GROUP\s+BY\s+(.+?)(?:;|$)', sql, re.IGNORECASE)
-        if group_match:
-            parts['group_by'] = group_match.group(1).strip()
+
+        def join_token_values(token_slice) -> str:
+            return ' '.join(t.value.strip() for t in token_slice if t.value and t.value.strip())
+
+        # sqlparseベースで句境界を解釈（文字列リテラル内の ; を誤認しない）
+        parsed = sqlparse.parse(sql)
+        if parsed:
+            stmt = parsed[0]
+            tokens = [t for t in stmt.tokens if not t.is_whitespace]
+
+            def is_boundary_keyword(token) -> bool:
+                if token.ttype is None:
+                    return False
+                if token.ttype.parent != sqlparse.tokens.Keyword and token.ttype != sqlparse.tokens.Keyword:
+                    return False
+                return token.normalized in {
+                    'WHERE', 'GROUP BY', 'ORDER BY', 'HAVING',
+                    'LIMIT', 'UNION', 'EXCEPT', 'INTERSECT'
+                }
+
+            select_idx = None
+            from_idx = None
+            for i, token in enumerate(tokens):
+                if token.ttype == sqlparse.tokens.DML and token.normalized == 'SELECT':
+                    select_idx = i
+                    break
+
+            if select_idx is not None:
+                for i in range(select_idx + 1, len(tokens)):
+                    token = tokens[i]
+                    if token.ttype == sqlparse.tokens.Keyword and token.normalized == 'FROM':
+                        from_idx = i
+                        break
+
+            if select_idx is not None and from_idx is not None and from_idx > select_idx:
+                parts['select'] = join_token_values(tokens[select_idx + 1:from_idx]).strip()
+                # sqlparseトークン結合時に DISTINCT ON が DISTINCTON へ潰れる場合があるため補正
+                parts['select'] = re.sub(r'\bDISTINCT\s*ON\b', 'DISTINCT ON', parts['select'], flags=re.IGNORECASE)
+
+            if from_idx is not None:
+                from_end = len(tokens)
+                for i in range(from_idx + 1, len(tokens)):
+                    token = tokens[i]
+                    if isinstance(token, Where) or is_boundary_keyword(token) or token.value == ';':
+                        from_end = i
+                        break
+                parts['from'] = join_token_values(tokens[from_idx + 1:from_end]).strip()
+
+            where_token = None
+            for token in tokens:
+                if isinstance(token, Where):
+                    where_token = token
+                    break
+
+            if where_token is not None:
+                where_text = where_token.value
+                parts['where'] = re.sub(r'^\s*WHERE\s+', '', where_text, flags=re.IGNORECASE).strip().rstrip(';').strip()
+
+            group_idx = None
+            for i, token in enumerate(tokens):
+                if token.ttype == sqlparse.tokens.Keyword and token.normalized == 'GROUP BY':
+                    group_idx = i
+                    break
+
+            if group_idx is not None:
+                group_end = len(tokens)
+                for i in range(group_idx + 1, len(tokens)):
+                    token = tokens[i]
+                    if (token.ttype == sqlparse.tokens.Keyword and token.normalized in {'ORDER BY', 'LIMIT', 'UNION', 'EXCEPT', 'INTERSECT'}) or token.value == ';':
+                        group_end = i
+                        break
+                parts['group_by'] = join_token_values(tokens[group_idx + 1:group_end]).strip()
+
+        # sqlparseで取得できなかった場合のフォールバック
+        if not parts['select'] or not parts['from']:
+            select_match = re.search(r'SELECT\s+(.+?)\s+FROM\s+', sql, re.IGNORECASE | re.DOTALL)
+            if not select_match:
+                select_match = re.search(r'SELECT\s+(.+?)\sFROM\s', sql, re.IGNORECASE | re.DOTALL)
+            if select_match and not parts['select']:
+                parts['select'] = select_match.group(1).strip()
+
+            from_match = re.search(r'FROM\s+(.+?)(?:\s+WHERE|\s+GROUP\s+BY|$)', sql, re.IGNORECASE | re.DOTALL)
+            if from_match and not parts['from']:
+                parts['from'] = from_match.group(1).strip().rstrip(';').strip()
+
+            where_match = re.search(r'WHERE\s+(.+?)(?:\s+GROUP\s+BY|$)', sql, re.IGNORECASE | re.DOTALL)
+            if where_match and not parts['where']:
+                parts['where'] = where_match.group(1).strip().rstrip(';').strip()
+
+            group_match = re.search(r'GROUP\s+BY\s+(.+?)(?:\s+ORDER\s+BY|$)', sql, re.IGNORECASE | re.DOTALL)
+            if group_match and not parts['group_by']:
+                parts['group_by'] = group_match.group(1).strip().rstrip(';').strip()
+
+        # JOIN ... ON を内部処理しやすい形式に平坦化
+        if re.search(r'\bJOIN\b', parts['from'], re.IGNORECASE):
+            flattened_from, join_conditions = self._flatten_join_from_clause(parts['from'])
+            if flattened_from:
+                parts['from'] = flattened_from
+            if join_conditions:
+                join_where = ' AND '.join(join_conditions)
+                if parts['where']:
+                    parts['where'] = f"{join_where} AND {parts['where']}"
+                else:
+                    parts['where'] = join_where
         
         return parts
+
+    def _normalize_identifier_token(self, token: str) -> str:
+        token = token.strip()
+        if token.startswith('"') and token.endswith('"') and len(token) >= 2:
+            return token[1:-1]
+        return token
+
+    def _parse_table_expr(self, expr: str) -> tuple[str, str]:
+        """テーブル式から table_name と alias を抽出"""
+        expr = expr.strip()
+        match = re.match(
+            r'^("?[A-Za-z_][A-Za-z0-9_]*"?)\s*(?:AS\s+)?("?[A-Za-z_][A-Za-z0-9_]*"?)?$',
+            expr,
+            re.IGNORECASE,
+        )
+        if not match:
+            normalized = self._normalize_identifier_token(expr)
+            return normalized, normalized
+
+        table_name = self._normalize_identifier_token(match.group(1))
+        alias_token = match.group(2)
+        alias = self._normalize_identifier_token(alias_token) if alias_token else table_name
+        return table_name, alias
+
+    def _flatten_join_from_clause(self, from_clause: str) -> tuple[str, list[str]]:
+        """JOIN ... ON を comma + WHERE 条件へ平坦化"""
+        clause = from_clause.strip()
+        join_match = re.search(r'\bJOIN\b', clause, re.IGNORECASE)
+        if not join_match:
+            return clause, []
+
+        first_table_expr = clause[:join_match.start()].strip()
+        table_exprs = [first_table_expr] if first_table_expr else []
+        join_conditions: list[str] = []
+
+        for match in re.finditer(
+            r'\bJOIN\b\s+(.+?)\s+\bON\b\s+(.+?)(?=\s+\bJOIN\b\s+|$)',
+            clause,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            table_expr = match.group(1).strip()
+            condition = match.group(2).strip()
+            if table_expr:
+                table_exprs.append(table_expr)
+            if condition:
+                join_conditions.append(condition)
+
+        normalized_table_exprs = []
+        for expr in table_exprs:
+            table_name, alias = self._parse_table_expr(expr)
+            normalized_table_exprs.append(f'{table_name} AS {alias}')
+
+        return ', '.join(normalized_table_exprs), join_conditions
     
     def _apply_mv_to_query(self, parts: dict, mv: dict) -> dict:
         """MVを適用してクエリの構成要素を書き換え（グラフベースの最小化）
@@ -407,27 +551,33 @@ class QueryRewriter:
         logger.debug(f"Updating aliases with mapping: {alias_to_column_mapping}")
         
         for old_ref, new_column in alias_to_column_mapping.items():
-            pattern = r'\b' + re.escape(old_ref) + r'\b'
+            alias, column = old_ref.split('.', 1)
             replacement = f"{view_id}.{new_column}"
-            
-            # SELECT句の更新
-            parts['select'] = re.sub(pattern, replacement, parts['select'])
-            
-            # WHERE句の結合条件を更新
-            updated_joins = []
-            for join_cond in external_joins:
-                updated_joins.append(re.sub(pattern, replacement, join_cond))
-            external_joins = updated_joins
-            
-            # フィルタ条件も更新
-            updated_filters = []
-            for filter_cond in filter_conditions:
-                updated_filters.append(re.sub(pattern, replacement, filter_cond))
-            filter_conditions = updated_filters
-            
-            # GROUP BY句の更新
-            if parts['group_by']:
-                parts['group_by'] = re.sub(pattern, replacement, parts['group_by'])
+
+            patterns = [
+                r'\b' + re.escape(old_ref) + r'\b',
+                r'"' + re.escape(alias) + r'"\."' + re.escape(column) + r'"',
+            ]
+
+            for pattern in patterns:
+                # SELECT句の更新
+                parts['select'] = re.sub(pattern, replacement, parts['select'])
+
+                # WHERE句の結合条件を更新
+                updated_joins = []
+                for join_cond in external_joins:
+                    updated_joins.append(re.sub(pattern, replacement, join_cond))
+                external_joins = updated_joins
+
+                # フィルタ条件も更新
+                updated_filters = []
+                for filter_cond in filter_conditions:
+                    updated_filters.append(re.sub(pattern, replacement, filter_cond))
+                filter_conditions = updated_filters
+
+                # GROUP BY句の更新
+                if parts['group_by']:
+                    parts['group_by'] = re.sub(pattern, replacement, parts['group_by'])
         
         # ===== STEP 5: MVに含まれるフィルタ条件を削除 =====
         if mv_parts['where']:
@@ -483,11 +633,15 @@ class QueryRewriter:
             col = col.strip()
             
             # エイリアス.カラム名 [AS 別名] のパターンを検出
-            match = re.match(r'(\w+)\.(\w+)(?:\s+AS\s+(\w+))?', col, re.IGNORECASE)
+            match = re.match(
+                r'("?[A-Za-z_][A-Za-z0-9_]*"?)\.("?[A-Za-z_][A-Za-z0-9_]*"?)(?:\s+AS\s+("?[A-Za-z_][A-Za-z0-9_]*"?))?',
+                col,
+                re.IGNORECASE,
+            )
             if match:
-                alias = match.group(1)
-                column = match.group(2)
-                as_name = match.group(3) if match.group(3) else column
+                alias = self._normalize_identifier_token(match.group(1))
+                column = self._normalize_identifier_token(match.group(2))
+                as_name = self._normalize_identifier_token(match.group(3)) if match.group(3) else column
                 
                 # MVに含まれるテーブルのエイリアスのみ対象
                 if alias in mv_tables:
@@ -551,17 +705,16 @@ class QueryRewriter:
             エイリアスのリスト
         """
         aliases = []
-        
-        # カンマ区切りでテーブルを分割
-        tables = from_clause.split(',')
-        
-        for table in tables:
-            table = table.strip()
-            # "table_name AS alias" の形式からエイリアスを抽出
-            as_match = re.search(r'\s+AS\s+(\w+)', table, re.IGNORECASE)
-            if as_match:
-                aliases.append(as_match.group(1))
-        
+
+        for table_match in re.finditer(
+            r'(?:^|\bJOIN\b|,)\s*("?[A-Za-z_][A-Za-z0-9_]*"?(?:\s+(?:AS\s+)?"?[A-Za-z_][A-Za-z0-9_]*"?)?)',
+            from_clause,
+            re.IGNORECASE,
+        ):
+            expr = table_match.group(1).strip()
+            _, alias = self._parse_table_expr(expr)
+            aliases.append(alias)
+
         return aliases
     
     def _extract_table_mappings_from_from_clause(self, from_clause: str) -> dict[str, str]:
@@ -574,19 +727,16 @@ class QueryRewriter:
             {table_name: alias} の辞書
         """
         mappings = {}
-        
-        # カンマ区切りでテーブルを分割
-        tables = from_clause.split(',')
-        
-        for table in tables:
-            table = table.strip()
-            # "table_name AS alias" の形式を解析
-            as_match = re.search(r'(\w+)\s+AS\s+(\w+)', table, re.IGNORECASE)
-            if as_match:
-                table_name = as_match.group(1)
-                alias = as_match.group(2)
-                mappings[table_name] = alias
-        
+
+        for table_match in re.finditer(
+            r'(?:^|\bJOIN\b|,)\s*("?[A-Za-z_][A-Za-z0-9_]*"?(?:\s+(?:AS\s+)?"?[A-Za-z_][A-Za-z0-9_]*"?)?)',
+            from_clause,
+            re.IGNORECASE,
+        ):
+            expr = table_match.group(1).strip()
+            table_name, alias = self._parse_table_expr(expr)
+            mappings[table_name] = alias
+
         return mappings
     
     def _replace_tables_with_mv(self, from_clause: str, mv_tables: list[str], view_id: str) -> str:
@@ -600,27 +750,22 @@ class QueryRewriter:
         Returns:
             書き換えられたFROM句
         """
-        tables = from_clause.split(',')
+        tables = [t.strip() for t in from_clause.split(',') if t.strip()]
         new_tables = []
         mv_added = False
         
-        for table in tables:
-            table = table.strip()
-            
-            # このテーブルがMVに含まれているかチェック
-            as_match = re.search(r'\s+AS\s+(\w+)', table, re.IGNORECASE)
-            if as_match:
-                alias = as_match.group(1)
-                if alias in mv_tables:
-                    # 最初のMVテーブルをMVに置き換え
-                    if not mv_added:
-                        new_tables.append(view_id)
-                        mv_added = True
-                    # それ以外のMVテーブルはスキップ
-                    continue
-            
+        for table_expr in tables:
+            _, alias = self._parse_table_expr(table_expr)
+            if alias in mv_tables:
+                # 最初のMVテーブルをMVに置き換え
+                if not mv_added:
+                    new_tables.append(view_id)
+                    mv_added = True
+                # それ以外のMVテーブルはスキップ
+                continue
+
             # MVに含まれないテーブルはそのまま保持
-            new_tables.append(table)
+            new_tables.append(table_expr)
         
         return ', '.join(new_tables)
     
@@ -698,6 +843,9 @@ class QueryRewriter:
         
         # MVプレフィックス（mv_leaf_XX., mv_non_leaf_XX.）も削除
         normalized = re.sub(r'\bmv_\w+\.', '', normalized)
+
+        # 識別子のダブルクォートを削除
+        normalized = normalized.replace('"', '')
         
         # カラム名の周りのカッコを削除 例: (info) → info
         normalized = re.sub(r'\((\w+)\)', r'\1', normalized)
@@ -763,7 +911,7 @@ class QueryRewriter:
         """
         tables = []
         # alias.column のパターンを検索
-        pattern = r'(\w+)\.(\w+)'
+        pattern = r'"?([A-Za-z_][A-Za-z0-9_]*)"?\."?([A-Za-z_][A-Za-z0-9_]*)"?'
         matches = re.findall(pattern, condition)
         
         for alias, column in matches:

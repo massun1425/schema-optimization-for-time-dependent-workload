@@ -36,7 +36,7 @@ CPU_OPERATOR_COST = 0.0025
 
 # Large table penalty for Index Scan (non-clustered index causes random I/O)
 # Tables larger than this threshold get a penalty on Index Scan cost
-LARGE_TABLE_THRESHOLD = 100 * 1024 * 1024  # 100MB
+LARGE_TABLE_THRESHOLD = 1024 * 1024 * 1024  # 100MB
 LARGE_TABLE_INDEX_PENALTY = 1.0  # 2x penalty for unclustered random I/O
 
 # Table information from database (rows and size in bytes)
@@ -79,9 +79,21 @@ def load_migration_costs(json_path: Path) -> dict:
 
 
 def get_children(qm, node_id: str) -> list:
-    """Get children of a node from QueryManager."""
+    """
+    Get children of a node from QueryManager.
+    
+    Uses non_leaf_nodes_info to get children in the correct order (Outer, Inner),
+    which matches the JSON Plans order.
+    Falls back to non_leaf_nodes_map_r if non_leaf_nodes_info is not available.
+    """
+    # Prefer non_leaf_nodes_info because it preserves JSON Plans order
+    if hasattr(qm, 'non_leaf_nodes_info') and node_id in qm.non_leaf_nodes_info:
+        return list(qm.non_leaf_nodes_info[node_id].children)
+    
+    # Fallback to non_leaf_nodes_map_r (order may be different)
     if node_id in qm.non_leaf_nodes_map_r:
         return list(qm.non_leaf_nodes_map_r[node_id])
+    
     return []
 
 
@@ -122,9 +134,21 @@ def get_width_from_migration_costs(migration_costs: dict, node_id: str) -> int:
     return 0
 
 
-def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> tuple:
+def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, penalty_stats: dict = None, 
+                       parent_operator: str = None, is_nlj_inner: bool = False) -> tuple:
     """
     Recursively calculate cost for a node using C-Store style model.
+    
+    Args:
+        qm: QueryManager instance
+        node_id: Node ID to calculate cost for
+        migration_costs: Migration costs dictionary
+        memo: Memoization dictionary
+        penalty_stats: Dictionary to track penalty application statistics
+            - 'leaf_penalties': Set of leaf node_ids with penalties applied
+            - 'nlj_penalties': Set of NLJ node_ids with penalties applied
+        parent_operator: Operator type of parent node (for context-aware utility calculation)
+        is_nlj_inner: True if this node is the inner side of a Nested Loop Join
     
     Returns:
         Tuple of (exec_cost, creation_cost, utility, output_rows)
@@ -133,9 +157,13 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
         - utility: 純利得（実行コスト - MV読み取りコスト）
         - output_rows: 出力行数
     """
+    if penalty_stats is None:
+        penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set()}
     # Memoization: avoid recalculating the same node
-    if node_id in memo:
-        return memo[node_id]
+    # Note: We don't use memo for nodes with context (parent info) to ensure correct utility calculation
+    cache_key = (node_id, parent_operator, is_nlj_inner)
+    if cache_key in memo:
+        return memo[cache_key]
     
     # Get node properties
     operator = get_operator(qm, node_id)
@@ -152,10 +180,13 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     
     # --- Leaf Node ---
     if not children:
-        # Get table name for this leaf node
+        # Get table name and filter condition for this leaf node
         table_name = None
+        filter_cond = None
+        
         if node_id in qm.leaf_nodes_map_r:
-            _, table_name, _, _ = qm.leaf_nodes_map_r[node_id]
+            # leaf_nodes_map_r structure: (operator, table_name, alias, filter_cond)
+            operator, table_name, alias, filter_cond = qm.leaf_nodes_map_r[node_id]
         
         # Get table size from TABLE_INFO (input size for scan)
         if table_name and table_name in TABLE_INFO:
@@ -173,7 +204,15 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
             # Index Scan: random I/O for matching rows only
             # Apply penalty for large tables (non-clustered index causes cache misses)
             penalty = LARGE_TABLE_INDEX_PENALTY if input_size > LARGE_TABLE_THRESHOLD else 1.0
-            exec_cost = (output_rows * RANDOM_PAGE_COST * penalty) + (output_rows * CPU_INDEX_TUPLE_COST)
+            if penalty > 1.0:
+                penalty_stats['leaf_penalties'].add(node_id)
+
+            effective_random_cost = RANDOM_PAGE_COST * penalty
+            io_cost = effective_random_cost * math.sqrt(max(1, output_rows))  # ヒット数が多いほどI/Oコストは増える（平方根で緩やかに増加）
+            cpu_cost = output_rows * CPU_INDEX_TUPLE_COST  # インデックスヒット数分のCPUコスト
+
+            exec_cost = io_cost + cpu_cost
+
         else:
             # Seq Scan: scan full table + filter
             exec_cost = (input_pages * SEQ_PAGE_COST) + (input_rows * CPU_TUPLE_COST)
@@ -189,10 +228,20 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
         # MV read cost (cost to read the MV)
         mv_read_cost = (output_pages * SEQ_PAGE_COST) + (output_rows * CPU_TUPLE_COST)
         
-        # Net utility = execution cost - MV read cost
-        utility = max(0, exec_cost - mv_read_cost)
+        # Utility calculation: Filter condition check
+        # Special case: If this node is the inner side of a Nested Loop Join with Index Scan,
+        # creating an MV without an index provides no benefit (or negative benefit).
+        # The index is critical for efficient NLJ performance.
+        if is_nlj_inner and 'Index' in operator and 'Scan' in operator:
+            utility = 0.0  # No utility: MV without index cannot replace indexed NLJ access
+            penalty_stats['nlj_inner_index_scans'].add(node_id)
+        elif filter_cond is None or str(filter_cond).strip() == "":
+            utility = 0.0  # No filter → No utility from MV
+        else:
+            # With filter, MV can avoid scanning and filtering the full table
+            utility = max(0, exec_cost - mv_read_cost)
         
-        memo[node_id] = (exec_cost, creation_cost, utility, output_rows)
+        memo[cache_key] = (exec_cost, creation_cost, utility, output_rows)
         return exec_cost, creation_cost, utility, output_rows
     
     # --- Non-Leaf Node ---
@@ -200,8 +249,17 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     children_exec_costs = []  # execution costs (for cost propagation)
     children_rows = []
     
-    for child_id in children:
-        c_exec, c_creation, c_utility, c_rows = calculate_node_cost(qm, child_id, migration_costs, memo)
+    # Determine if children are inner side of Nested Loop
+    current_operator = operator
+    for i, child_id in enumerate(children):
+        # For Nested Loop, children[1] is the inner side (relies on index)
+        is_child_nlj_inner = (current_operator == 'Nested Loop' and i == 1)
+        
+        c_exec, c_creation, c_utility, c_rows = calculate_node_cost(
+            qm, child_id, migration_costs, memo, penalty_stats,
+            parent_operator=current_operator,
+            is_nlj_inner=is_child_nlj_inner
+        )
         children_exec_costs.append(c_exec)
         children_rows.append(c_rows)
     
@@ -209,11 +267,80 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     exec_cost = 0.0
     
     # Cost calculation based on operator type
-    # 単純加算方式：すべてのJOIN操作で統一
-    # exec_cost = sum(children_costs) + self_cost
-    # これにより、サンプリングで得られた正確な行数が親ノードのコストに反映される
-    if operator in ('Nested Loop', 'Hash Join', 'Merge Join'):
-        # すべてのJOIN: 子ノードのコストを累積 + 自ノードの処理コスト
+    if operator == 'Nested Loop':
+        # IMPORTANT: non_leaf_nodes_info preserves JSON Plans order
+        # children[0]: Outer (駆動表) - JSON Plans[0] に相当
+        # children[1]: Inner (内部表) - JSON Plans[1] に相当
+        # PostgreSQL's Nested Loop always has exactly 2 children
+        if len(children_exec_costs) == 2:
+            outer_exec = children_exec_costs[0]  # 外側は children[0]
+            inner_exec = children_exec_costs[1]  # 内側は children[1]
+            outer_rows = children_rows[0] if children_rows[0] > 0 else 1
+            
+            # 内側のノードタイプを確認
+            inner_child_id = children[1]  # children[1]が内側
+            inner_type = get_operator(qm, inner_child_id)
+            
+            # ★ Materialize戦略 ★
+            if 'Index' in inner_type and 'Scan' in inner_type:
+                # --- 内側テーブルのサイズ判定とペナルティ適用 ---
+                penalty = 1.0
+                inner_table_name = None
+                
+                # 内側ノードがLeafならテーブル名を特定してサイズを取得
+                if inner_child_id in qm.leaf_nodes_map_r:
+                    # leaf_nodes_map_r: (operator, table_name, alias, filter_cond)
+                    _, inner_table_name, _, _ = qm.leaf_nodes_map_r[inner_child_id]
+                
+                # テーブル情報からサイズを取得してペナルティ判定
+                if inner_table_name and inner_table_name in TABLE_INFO:
+                    inner_size = TABLE_INFO[inner_table_name]["size"]
+                    if inner_size > LARGE_TABLE_THRESHOLD:
+                        penalty = LARGE_TABLE_INDEX_PENALTY
+                        penalty_stats['nlj_penalties'].add(node_id)
+                # ---------------------------------------------------
+                
+                # Index NLJ: 外側の1行ごとにインデックスアクセス
+                # Nested Loopの出力行数（サンプリング実測値）から平均ヒット数を算出
+                # 1ループあたりの平均ヒット数 = 合計ヒット数 / ループ回数
+
+                avg_inner_hits = output_rows / outer_rows
+                # avg_inner_hits = 1.0
+
+                
+                # キャッシュ減衰係数 (Mackert & Lohmanの近似簡易版)
+                # 外側の行数が多いほど、内側のデータはバッファに乗り切る確率が高まる
+                # logを使うことで、回数が増えるほど「新たなディスクI/O」の発生率を下げる
+                # if outer_rows >= 1000:
+                #     # 例: 1000ループ目くらいから効き始める減衰
+                #     damping_factor = 1.0 / (math.log(outer_rows, 1000) + 1)
+                # else:
+                #     damping_factor = 1.0
+                
+                # 1回あたりのI/Oコスト: RANDOM_PAGE_COSTにペナルティと減衰を適用
+                effective_random_cost = RANDOM_PAGE_COST * penalty 
+                
+                # ヒット数が多いとページアクセスも増える（平方根で緩やかに増加）
+                page_io_cost_per_loop = effective_random_cost * math.sqrt(max(1, avg_inner_hits))
+
+                #outer_rowsのスケール
+                fix = 1000.0
+                outer_rows = fix * math.log1p(outer_rows/fix)  # 0行は1行として扱う（コストは発生しないが、計算上の分母やループ回数として扱うため）
+                
+                # 総コスト: 外側の実行 + ループコスト + タプル処理
+                loop_cost = outer_rows * page_io_cost_per_loop
+                tuple_cost = output_rows * CPU_INDEX_TUPLE_COST  # 合計ヒット数分のCPUコスト
+                
+                exec_cost = outer_exec + loop_cost + tuple_cost
+            else:
+                # Materialized NLJ: 内側を1回構築、あとはメモリ読み出し
+                loop_cost_per_row = CPU_TUPLE_COST
+                exec_cost = outer_exec + inner_exec + (outer_rows * loop_cost_per_row) + (output_rows * CPU_TUPLE_COST)
+        else:
+            exec_cost = sum(children_exec_costs) + (output_rows * CPU_TUPLE_COST)
+    
+    elif operator in ('Hash Join', 'Merge Join'):
+        # Hash/Merge Join: additive cost
         my_cost = input_rows_sum * CPU_OPERATOR_COST
         exec_cost = sum(children_exec_costs) + my_cost
     
@@ -246,7 +373,7 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict) -> 
     # Net utility = execution cost - MV read cost
     utility = max(0, exec_cost - mv_read_cost)
     
-    memo[node_id] = (exec_cost, creation_cost, utility, output_rows)
+    memo[cache_key] = (exec_cost, creation_cost, utility, output_rows)
     return exec_cost, creation_cost, utility, output_rows
 
 
@@ -266,8 +393,21 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
     print(f"Loading migration costs from: {json_input_path}")
     migration_costs = load_migration_costs(json_input_path)
     
+    # Pre-compute which nodes are NLJ inner children
+    # This is critical because the same node may appear in different contexts
+    nlj_inner_nodes = set()
+    for nlj_id, nlj_info in qm.non_leaf_nodes_info.items():
+        if nlj_info.operator == 'Nested Loop' and len(nlj_info.children) >= 2:
+            inner_child_id = nlj_info.children[1]
+            nlj_inner_nodes.add(inner_child_id)
+    
+    print(f"Identified {len(nlj_inner_nodes)} nodes as NLJ inner children")
+    
     # Memoization dictionary for recursive calculation
     memo = {}
+    
+    # Penalty statistics tracking (using sets to avoid duplicate counting)
+    penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set()}
     
     updated_count = 0
     
@@ -279,8 +419,15 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
         if node_id not in migration_costs:
             continue
         
+        # Determine if this node is an NLJ inner child
+        is_nlj_inner = node_id in nlj_inner_nodes
+        
         # Calculate cost using recursive method (now returns 4 values)
-        exec_cost, creation_cost, utility, output_rows = calculate_node_cost(qm, node_id, migration_costs, memo)
+        exec_cost, creation_cost, utility, output_rows = calculate_node_cost(
+            qm, node_id, migration_costs, memo, penalty_stats,
+            parent_operator='Nested Loop' if is_nlj_inner else None,
+            is_nlj_inner=is_nlj_inner
+        )
         
         # Update the JSON data
         if "[]" in migration_costs[node_id]:
@@ -292,6 +439,14 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
             updated_count += 1
     
     print(f"Updated {updated_count} nodes.")
+    print(f"\n--- Penalty Statistics ---")
+    print(f"Penalties applied in Leaf nodes (Index Scan): {len(penalty_stats['leaf_penalties'])}")
+    print(f"Penalties applied in Nested Loop joins: {len(penalty_stats['nlj_penalties'])}")
+    print(f"Total penalties applied: {len(penalty_stats['leaf_penalties']) + len(penalty_stats['nlj_penalties'])}")
+    print(f"\n--- Utility Adjustments ---")
+    print(f"NLJ Inner Index Scans (utility=0): {len(penalty_stats['nlj_inner_index_scans'])}")
+    print(f"  (These nodes rely on index for NLJ performance; MV without index provides no benefit)")
+    print(f"--------------------------\n")
     
     # Save to output file
     json_output_path.parent.mkdir(parents=True, exist_ok=True)

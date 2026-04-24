@@ -22,6 +22,9 @@ from typing import Set, List, Tuple, Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+IDENT = r'"?[A-Za-z_][A-Za-z0-9_]*"?'
+
+
 class JoinGraph:
     """結合条件をグラフとして表現し、最小全域木を構築する
     
@@ -180,14 +183,13 @@ class JoinGraph:
         # 正規化: 前後の空白を削除
         condition = condition.strip()
         
-        # alias1.col = alias2.col のパターン
-        # \w+ でエイリアス名、\w+ でカラム名をマッチ
-        pattern = r'(\w+)\.\w+\s*=\s*(\w+)\.\w+'
+        # alias1.col = alias2.col のパターン（ダブルクォート識別子対応）
+        pattern = rf'({IDENT})\.({IDENT})\s*=\s*({IDENT})\.({IDENT})'
         match = re.search(pattern, condition)
         
         if match:
-            table1 = match.group(1)
-            table2 = match.group(2)
+            table1 = match.group(1).strip('"')
+            table2 = match.group(3).strip('"')
             logger.debug(f"Parsed join condition '{condition}' -> ({table1}, {table2})")
             return table1, table2
         
@@ -207,8 +209,8 @@ class JoinGraph:
         Returns:
             結合条件ならTrue、フィルタ条件ならFalse
         """
-        # alias1.col1 = alias2.col2 のパターンをチェック
-        pattern = r'^\s*(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)\s*$'
+        # alias1.col1 = alias2.col2 のパターンをチェック（ダブルクォート識別子対応）
+        pattern = rf'^\s*{IDENT}\.{IDENT}\s*=\s*{IDENT}\.{IDENT}\s*$'
         return re.match(pattern, condition.strip()) is not None
 
 

@@ -51,13 +51,13 @@ class TimeDependentQueryExecutor:
                 database=self.db_config.database
             )
             # 統計情報のターゲットを1000に設定（セッションごとにリセットされるためここで設定）
-            # try:
-            #     with self.connection.cursor() as cursor:
-            #         # cursor.execute("SET default_statistics_target = 1000;")
-            #         # cursor.execute("SET random_page_cost = 1.1;")
-            #     self.connection.commit()
-            # except Exception as e:
-            #     logger.warning(f"Failed to set random_page_cost: {e}")
+            try:
+                with self.connection.cursor() as cursor:
+                    # cursor.execute("SET default_statistics_target = 1000;")
+                    cursor.execute("SET random_page_cost = 1.1;")
+                self.connection.commit()
+            except Exception as e:
+                logger.warning(f"Failed to set random_page_cost: {e}")
         return self.connection
 
     
@@ -377,55 +377,6 @@ class TimeDependentQueryExecutor:
             'ease_mode': ease_mode
         }
     
-    def _cleanup_existing_mvs(self) -> Tuple[bool, int]:
-        """既存のマテリアライズドビューをすべて削除
-        
-        Returns:
-            (success, dropped_count)のタプル
-        """
-        print("DEBUG: _cleanup_existing_mvs called")
-        try:
-            print("DEBUG: Getting database connection...")
-            conn = self._get_connection()
-            print("DEBUG: Connection obtained")
-            cursor = conn.cursor()
-            print("DEBUG: Cursor created")
-            
-            # publicスキーマ内のすべてのMVを取得
-            cursor.execute("""
-                SELECT matviewname 
-                FROM pg_matviews 
-                WHERE schemaname = 'public'
-            """)
-            
-            mvs = cursor.fetchall()
-            dropped_count = 0
-            
-            if mvs:
-                logger.info(f"Found {len(mvs)} existing materialized views to drop")
-                
-                for (mv_name,) in mvs:
-                    try:
-                        logger.debug(f"  Dropping {mv_name}...")
-                        cursor.execute(f"DROP MATERIALIZED VIEW IF EXISTS {mv_name} CASCADE")
-                        dropped_count += 1
-                    except Exception as e:
-                        logger.warning(f"  Failed to drop {mv_name}: {e}")
-                
-                conn.commit()
-                logger.info(f"✓ Dropped {dropped_count} materialized views")
-            else:
-                logger.info("No existing materialized views found")
-            
-            cursor.close()
-            return True, dropped_count
-            
-        except Exception as e:
-            logger.error(f"Error cleaning up existing MVs: {e}")
-            if self.connection:
-                self.connection.rollback()
-            return False, 0
-    
     def execute_time_dependent_benchmark(
         self,
         optimization_result: Dict,
@@ -452,16 +403,6 @@ class TimeDependentQueryExecutor:
         """
         print("DEBUG: execute_time_dependent_benchmark called")
         logger.info("Starting time-dependent benchmark execution")
-        print("DEBUG: Starting cleanup...")
-        
-        # ベンチマーク実行前に既存のMVをすべて削除
-        logger.info("Cleaning up existing materialized views...")
-        print("DEBUG: About to call _cleanup_existing_mvs()")
-        cleanup_success, dropped_count = self._cleanup_existing_mvs()
-        print(f"DEBUG: Cleanup completed - success={cleanup_success}, dropped={dropped_count}")
-        
-        if not cleanup_success:
-            logger.warning("Failed to cleanup existing MVs, continuing anyway...")
         
         print("DEBUG: Getting migration_analysis and timesteps...")
         migration_analysis = optimization_result.get('migration_analysis', [])
@@ -501,7 +442,7 @@ class TimeDependentQueryExecutor:
                 
                 if migration_sql_file.exists():
                     logger.info(f"Creating initial MVs from {migration_sql_file.name}...")
-                    success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+                    success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
                     migration_time = elapsed
                     migration_success = success
                     migration_error = error
@@ -518,7 +459,7 @@ class TimeDependentQueryExecutor:
                 
                 if migration_sql_file.exists():
                     logger.info(f"Executing migration SQL: {migration_sql_file.name}...")
-                    success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+                    success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
                     migration_time = elapsed
                     migration_success = success
                     migration_error = error
@@ -650,11 +591,6 @@ class TimeDependentQueryExecutor:
         print("DEBUG: execute_baseline_benchmark called")
         logger.info("Starting baseline benchmark execution (no materialized views)")
         
-        # MVをすべて削除
-        print("DEBUG: Cleaning up all MVs for baseline...")
-        cleanup_success, dropped_count = self._cleanup_existing_mvs()
-        print(f"DEBUG: Baseline cleanup completed - dropped={dropped_count}")
-        
         benchmark_start = time.time()
         timestep_results = []
         total_query_time = 0.0
@@ -759,11 +695,6 @@ class TimeDependentQueryExecutor:
         print("DEBUG: execute_static_mv_benchmark called")
         logger.info("Starting static MV benchmark execution (initial MVs only, no migration)")
         
-        # MVクリーンアップ
-        print("DEBUG: Cleaning up existing MVs...")
-        cleanup_success, dropped_count = self._cleanup_existing_mvs()
-        print(f"DEBUG: Cleanup completed - dropped={dropped_count}")
-        
         migration_analysis = optimization_result.get('migration_analysis', [])
         # Staticモードの場合はmigration_analysisがない場合がある（純粋な静的最適化）
         is_pure_static = 'migration_analysis' not in optimization_result and 'selected_mvs' in optimization_result
@@ -799,7 +730,7 @@ class TimeDependentQueryExecutor:
         
         if migration_sql_file.exists():
             logger.info(f"Creating initial MVs from {migration_sql_file.name}...")
-            success, elapsed, error = self._execute_sql_file(migration_sql_file, timeout_minutes)
+            success, elapsed, error = self._execute_sql_file(migration_sql_file, 0)
             initial_mv_creation_time = elapsed
             
             if success:

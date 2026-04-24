@@ -314,12 +314,29 @@
                         <div id="even-group-info" style="font-size: 0.9em; color: var(--text-secondary);"></div>
                     </div>
                 </div>
+
+                <div class="panel" style="margin-top: 20px;">
+                    <h2>クエリタイムライン</h2>
+                    <p style="font-size: 0.85em; color: var(--text-secondary); margin-bottom: 12px;">
+                        各タイムステップで各クエリが何回実行されるかを表示（枠内の数字は実行頻度、色が濃いほど高頻度）
+                    </p>
+                    <div id="query-timeline-container" style="height: 500px; overflow-y: auto;">
+                        <div id="query-timeline-chart" style="min-height: 100%;"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- 外部JS読み込み -->
-    <script src="/static/dashboard.js?v=20260128a"></script>
+    <script src="/static/dashboard.js?time=${Date.now()}"></script>
+    -->
+    <script>
+      // 動的にキャッシュバスティング用パラメータを付与してJSを読み込む
+      var script = document.createElement('script');
+      script.src = '/static/dashboard.js?v=' + new Date().getTime();
+      document.body.appendChild(script);
+    </script>
 </body>
 
 </html>

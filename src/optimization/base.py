@@ -49,6 +49,8 @@ class BaseILPOptimizer(ABC):
         query_files: list[str] | None = None,
         settings: Settings | None = None,
         index_build_costs: list[float] | None = None,
+        gurobi_output: int = 0,
+        gurobi_time_limit_sec: float | None = None,
     ) -> None:
         """Initialize the optimizer.
 
@@ -66,6 +68,8 @@ class BaseILPOptimizer(ABC):
             settings: Configuration settings (optional)
             index_build_costs: Index build cost for each node (optional)
                               Non-zero for Index Scan nodes that require index creation
+            gurobi_output: Gurobi log level (0=off, 1=on)
+            gurobi_time_limit_sec: Optional per-solve time limit in seconds
         """
         self.qm = qm
         self.settings = settings or Settings()
@@ -79,8 +83,13 @@ class BaseILPOptimizer(ABC):
         self.q_s_list = q_s_list
         self.query_files = query_files or []
         self.model: gp.Model | None = None
+        # Sparse candidate utility index (for candidate-based solves)
+        self._cand_pos_js_by_i: dict[int, list[int]] = {}
+        self._cand_pos_is_by_j: dict[int, list[int]] = {}
         # インデックス作成コスト（未指定の場合は全て0）
         self.index_build_costs = index_build_costs or [0.0] * s_num
+        self.gurobi_output = gurobi_output
+        self.gurobi_time_limit_sec = gurobi_time_limit_sec
 
     def build_ilp_model(self, cand_i: list[int], cand_j: list[int]) -> tuple[dict, dict]:
         """Build the ILP model with decision variables and constraints.
@@ -97,7 +106,9 @@ class BaseILPOptimizer(ABC):
             Tuple of (y_variables, z_variables)
         """
         self.model = gp.Model(f"{self.__class__.__name__}")
-        self.model.Params.OutputFlag = 0
+        self.model.Params.OutputFlag = self.gurobi_output
+        if self.gurobi_time_limit_sec is not None:
+            self.model.Params.TimeLimit = self.gurobi_time_limit_sec
 
         # Decision variables
         y = {}
@@ -133,13 +144,28 @@ class BaseILPOptimizer(ABC):
             Tuple of (y_variables, z_variables) indexed by candidate positions
         """
         self.model = gp.Model(f"{self.__class__.__name__}")
-        self.model.Params.OutputFlag = 0
+        self.model.Params.OutputFlag = self.gurobi_output
+        if self.gurobi_time_limit_sec is not None:
+            self.model.Params.TimeLimit = self.gurobi_time_limit_sec
 
-        # Decision variables - only for candidates
+        # Build sparse utility index on candidate positions:
+        # create y only for pairs where u_ij > 0.
+        self._cand_pos_js_by_i = {i_idx: [] for i_idx in range(len(cand_i))}
+        self._cand_pos_is_by_j = {j_idx: [] for j_idx in range(len(cand_j))}
+
+        for i_idx in range(len(cand_i)):
+            i_orig = cand_i[i_idx]
+            for j_idx in range(len(cand_j)):
+                j_orig = cand_j[j_idx]
+                if self.u_ij[i_orig][j_orig] > 0:
+                    self._cand_pos_js_by_i[i_idx].append(j_idx)
+                    self._cand_pos_is_by_j[j_idx].append(i_idx)
+
+        # Decision variables - only for sparse candidate pairs
         y = {}
-        for i in range(len(cand_i)):
-            for j in range(len(cand_j)):
-                y[i, j] = self.model.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}")
+        for i_idx, js in self._cand_pos_js_by_i.items():
+            for j_idx in js:
+                y[i_idx, j_idx] = self.model.addVar(vtype=gp.GRB.BINARY, name=f"y_{i_idx}_{j_idx}")
 
         z = {}
         for j in range(len(cand_j)):
@@ -198,18 +224,8 @@ class BaseILPOptimizer(ABC):
             cand_i: Candidate query indices (original indices)
             cand_j: Candidate subquery indices (original indices)
         """
-        # Build M: beneficial subqueries for each candidate query
-        M = []
-        for i in range(len(cand_i)):
-            M_i = []
-            M_i_ = []
-            for j in range(len(cand_j)):
-                if self.u_ij[cand_i[i]][cand_j[j]] > 0:
-                    M_i.append(j)
-                # All cand_j are considered materialized in this iteration
-                M_i_.append(j)
-            k = list(set(M_i) & set(M_i_))
-            M.append(k)
+        # Build M: beneficial subqueries for each candidate query (sparse, by position)
+        M = [list(self._cand_pos_js_by_i.get(i_idx, [])) for i_idx in range(len(cand_i))]
 
         # Overlapping subexpression constraints
         # For each query i and each beneficial subquery j in M[i],
@@ -333,9 +349,8 @@ class BaseILPOptimizer(ABC):
         """
         # Build utility component using candidate indices
         utility_terms = gp.quicksum(
-            self.u_ij[cand_i[i]][cand_j[j]] * y[i, j]
-            for i in range(len(cand_i))
-            for j in range(len(cand_j))
+            self.u_ij[cand_i[i_idx]][cand_j[j_idx]] * y[i_idx, j_idx]
+            for (i_idx, j_idx) in y.keys()
         )
 
         # Build maintenance cost component using candidate indices
@@ -433,7 +448,7 @@ class BaseILPOptimizer(ABC):
             
             for i_idx in range(len(cand_i)):
                 i_orig = cand_i[i_idx]
-                ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X)
+                ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X) if (i_idx, j_idx) in y else 0
 
         obj_val = self.model.objVal
 

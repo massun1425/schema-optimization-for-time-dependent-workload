@@ -8,6 +8,7 @@ Modified version: leaf nodes are also selectable as MVs.
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 from src.core.models import NonLeafNodeInfo, JoinCondition
@@ -33,7 +34,7 @@ class EnhancedMVGenerator:
         selected_mvs: Set of selected MV node IDs (both leaf and non-leaf)
     """
 
-    def __init__(self, query_manager: Any, schema_provider: Optional[SchemaProvider] = None, selected_mvs: Optional[set] = None):
+    def __init__(self, query_manager: Any, schema_provider: Optional[SchemaProvider] = None, selected_mvs: Optional[set] = None, query_parser: Any = None):
         """Initialize EnhancedMVGenerator.
         
         Args:
@@ -42,10 +43,13 @@ class EnhancedMVGenerator:
                            If None, will use fallback static schema.
             selected_mvs: Optional set of selected MV node IDs (both leaf and non-leaf).
                          If a child node is not in this set, it will be expanded as a subquery.
+            query_parser: Optional QueryParser instance for accessing original SQL
+                         JOIN conditions (used to supplement execution-plan-derived conditions).
         """
         self.qm = query_manager
         self.schema_provider = schema_provider
         self.selected_mvs = selected_mvs if selected_mvs is not None else set()
+        self.query_parser = query_parser
         
     def generate_mv_sql(self, node_id: str) -> str:
         """Generate MV creation SQL for a node.
@@ -240,9 +244,9 @@ class EnhancedMVGenerator:
             
             from_clause = " ".join(from_parts)  # カンマ結合なので改行は不要
             
-            # SELECT句を構築：カラム重複を避けるため、各テーブルのカラムを明示的に指定
+            # SELECT句を構築：最終出力列名ベースで重複回避
             select_parts = []
-            seen_columns = set()  # 重複カラム名を追跡
+            used_output_names = set()  # 最終的な出力列名を追跡
             
             for comp in flat_components:
                 for table_info in comp['tables']:
@@ -254,13 +258,24 @@ class EnhancedMVGenerator:
                     
                     if columns:
                         for col in columns:
-                            # カラム名が重複している場合は、エイリアス付きで選択
-                            if col in seen_columns:
-                                # 重複カラムはエイリアスを付けて区別
-                                select_parts.append(f"{alias}.{col} AS {alias}_{col}")
-                            else:
+                            base_name = col
+
+                            # まずは元カラム名を優先
+                            if base_name not in used_output_names:
                                 select_parts.append(f"{alias}.{col}")
-                                seen_columns.add(col)
+                                used_output_names.add(base_name)
+                                continue
+
+                            # 衝突時は alias_col をベースにし、それでも衝突するなら連番付与
+                            alias_base = f"{alias}_{col}"
+                            candidate_name = alias_base
+                            suffix = 2
+                            while candidate_name in used_output_names:
+                                candidate_name = f"{alias_base}_{suffix}"
+                                suffix += 1
+
+                            select_parts.append(f"{alias}.{col} AS {candidate_name}")
+                            used_output_names.add(candidate_name)
                     else:
                         # スキーマ情報がない場合は、テーブル全体を選択（エイリアス付き）
                         logger.warning(f"No schema info for {table_name}, using {alias}.*")
@@ -271,6 +286,19 @@ class EnhancedMVGenerator:
             # WHERE句構築: すべてのJOIN条件とフィルタを含める
             where_clause = ""
             where_conditions = converted_join_conditions + all_filters
+            
+            # 元SQLから合条件を補完（PostgreSQLの定数プッシュダウンで消失したJOIN条件を復元）
+            all_aliases = set()
+            for comp in flat_components:
+                for table_info in comp['tables']:
+                    all_aliases.add(table_info['alias'].lower())
+            
+            supplemented = self._supplement_missing_join_conditions(
+                node_id, all_aliases, where_conditions
+            )
+            if supplemented:
+                where_conditions.extend(supplemented)
+            
             if where_conditions:
                 where_clause = f"\nWHERE {' AND '.join(where_conditions)}"
             
@@ -368,44 +396,102 @@ FROM {from_clause}{where_clause};"""
             return filter_condition
         
         import re
+
+        # SQL文字列リテラル（'...'）内は置換対象から除外する。
+        # これにより、'(Berlin International Film Festival)' のような値を
+        # 誤って '(movie_info.Berlin International Film Festival)' に壊すことを防ぐ。
+        literal_pattern = re.compile(r"'(?:''|[^'])*'")
+
+        def process_non_literal(segment: str) -> str:
+            """Apply alias qualification only to non-literal SQL fragments."""
+            if not segment:
+                return segment
         
-        # カラム参照のパターンを検出: (カラム名):: の形式
-        # 既にエイリアスが付いている場合はスキップ（alias.column の形式）
-        def replace_column_cast(match):
-            full_match = match.group(0)
-            column_name = match.group(1)
-            # 既にエイリアスが付いているかチェック
-            if '.' in column_name:
-                return full_match  # そのまま返す
-            # エイリアスを追加: (カラム名):: → (alias.カラム名)::
-            return f"({table_alias}.{column_name})::"
+            # カラム参照のパターンを検出: (カラム名):: の形式
+            # 既にエイリアスが付いている場合はスキップ（alias.column の形式）
+            def replace_column_cast(match):
+                full_match = match.group(0)
+                column_name = match.group(1)
+                # 既にエイリアスが付いているかチェック
+                if '.' in column_name:
+                    return full_match  # そのまま返す
+                # エイリアスを追加: (カラム名):: → (alias.カラム名)::
+                return f"({table_alias}.{column_name})::"
         
-        # パターン1: (カラム名):: → (alias.カラム名)::
-        result = re.sub(r'\((\w+)\)::', replace_column_cast, filter_condition)
+            # パターン1: (カラム名):: → (alias.カラム名)::
+            result = re.sub(r'\((\w+)\)::', replace_column_cast, segment)
         
-        # パターン2: WHERE句などで単独で使われるカラム名
-        # 例: "note = 'something'" → "it.note = 'something'"
-        # 例: "note IS NULL" → "it.note IS NULL"
-        # 例: "note IS NOT NULL" → "it.note IS NOT NULL"
-        # ただし、関数名や既にエイリアスが付いているものは除外
-        def replace_bare_column(match):
-            prefix = match.group(1)  # 前の文字（スペースや括弧）
-            column_name = match.group(2)
-            suffix = match.group(3)  # 後ろの文字（演算子など）
-            
-            # 既にエイリアスが付いている、または関数名の可能性がある場合はスキップ
-            if '.' in column_name or column_name.upper() in ['AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'NULL']:
-                return match.group(0)
-            
-            return f"{prefix}{table_alias}.{column_name}{suffix}"
+            # パターン2: WHERE句などで単独で使われるカラム名
+            # 例: "note = 'something'" → "it.note = 'something'"
+            # 例: "note IS NULL" → "it.note IS NULL"
+            # 例: "note IS NOT NULL" → "it.note IS NOT NULL"
+            # ただし、関数名や既にエイリアスが付いているものは除外
         
-        # 単語境界で囲まれたカラム名を検出（演算子の前など）
-        # IS NOT NULL や IS NULL のパターンも考慮
-        # (?<![.]) で「直前がドットでない」ことを確認
-        result = re.sub(r'(\s|\(|^)(\w+)(?![.(])(\s*(?:=|!=|<|>|<=|>=|~|!~|LIKE|ILIKE|IN|ANY|IS\s+NOT\s+NULL|IS\s+NULL))', 
-                       replace_bare_column, result, flags=re.IGNORECASE)
+            # SQL型キーワードと予約語のリスト（::double precision などのために）
+            SQL_TYPE_KEYWORDS = {
+                'AND', 'OR', 'NOT', 'IN', 'ANY', 'ALL', 'NULL',
+                'PRECISION', 'TIMESTAMP', 'INTEGER', 'VARCHAR', 'CHAR',
+                'TEXT', 'BOOLEAN', 'FLOAT', 'DOUBLE', 'REAL', 'NUMERIC',
+                'DATE', 'TIME', 'INTERVAL', 'ARRAY', 'JSON', 'JSONB',
+                'WITH', 'WITHOUT', 'ZONE'
+            }
         
-        return result
+            def replace_bare_column(match):
+                prefix = match.group(1)  # 前の文字（スペースや括弧）
+                column_name = match.group(2)
+                suffix = match.group(3)  # 後ろの文字（演算子など）
+
+                # 既にエイリアスが付いている、SQL型キーワード、関数名の可能性がある場合はスキップ
+                if '.' in column_name or column_name.upper() in SQL_TYPE_KEYWORDS:
+                    return match.group(0)
+
+                return f"{prefix}{table_alias}.{column_name}{suffix}"
+        
+            # 単語境界で囲まれたカラム名を検出（演算子の前など）
+            # IS NOT NULL や IS NULL のパターンも考慮
+            # (?<![.]) で「直前がドットでない」ことを確認
+            # [a-zA-Z_]で始まる識別子のみマッチ（数値リテラルを除外）
+            result = re.sub(
+                r'(\s|\(|^)([a-zA-Z_][a-zA-Z0-9_]*)(?!\s*\.)(\s*(?:(?:IS\s+NOT\s+NULL|IS\s+NULL)\b|(?:ILIKE|LIKE|IN|ANY)\b|!=|<=|>=|=|<|>|~|!~))',
+                replace_bare_column,
+                result,
+                flags=re.IGNORECASE,
+            )
+        
+            # 演算子の後にあるカラム名も処理（例: "1928 < production_year"）
+            def replace_bare_column_after_op(match):
+                op = match.group(1)  # 演算子
+                space = match.group(2)  # スペース
+                column_name = match.group(3)
+
+                # 既にエイリアスが付いている、SQL型キーワード、関数名の可能性がある場合はスキップ
+                if '.' in column_name or column_name.upper() in SQL_TYPE_KEYWORDS:
+                    return match.group(0)
+
+                return f"{op}{space}{table_alias}.{column_name}"
+        
+            # 演算子の後のカラム名を検出（例: "< production_year", "> age"）
+            result = re.sub(
+                r'(=|!=|<=|>=|<|>|~|!~)(\s+)([a-zA-Z_][a-zA-Z0-9_]*)(?!\s*\.)\b',
+                replace_bare_column_after_op,
+                result,
+                flags=re.IGNORECASE,
+            )
+
+            escaped_alias = re.escape(table_alias)
+            result = re.sub(rf'\b{escaped_alias}\.{escaped_alias}\.', f'{table_alias}.', result)
+
+            return result
+
+        out = []
+        last = 0
+        for match in literal_pattern.finditer(filter_condition):
+            out.append(process_non_literal(filter_condition[last:match.start()]))
+            out.append(match.group(0))
+            last = match.end()
+        out.append(process_non_literal(filter_condition[last:]))
+
+        return ''.join(out)
     
     def _collect_all_join_conditions(self, node_info: NonLeafNodeInfo, qm: Any) -> list[JoinCondition]:
         """サブツリー全体から全てのJOIN条件を再帰的に収集.
@@ -447,6 +533,168 @@ FROM {from_clause}{where_clause};"""
                     )
         
         return all_conditions
+
+    def _supplement_missing_join_conditions(
+        self,
+        node_id: str,
+        all_aliases: set[str],
+        existing_conditions: list[str]
+    ) -> list[str]:
+        """未結合テーブルを検出し、元SQLからJOIN条件を補完.
+
+        PostgreSQLの定数プッシュダウン最適化により実行プランから消失した
+        JOIN条件を、元のSQLクエリから取得して補完する。
+
+        Args:
+            node_id: ノードID
+            all_aliases: FROM句に含まれる全エイリアス（小文字）
+            existing_conditions: 既存のWHERE句条件リスト
+
+        Returns:
+            補完すべきJOIN条件の文字列リスト
+        """
+        if not self.query_parser or not hasattr(self.qm, 'original_query_join_conditions'):
+            return []
+
+        if not self.qm.original_query_join_conditions:
+            return []
+
+        # 既存条件で「他エイリアスと比較で紐づいた」エイリアスを検出
+        # 単一テーブルフィルタ（例: t.id = 10）は covered に含めない
+        covered_aliases = set()
+        for cond in existing_conditions:
+            covered_aliases.update(self._extract_linked_aliases_from_condition(cond))
+
+        # 未結合エイリアス = FROM句にあるが WHERE句の条件に1つも登場しない
+        unjoined_aliases = all_aliases - covered_aliases
+
+        if not unjoined_aliases:
+            return []  # すべて結合済み
+
+        logger.info(f"Node {node_id}: unjoined aliases detected: {unjoined_aliases}")
+
+        # このノードが属するクエリを特定
+        query_indices = self._find_queries_for_node(node_id)
+
+        if not query_indices:
+            logger.warning(f"Node {node_id}: cannot find parent query for unjoined alias supplementation")
+            return []
+
+        # 元SQLから該当エイリアスを含むJOIN条件を取得
+        supplemented = []
+        supplemented_set = set()  # 重複除去
+
+        for qi in query_indices:
+            if qi not in self.qm.original_query_join_conditions:
+                continue
+
+            for la, lc, ra, rc in self.qm.original_query_join_conditions[qi]:
+                # 両辺がこのサブツリーに含まれるエイリアスで、
+                # かつ少なくとも片方が未結合エイリアスの場合に補完
+                if la in all_aliases and ra in all_aliases:
+                    if la in unjoined_aliases or ra in unjoined_aliases:
+                        cond_str = f"{la}.{lc} = {ra}.{rc}"
+                        if cond_str not in supplemented_set:
+                            supplemented_set.add(cond_str)
+                            supplemented.append(cond_str)
+                            logger.info(f"  Supplemented: {cond_str}")
+
+            if supplemented:
+                break  # 最初にマッチしたクエリの条件で十分
+
+        return supplemented
+
+    @staticmethod
+    def _normalize_identifier(token: str) -> str:
+        """識別子を正規化（ダブルクォート除去 + 小文字化）."""
+        token = token.strip()
+        if token.startswith('"') and token.endswith('"') and len(token) >= 2:
+            token = token[1:-1]
+        return token.lower()
+
+    @classmethod
+    def _extract_aliases_from_sql_expression(cls, expr: str) -> set[str]:
+        """SQL式から alias.column 形式の alias を抽出."""
+        if not expr:
+            return set()
+
+        ident = r'(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
+        alias_ref_pattern = re.compile(
+            rf'({ident})\s*\.\s*({ident})',
+            flags=re.IGNORECASE,
+        )
+
+        aliases = set()
+        for match in alias_ref_pattern.finditer(expr):
+            aliases.add(cls._normalize_identifier(match.group(1)))
+        return aliases
+
+    @classmethod
+    def _extract_linked_aliases_from_condition(cls, condition: str) -> set[str]:
+        """条件式から、比較で相互参照されるエイリアスのみを抽出.
+
+        - `t.id = 10` のような単一テーブルフィルタは除外
+        - `t1.c1 = t2.c2`, `t1.ts > t2.ts`, `UPPER(t1.n)=UPPER(t2.n)` 等を対象
+        """
+        if not condition:
+            return set()
+
+        linked_aliases = set()
+
+        # OR/AND を含む複合式でも、各述語単位で判定する
+        predicates = re.split(r'\bAND\b|\bOR\b', condition, flags=re.IGNORECASE)
+
+        # 比較演算子（長い語を先に判定）
+        comparison_pattern = re.compile(
+            r'\bIS\s+NOT\s+DISTINCT\s+FROM\b|\bIS\s+DISTINCT\s+FROM\b|!=|<>|<=|>=|=|<|>',
+            flags=re.IGNORECASE,
+        )
+
+        for predicate in predicates:
+            pred = predicate.strip()
+            if not pred:
+                continue
+
+            op_match = comparison_pattern.search(pred)
+            if not op_match:
+                continue
+
+            left_expr = pred[:op_match.start()].strip()
+            right_expr = pred[op_match.end():].strip()
+
+            left_aliases = cls._extract_aliases_from_sql_expression(left_expr)
+            right_aliases = cls._extract_aliases_from_sql_expression(right_expr)
+
+            # 左右の比較で、異なるエイリアスが関与している場合のみ covered 扱い
+            if left_aliases and right_aliases:
+                involved = left_aliases | right_aliases
+                if len(involved) >= 2:
+                    linked_aliases.update(involved)
+
+        return linked_aliases
+
+    def _find_queries_for_node(self, node_id: str) -> list[int]:
+        """ノードが属するクエリのインデックスリストを返す.
+
+        Args:
+            node_id: ノードID
+
+        Returns:
+            クエリインデックスのリスト
+        """
+        positions = self.qm.subquery_positions.get(node_id, [])
+        if positions:
+            return list(set(pos[0] for pos in positions if pos[0] >= 0))
+
+        # positionがない場合、子ノードから推測
+        if node_id in self.qm.non_leaf_nodes_info:
+            node_info = self.qm.non_leaf_nodes_info[node_id]
+            for child_id in node_info.children:
+                child_queries = self._find_queries_for_node(child_id)
+                if child_queries:
+                    return child_queries
+
+        return []
     
     def _get_table_columns(self, table_name: str) -> list[str]:
         """Get columns for a table.

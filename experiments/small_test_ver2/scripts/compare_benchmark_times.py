@@ -7,8 +7,11 @@ from collections import defaultdict
 
 # Paths
 base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2/time_dependent_output/job")
-dynamic_file = base_dir / "benchmark_results_dynamic_16_1_10.json"
-static_file = base_dir / "benchmark_results_static_16_1_10.json"
+dynamic_file = base_dir / "benchmark_results_dynamic_16_mono.json"
+static_file = base_dir / "benchmark_results_static_16_mono.json"
+
+# Filter timesteps 1-3 only
+TIMESTEP_FILTER = [1, 2, 3]
 
 # Load JSON files
 with open(dynamic_file, 'r', encoding='utf-8') as f:
@@ -22,6 +25,10 @@ query_times = defaultdict(lambda: {'dynamic': [], 'static': []})
 
 # Process dynamic results
 for timestep_result in dynamic_data['timestep_results']:
+    timestep_idx = timestep_result.get('timestep_index', -1)
+    # Filter by timestep
+    if timestep_idx not in TIMESTEP_FILTER:
+        continue
     if 'queries' in timestep_result and 'queries' in timestep_result['queries']:
         for query in timestep_result['queries']['queries']:
             query_id = query.get('query_id', 'unknown')
@@ -30,6 +37,10 @@ for timestep_result in dynamic_data['timestep_results']:
 
 # Process static results
 for timestep_result in static_data['timestep_results']:
+    timestep_idx = timestep_result.get('timestep_index', -1)
+    # Filter by timestep
+    if timestep_idx not in TIMESTEP_FILTER:
+        continue
     if 'queries' in timestep_result and 'queries' in timestep_result['queries']:
         for query in timestep_result['queries']['queries']:
             query_id = query.get('query_id', 'unknown')
@@ -71,15 +82,19 @@ for query_id, times in query_times.items():
         'total_dynamic': total_dynamic,
         'total_static': total_static,
         'diff': diff,
-        'abs_diff': abs_diff,
-        'ratio': ratio,
-        'faster': 'Dynamic' if diff < 0 else 'Static'
-    })
-
-# Sort by absolute difference
-results.sort(key=lambda x: x['abs_diff'], reverse=True)
+  Calculate total times for filtered timesteps
+total_dynamic_time = sum(r['total_dynamic'] for r in results)
+total_static_time = sum(r['total_static'] for r in results)
 
 # Display results
+print("\n" + "="*100)
+print(f"クエリ実行時間比較: Dynamic MV vs Static MV (タイムステップ {TIMESTEP_FILTER})")
+print("="*100)
+
+print(f"\n総クエリ数: {len(results)}")
+print(f"Dynamic総実行時間: {total_dynamic_time:.2f}s")
+print(f"Static総実行時間: {total_static_time:.2f}s")
+print(f"差: {total_dynamic_time - total_static_time
 print("\n" + "="*100)
 print("クエリ実行時間比較: Dynamic MV vs Static MV")
 print("="*100)

@@ -73,6 +73,12 @@ class QueryManager:
         # Stores the columns that should be indexed for each node
         self.index_columns: dict[str, list[str]] = {}  # node_id -> list of column names
 
+        # 元SQLから抽出したJOIN条件（クエリインデックス → 条件リスト）
+        # 各条件は (left_alias, left_column, right_alias, right_column) のタプル
+        self.original_query_join_conditions: dict[int, list[tuple[str, str, str, str]]] = {}
+        # 元SQLから抽出したエイリアスマッピング（クエリインデックス → {alias: table_name}）
+        self.original_query_aliases: dict[int, dict[str, str]] = {}
+
     def _generate_unique_id(self, prefix: str) -> str:
         """Generate a unique ID for a query node.
 
@@ -551,3 +557,5 @@ class QueryManager:
         self.subquery_sizes.clear()
         self.relation_tables.clear()
         self.subquery_widths.clear()
+        self.original_query_join_conditions.clear()
+        self.original_query_aliases.clear()

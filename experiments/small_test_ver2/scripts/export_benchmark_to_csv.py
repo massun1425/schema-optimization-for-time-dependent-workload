@@ -171,7 +171,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_100M_freq_true')
+        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_100M_fix')
         output_filename = 'benchmark_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])
@@ -252,6 +252,11 @@ def main():
             'static_16_3_10': 'benchmark_results_static_16_3_10.json',
             'dynamic_16_3_10': 'benchmark_results_dynamic_16_3_10.json',
             'dynamic_16_3_10p': 'benchmark_results_dynamic_16_3_10p.json',
+            'static_16_peak': 'benchmark_results_static_16_peak.json',
+            'dynamic_16_peakp': 'benchmark_results_dynamic_16_peakp.json',
+            'dynamic_16_peak': 'benchmark_results_dynamic_16_peak.json',
+            'static_16_mono': 'benchmark_results_static_16_mono.json',
+            'dynamic_16_monop': 'benchmark_results_dynamic_16_monop.json',
         }
 
     file_patterns8 = {

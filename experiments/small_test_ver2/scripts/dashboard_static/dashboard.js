@@ -288,6 +288,17 @@ async function onSubfolderChange() {
         resultSelect.appendChild(opt);
     });
 
+    // 適応的最適化ファイル
+    if (files.adaptive_optimization) {
+        files.adaptive_optimization.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[適応的] ${f}`;
+            opt.dataset.type = 'adaptive';
+            resultSelect.appendChild(opt);
+        });
+    }
+
     // 静的最適化ファイル
     files.static.forEach(f => {
         const opt = document.createElement('option');
@@ -993,6 +1004,16 @@ async function loadComparisonFiles() {
             fileSelect.appendChild(opt);
         });
 
+        // 適応的ファイル
+        if (files.adaptive_optimization) {
+            files.adaptive_optimization.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[適応的] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
+
         // 静的ファイル
         files.static.forEach(f => {
             const opt = document.createElement('option');
@@ -1354,9 +1375,37 @@ async function loadFrequencyFiles() {
     const select = document.getElementById('frequency-file-select');
     if (!select) return;
 
+    // 現在の選択値を保存して再描画後に復元できるようにする
+    const previousSelection = select.value;
+
     try {
-        const files = await fetchAPI(`/api/frequency-files/${currentQuerySet}`);
-        select.innerHTML = files.map(f => `<option value="${f}">${f}</option>`).join('');
+        const allFiles = await fetchAPI('/api/all-frequency-files');
+        select.innerHTML = '';
+        
+        let hasPrevious = false;
+        
+        for (const qs in allFiles) {
+            const group = document.createElement('optgroup');
+            group.label = `📁 ${qs}`;
+            
+            allFiles[qs].forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = `${qs}/${f}`;
+                opt.textContent = f;
+                
+                // 以前の選択状態を復元、または現在のクエリセットのファイルをデフォルト選択
+                if (opt.value === previousSelection) {
+                    opt.selected = true;
+                    hasPrevious = true;
+                } else if (!hasPrevious && !previousSelection && qs === currentQuerySet) {
+                    opt.selected = true;
+                    hasPrevious = true;
+                }
+                
+                group.appendChild(opt);
+            });
+            select.appendChild(group);
+        }
     } catch (e) {
         console.error('Failed to load frequency files:', e);
     }
@@ -1367,8 +1416,13 @@ async function loadFrequencyData() {
     const select = document.getElementById('frequency-file-select');
     if (!select || !select.value) return;
 
+    // valueは "query_set/filename" の形式
+    const [targetQs, targetFile] = select.value.split('/');
+    if (!targetQs || !targetFile) return;
+
     try {
-        const data = await fetchAPI(`/api/frequency-data/${currentQuerySet}/${select.value}`);
+        // 対象のクエリセットからデータを取得
+        const data = await fetchAPI(`/api/frequency-data/${targetQs}/${targetFile}`);
 
         // 情報表示
         const infoEl = document.getElementById('frequency-info');
@@ -1396,10 +1450,65 @@ async function loadFrequencyData() {
 
         // チャート描画
         renderFrequencyChart(data);
+        renderQueryTimelineChart(data);
 
     } catch (e) {
         console.error('Failed to load frequency data:', e);
     }
+}
+
+// クエリタイムラインを描画
+function renderQueryTimelineChart(data) {
+    const allQueriesData = { ...data.odd_group, ...data.even_group };
+    const queryNames = naturalSort(Object.keys(allQueriesData));
+    const timesteps = data.timesteps;
+
+    // X軸ラベル
+    const xLabels = Array.from({ length: timesteps }, (_, i) => 'T' + (i + 1));
+
+    // Z値（頻度）データ配列 (y軸がqueryNames, x軸がtimesteps)
+    const zData = queryNames.map(q => allQueriesData[q]);
+    
+    // 表示用テキストデータ。頻度が0の場合は空文字、0より大きい場合は数値を表示
+    const textData = zData.map(row => row.map(val => val > 0 ? (Math.round(val * 10) / 10).toString() : ''));
+
+    const chartHeight = Math.max(400, queryNames.length * 25 + 80);
+    document.getElementById('query-timeline-chart').style.height = chartHeight + 'px';
+
+    const trace = {
+        z: zData,
+        x: xLabels,
+        y: queryNames,
+        type: 'heatmap',
+        // 0と1以上を明確に区別し、使い始めを緑にするカラースケール
+        colorscale: [
+            [0, '#313244'],          // 0: ダークグレー（無）
+            [0.001, '#313244'],      // (境界線) 0付近はダークグレーを維持
+            [0.001, '#a6e3a1'],      // 0より大きい（使い始め）: 緑
+            [0.4, '#f9e2af'],        // 中頻度: 黄色
+            [0.7, '#fab387'],        // 高頻度: オレンジ
+            [1.0, '#f38ba8']         // 最高頻度: 赤
+        ],
+        showscale: true,         // カラーバーを表示して目安をわかりやすくする
+        text: textData,
+        texttemplate: '%{text}', // 枠内に値を表示
+        textfont: { color: '#1e1e2e' }, // ダークテーマに合わせて見やすい色
+        xgap: 1, 
+        ygap: 1,
+        hovertemplate: 'クエリ: %{y}<br>タイムステップ: %{x}<br>頻度: %{z}<extra></extra>'
+    };
+
+    const layout = {
+        paper_bgcolor: 'rgba(0,0,0,0)',
+        plot_bgcolor: '#1e1e2e',
+        font: { color: '#cdd6f4' },
+        margin: { l: 80, r: 20, t: 20, b: 40 },
+        xaxis: { title: 'タイムステップ', side: 'top' },
+        yaxis: { title: '', autorange: 'reversed' },
+        height: chartHeight
+    };
+
+    Plotly.newPlot('query-timeline-chart', [trace], layout, { responsive: true });
 }
 
 // 頻度変化チャートを描画

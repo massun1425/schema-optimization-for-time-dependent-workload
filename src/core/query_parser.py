@@ -933,7 +933,47 @@ class QueryParser:
 
         return X
 
-    def query_parse(self, q_num: int, path: str, insert_query: int) -> None:
+    def _load_original_sql_conditions(self, json_files: list[str], sql_dir: str) -> None:
+        """元のSQLファイルからJOIN条件を抽出してQueryManagerに保存.
+
+        PostgreSQLの定数プッシュダウン最適化により、実行プランから消失する
+        JOIN条件を元のSQLから補完するために使用する。
+
+        Args:
+            json_files: 処理されたJSONファイルのパスリスト（順序はクエリインデックスに対応）
+            sql_dir: 元のSQLファイルが格納されているディレクトリのパス
+        """
+        from experiments.small_test_ver2.mv_generation.original_sql_join_extractor import (
+            extract_aliases_from_sql,
+            extract_equijoin_conditions,
+            find_sql_file_for_query,
+        )
+
+        loaded_count = 0
+        for i, json_file in enumerate(json_files):
+            sql_path = find_sql_file_for_query(json_file, sql_dir)
+            if sql_path is None:
+                continue
+
+            try:
+                with open(sql_path, 'r', encoding='utf-8') as f:
+                    sql_text = f.read()
+
+                aliases = extract_aliases_from_sql(sql_text)
+                conditions = extract_equijoin_conditions(sql_text)
+
+                if aliases:
+                    self.qm.original_query_aliases[i] = aliases
+                if conditions:
+                    self.qm.original_query_join_conditions[i] = conditions
+                    loaded_count += 1
+            except Exception as e:
+                print(f"  [WARN] 元SQL読み込み失敗 ({sql_path}): {e}")
+
+        if loaded_count > 0:
+            print(f"  [INFO] {loaded_count}個のクエリから元SQL JOIN条件を読み込み完了")
+
+    def query_parse(self, q_num: int, path: str, insert_query: int, sql_dir: str | None = None) -> None:
         """Parse workload and compute optimization parameters.
 
         This is the main entry point for parsing a query workload.
@@ -944,6 +984,10 @@ class QueryParser:
             q_num: Number of queries (currently not used, determined from files)
             path: Path to directory containing JSON query plans
             insert_query: Number of insert queries for maintenance cost
+            sql_dir: Path to directory containing original SQL files.
+                     Used to extract JOIN conditions that may be lost in
+                     execution plans due to PostgreSQL constant pushdown.
+                     If None, original SQL conditions are not loaded.
 
         Raises:
             json.JSONDecodeError: If JSON parsing fails
@@ -988,6 +1032,10 @@ class QueryParser:
                         result = self.qm.depth_first_search(subquery, [i, j])
 
                     query.append(converted_data)
+
+            # 元のSQLファイルからJOIN条件を抽出して保存
+            if sql_dir:
+                self._load_original_sql_conditions(files, sql_dir)
 
             # Build child-to-parent relationships
             child_to_parent = {}
