@@ -86,11 +86,21 @@ EOSQL\n\
 
 WORKDIR /
 
-# PostgreSQLのリソース最適化設定 (work_memは128MBに設定)
+# PostgreSQL設定
+# 【変更点】
+#   effective_cache_size: 6GB → 8GB（メモリ16GB制限に対して適切な値に調整）
+#   max_parallel_workers: 追加（実用環境を想定、方針B）
+#   max_parallel_workers_per_gather: 追加（実用環境を想定、方針B）
+#   max_parallel_maintenance_workers: 追加（MV作成時の並列度を明示）
+#   jit: off 追加（初回実行ノイズの排除、再現性確保）
 CMD ["postgres", \
      "-c", "shared_buffers=2GB", \
+     "-c", "effective_cache_size=8GB", \
      "-c", "work_mem=128MB", \
-     "-c", "effective_cache_size=6GB", \
+     "-c", "maintenance_work_mem=1GB", \
      "-c", "random_page_cost=1.1", \
-     "-c", "maintenance_work_mem=1GB"]
-
+     "-c", "effective_io_concurrency=200", \
+     "-c", "max_parallel_workers=8", \
+     "-c", "max_parallel_workers_per_gather=2", \
+     "-c", "max_parallel_maintenance_workers=2", \
+     "-c", "jit=off"]

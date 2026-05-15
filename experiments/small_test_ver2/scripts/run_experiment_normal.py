@@ -1007,7 +1007,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
-    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal'):
+    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', b_max=None):
         """フェーズ6: MV最適化
         
         Args:
@@ -1021,9 +1021,9 @@ class NormalModeExperiment:
         """
         # 最初にモードで分岐
         if mode == 'static':
-            return self.phase6b_optimize_static(timestep_position=static_timestep, static_algorithm=static_algorithm)
+            return self.phase6b_optimize_static(timestep_position=static_timestep, static_algorithm=static_algorithm, b_max=b_max)
         elif mode == 'adaptive':
-            return self.phase6c_optimize_adaptive(window_size=self.window_size)
+            return self.phase6c_optimize_adaptive(window_size=self.window_size, b_max=b_max)
         
         # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
@@ -1065,7 +1065,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float((b_max if b_max is not None else 100) * 1024 * 1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -1351,7 +1351,7 @@ class NormalModeExperiment:
         
         return enhanced
     
-    def phase6b_optimize_static(self, timestep_position='last', static_algorithm='normal'):
+    def phase6b_optimize_static(self, timestep_position='last', static_algorithm='normal', b_max=None):
         """フェーズ6b: 静的最適化（時間依存なし・単一タイムステップのみ）
         
         Args:
@@ -1394,7 +1394,7 @@ class NormalModeExperiment:
             from src.optimization.normal import NormalOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float((b_max if b_max is not None else 100) * 1024 * 1024)
             
             # タイムステップと頻度を読み込み
             timesteps, frequencies = load_timesteps_and_frequencies(str(self.exp_dir), self.query_set, freq_suffix=self.exp_suffix)
@@ -1723,7 +1723,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
 
-    def phase6c_optimize_adaptive(self, window_size: Optional[int] = None):
+    def phase6c_optimize_adaptive(self, window_size: Optional[int] = None, b_max=None):
         """フェーズ6c: 適応的MV最適化（スライディングウィンドウ方式）
         
         2タイムステップILPを用いた適応的最適化。
@@ -1769,7 +1769,7 @@ class NormalModeExperiment:
             from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
-            B_max = float(100*1024*1024)
+            B_max = float((b_max if b_max is not None else 100) * 1024 * 1024)
             
             # タイムステップと頻度を読み込み
             self.print_info("タイムステップと頻度情報を読み込み中...")
@@ -1996,7 +1996,7 @@ class NormalModeExperiment:
             # 結果保存
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
-            result_file = result_dir / f"adaptive_mv_optimization_result{self.exp_suffix}.json"
+            result_file = result_dir / f"adaptive_mv_optimization_result_w{window_size}{self.exp_suffix}.json"
             
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
@@ -2049,7 +2049,7 @@ class NormalModeExperiment:
         if self.result is None:
             # Load optimization result (adaptive or dynamic)
             if mode == 'adaptive':
-                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result{self.exp_suffix}.json"
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
             else:
                 result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
             
@@ -2341,7 +2341,7 @@ class NormalModeExperiment:
         
         # Load optimization result (adaptive or dynamic)
         if mode == 'adaptive':
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result{self.exp_suffix}.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
         else:
             result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
         
@@ -2581,7 +2581,7 @@ class NormalModeExperiment:
             self.print_error(f"静的モード用クエリ書き換えに失敗: {e}")
             return False
 
-    def phase9_execute_benchmark(self, mode='dynamic', static_algorithm='normal', ease_mode=False):
+    def phase9_execute_benchmark(self, mode='dynamic', static_algorithm='normal', ease_mode=False, noise_ratio=0.0, noise_query_dir=None):
         """フェーズ9: 時間依存型ベンチマーク実行
         
         Args:
@@ -2592,6 +2592,8 @@ class NormalModeExperiment:
                 - 'baseline': ベースライン（MVなし）
             static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
             ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
+            noise_ratio: ノイズ注入率（0.0〜1.0）。ease_mode=Trueの場合は無視される
+            noise_query_dir: ノイズ用クエリが格納されているディレクトリ（Noneの場合はデフォルトのjobフォルダ）
         """
         mode_names = {
             'dynamic': '動的MV（マイグレーションあり）',
@@ -2657,7 +2659,7 @@ class NormalModeExperiment:
         
         elif mode == 'adaptive':
             # 適応的最適化結果を読み込み
-            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result{self.exp_suffix}.json"
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
             
             if not result_file.exists():
                 self.print_error("適応的最適化結果が見つかりません")
@@ -2747,6 +2749,28 @@ class NormalModeExperiment:
         self.print_info("ベンチマーク実行の準備中...")
         executor = TimeDependentQueryExecutor(self.settings)
         
+        # ノイズ注入の設定（ease_modeでは無効）
+        if noise_ratio > 0.0 and not ease_mode:
+            executor.noise_ratio = noise_ratio
+            
+            # ノイズ用クエリフォルダの決定（デフォルト: 01_queries/job）
+            if noise_query_dir is not None:
+                resolved_noise_dir = Path(noise_query_dir)
+            else:
+                resolved_noise_dir = self.queries_dir  # 01_queries/{query_set} の元クエリ
+            
+            self.print_info(f"ノイズ注入設定: ratio={noise_ratio:.2f}, dir={resolved_noise_dir}")
+            loaded_count = executor.load_noise_pool(resolved_noise_dir)
+            if loaded_count == 0:
+                self.print_error(f"ノイズ用クエリが見つかりません: {resolved_noise_dir}")
+                self.print_info("ノイズなしで続行します")
+                executor.noise_ratio = 0.0
+            else:
+                self.print_success(f"  ノイズプール: {loaded_count}個のクエリを事前ロード完了")
+        else:
+            if noise_ratio > 0.0 and ease_mode:
+                self.print_info("ease_modeではノイズ注入は無効です")
+        
         try:
             # モードに応じてベンチマークを実行
             self.print_info(f"ベンチマーク実行を開始します（モード: {mode}）...\n")
@@ -2793,10 +2817,13 @@ class NormalModeExperiment:
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # 静的モード + bigsubs の場合は別ファイル名
+            # noise_ratio > 0 の場合はファイル名に _noise{XX} を付与して衝突を回避
+            noise_suffix = f"_noise{int(noise_ratio * 100)}" if noise_ratio > 0.0 else ""
+            window_suffix = f"_w{self.window_size}" if mode == 'adaptive' else ""
             if mode == 'static' and static_algorithm == 'bigsubs':
-                output_file = output_dir / f"benchmark_results_static_bigsubs{self.exp_suffix}.json"
+                output_file = output_dir / f"benchmark_results_static_bigsubs{self.exp_suffix}{noise_suffix}.json"
             else:
-                output_file = output_dir / f"benchmark_results_{mode}{self.exp_suffix}.json"
+                output_file = output_dir / f"benchmark_results_{mode}{window_suffix}{self.exp_suffix}{noise_suffix}.json"
             
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
@@ -2834,7 +2861,7 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', ease_mode=False):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None):
         """最適化以降のフェーズを実行 (Phase 6-9)
         
         Args:
@@ -2859,14 +2886,15 @@ class NormalModeExperiment:
             pruning_workers=pruning_workers,
             static_timestep=static_timestep,
             use_static_protection=use_static_protection,
-            static_algorithm=static_algorithm
+            static_algorithm=static_algorithm,
+            b_max=b_max
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
             (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode, static_algorithm=static_algorithm)),
             (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode, static_algorithm=static_algorithm)),
-            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, static_algorithm=static_algorithm, ease_mode=ease_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, static_algorithm=static_algorithm, ease_mode=ease_mode, noise_ratio=noise_ratio, noise_query_dir=noise_query_dir)),
         ]
         
         # 全フェーズをまとめる
@@ -2897,7 +2925,7 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None):
         """全フェーズを順次実行
         
         Args:
@@ -2932,14 +2960,15 @@ class NormalModeExperiment:
             pruning_parallel=pruning_parallel,
             pruning_workers=pruning_workers,
             static_timestep=static_timestep,
-            use_static_protection=use_static_protection
+            use_static_protection=use_static_protection,
+            b_max=b_max
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
         post_optimization_phases = [
             (7, "MV生成SQL作成", lambda: self.phase7_generate_mv_sql(mode=optimization_mode)),
             (8, "クエリ書き換え", lambda: self.phase8_rewrite_queries(mode=optimization_mode)),
-            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, ease_mode=ease_mode)),
+            (9, "ベンチマーク実行", lambda: self.phase9_execute_benchmark(mode=optimization_mode, ease_mode=ease_mode, noise_ratio=noise_ratio, noise_query_dir=noise_query_dir)),
         ]
         
         # 全フェーズをまとめる
@@ -3105,10 +3134,28 @@ def main():
         help='再計算されたコスト（simple_migration_costs.json）を使用してマイグレーションと利得を計算する'
     )
     parser.add_argument(
+        '--noise-ratio',
+        type=float,
+        default=0.0,
+        help='ノイズ注入率 (0.0〜1.0)。指定した確率で各クエリ実行をノイズクエリに差し替える。ease_modeでは無効。例: 0.2 = 20%%のクエリがノイズに置換'
+    )
+    parser.add_argument(
+        '--noise-query-dir',
+        type=str,
+        default=None,
+        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: experiments/small_test_ver2/01_queries/job）'
+    )
+    parser.add_argument(
         '--window-size',
         type=int,
         default=4,
         help='適応的最適化で使用する移動平均の幅（デフォルト: 4）'
+    )
+    parser.add_argument(
+        '--b-max',
+        type=float,
+        default=100.0,
+        help='ストレージ予算 B_max（MB単位、デフォルト: 100）。フェーズ6/6b/6cで使用'
     )
     
     # Docker/Local switching arguments
@@ -3135,7 +3182,10 @@ def main():
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
             static_timestep=args.static_timestep,
-            use_static_protection=args.static_protection
+            use_static_protection=args.static_protection,
+            noise_ratio=args.noise_ratio,
+            noise_query_dir=args.noise_query_dir,
+            b_max=args.b_max
         )
     elif args.phase == 'post-opt':
         success = exp.run_post_optimization_phases(
@@ -3146,7 +3196,10 @@ def main():
             static_timestep=args.static_timestep,
             use_static_protection=args.static_protection,
             static_algorithm=args.static_algorithm,
-            ease_mode=args.ease
+            ease_mode=args.ease,
+            noise_ratio=args.noise_ratio,
+            noise_query_dir=args.noise_query_dir,
+            b_max=args.b_max
         )
     elif args.phase == '0':
         success = exp.phase0_setup()
@@ -3172,16 +3225,22 @@ def main():
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
             static_timestep=args.static_timestep,
-            use_static_protection=args.static_protection
+            use_static_protection=args.static_protection,
+            b_max=args.b_max
         )
     elif args.phase == '6.5':
-        success = exp.phase6b_optimize_static(timestep_position=args.static_timestep, static_algorithm=args.static_algorithm)
+        success = exp.phase6b_optimize_static(timestep_position=args.static_timestep, static_algorithm=args.static_algorithm, b_max=args.b_max)
     elif args.phase == '7':
         success = exp.phase7_generate_mv_sql(mode=args.optimization_mode)
     elif args.phase == '8':
         success = exp.phase8_rewrite_queries(mode=args.optimization_mode)
     elif args.phase == '9':
-        success = exp.phase9_execute_benchmark(mode=args.benchmark_mode, ease_mode=args.ease)
+        success = exp.phase9_execute_benchmark(
+            mode=args.benchmark_mode,
+            ease_mode=args.ease,
+            noise_ratio=args.noise_ratio,
+            noise_query_dir=args.noise_query_dir
+        )
     else:
         print(f"不明なフェーズ: {args.phase}")
         success = False

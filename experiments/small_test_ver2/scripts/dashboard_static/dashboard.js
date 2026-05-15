@@ -984,7 +984,7 @@ async function loadComparisonFolders() {
     });
 }
 
-// 比較用ファイル一覧を読み込み
+// 比較用ファイル一覧を読み込み（ベンチマーク結果ファイルを表示）
 async function loadComparisonFiles() {
     const folderSelect = document.getElementById('comparison-folder-select');
     const fileSelect = document.getElementById('comparison-add-file-select');
@@ -996,17 +996,19 @@ async function loadComparisonFiles() {
     try {
         const files = await fetchAPI(`/api/result-files/${currentQuerySet}?subfolder=${encodeURIComponent(subfolder)}`);
 
-        // 動的ファイル
-        files.optimization.forEach(f => {
-            const opt = document.createElement('option');
-            opt.value = f;
-            opt.textContent = `[動的] ${f}`;
-            fileSelect.appendChild(opt);
-        });
+        // 動的ベンチマークファイル
+        if (files.benchmark) {
+            files.benchmark.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[動的] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
 
-        // 適応的ファイル
-        if (files.adaptive_optimization) {
-            files.adaptive_optimization.forEach(f => {
+        // 適応的ベンチマークファイル
+        if (files.adaptive_benchmark) {
+            files.adaptive_benchmark.forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f;
                 opt.textContent = `[適応的] ${f}`;
@@ -1014,13 +1016,15 @@ async function loadComparisonFiles() {
             });
         }
 
-        // 静的ファイル
-        files.static.forEach(f => {
-            const opt = document.createElement('option');
-            opt.value = f;
-            opt.textContent = `[静的] ${f}`;
-            fileSelect.appendChild(opt);
-        });
+        // 静的ベンチマークファイル
+        if (files.static_benchmark) {
+            files.static_benchmark.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[静的] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
     } catch (e) {
         console.error('Failed to load comparison files:', e);
     }

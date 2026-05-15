@@ -370,6 +370,9 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
         if "benchmark_results_adaptive_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_adaptive_", "adaptive_mv_optimization_result_")
             mode = "adaptive"
+        elif "benchmark_results_dynamic_utility_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_dynamic_utility_", "dynamic_utility_optimization_result_")
+            mode = "dynamic"
         elif "benchmark_results_dynamic_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_dynamic_", "td_mv_optimization_result_")
             mode = "dynamic"
@@ -379,6 +382,9 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
         elif "benchmark_results_static_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_static_", "static_mv_optimization_result_")
             mode = "static"
+        
+        # _noise{XX} サフィックスは最適化結果ファイルには存在しないため除去
+        opt_filename = re.sub(r'_noise\d+\.json$', '.json', opt_filename)
     elif "_mv_optimization_result_" in optimization_filename or "_optimization_result_" in optimization_filename:
         # 入力が最適化結果ファイルの場合 (互換性のため維持)
         opt_filename = optimization_filename

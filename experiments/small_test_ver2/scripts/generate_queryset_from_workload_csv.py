@@ -261,6 +261,7 @@ def main() -> int:
         help="元ファイル名を引き継ぐための参照ディレクトリ (01_queries/cluster_53 など)",
     )
     parser.add_argument("--clean-output", action="store_true", help="出力先の既存 .sql を削除してから生成")
+    parser.add_argument("--freq-only", action="store_true", help="SQLファイルを出力せず頻度JSONのみを出力する")
     args = parser.parse_args()
 
     csv_path = Path(args.csv_path)
@@ -391,14 +392,15 @@ def main() -> int:
             fname = sql_to_file[dedupe_key]
             file_to_freq[fname][idx] += 1
 
-    for fname, sql in file_to_sql.items():
-        sql_to_write = ensure_semicolon(sql)
-        if args.sanitize_ceb and file_to_is_ceb.get(fname, False):
-            sql_to_write = rewrite_ceb_to_count(sql_to_write)
-        if args.sanitize_distinct_on and has_distinct_on(sql_to_write):
-            sql_to_write = rewrite_to_count(sql_to_write)
-        formatted_sql = format_sql_like_cluster53(sql_to_write)
-        (out_dir / fname).write_text(formatted_sql, encoding="utf-8")
+    if not args.freq_only:
+        for fname, sql in file_to_sql.items():
+            sql_to_write = ensure_semicolon(sql)
+            if args.sanitize_ceb and file_to_is_ceb.get(fname, False):
+                sql_to_write = rewrite_ceb_to_count(sql_to_write)
+            if args.sanitize_distinct_on and has_distinct_on(sql_to_write):
+                sql_to_write = rewrite_to_count(sql_to_write)
+            formatted_sql = format_sql_like_cluster53(sql_to_write)
+            (out_dir / fname).write_text(formatted_sql, encoding="utf-8")
 
     freq_payload = {
         "description": f"Generated from {csv_path.name} ({start_ts.isoformat()} to {end_ts.isoformat()}, {args.step_hours}h bins)",

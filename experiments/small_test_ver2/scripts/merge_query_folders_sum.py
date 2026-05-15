@@ -7,10 +7,10 @@
 - 両方にあるクエリ: freq_dir1 + freq_dir2 (要素ごとの和)
 
 使い方:
-    python3 merge_query_folders_sum.py \
-        --dir1 experiments/small_test_ver2/01_queries/cluster_55_03 \
-        --dir2 experiments/small_test_ver2/01_queries/cluster_55_05 \
-        --out  experiments/small_test_ver2/01_queries/cluster_55_03_05_sum \
+    python3 experiments/small_test_ver2/scripts/merge_query_folders_sum.py \
+        --dir1 experiments/small_test_ver2/01_queries/cluster_55_join_12 \
+        --dir2 experiments/small_test_ver2/01_queries/cluster_55_join_05_25 \
+        --out  experiments/small_test_ver2/01_queries/cluster_55_join_12_25 \
         --freq-name frequency_time_dependent.json
 """
 
@@ -42,6 +42,8 @@ def main() -> int:
         default="frequency_time_dependent.json",
         help="頻度JSONのファイル名 (両フォルダ共通)",
     )
+    parser.add_argument("--freq-name1", help="dir1の頻度JSON名 (指定がない場合は --freq-name を使用)")
+    parser.add_argument("--freq-name2", help="dir2の頻度JSON名 (指定がない場合は --freq-name を使用)")
     args = parser.parse_args()
 
     dir1 = Path(args.dir1)
@@ -50,10 +52,13 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # --- 頻度JSONを読み込む ---
-    freq1_path = dir1 / args.freq_name
-    freq2_path = dir2 / args.freq_name
+    freq_name1 = args.freq_name1 if args.freq_name1 else args.freq_name
+    freq_name2 = args.freq_name2 if args.freq_name2 else args.freq_name
+    freq1_path = dir1 / freq_name1
+    freq2_path = dir2 / freq_name2
     freq1: dict[str, list[int]] = load_freq_json(freq1_path) if freq1_path.exists() else {}
     freq2: dict[str, list[int]] = load_freq_json(freq2_path) if freq2_path.exists() else {}
+
 
     # タイムステップ数を確認
     n1 = len(next(iter(freq1.values()), []))

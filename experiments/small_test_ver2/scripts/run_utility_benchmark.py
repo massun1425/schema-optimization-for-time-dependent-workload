@@ -302,7 +302,9 @@ def phase8_rewrite_queries(exp_dir: Path, query_set: str, result_data: dict,
 def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
                              result_data: dict, settings: Settings,
                              pg_executor: PostgresExecutor,
-                             ease_mode: bool = False) -> bool:
+                             ease_mode: bool = False,
+                             noise_ratio: float = 0.0,
+                             noise_query_dir=None) -> bool:
     """時間依存型ベンチマークを実行"""
     print_header("時間依存型ベンチマーク実行（utility ベース）", 9)
 
@@ -469,6 +471,29 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
 
     # ベンチマーク実行
     executor = TimeDependentQueryExecutor(settings)
+    
+    # ノイズ注入の設定（ease_modeでは無効）
+    if noise_ratio > 0.0 and not ease_mode:
+        executor.noise_ratio = noise_ratio
+        
+        # ノイズ用クエリフォルダの決定（デフォルト: 01_queries/job）
+        if noise_query_dir is not None:
+            resolved_noise_dir = Path(noise_query_dir)
+        else:
+            resolved_noise_dir = queries_dir  # 01_queries/{query_set} の元クエリ
+        
+        print_info(f"ノイズ注入設定: ratio={noise_ratio:.2f}, dir={resolved_noise_dir}")
+        loaded_count = executor.load_noise_pool(resolved_noise_dir)
+        if loaded_count == 0:
+            print_error(f"ノイズ用クエリが見つかりません: {resolved_noise_dir}")
+            print_info("ノイズなしで続行します")
+            executor.noise_ratio = 0.0
+        else:
+            print_success(f"  ノイズプール: {loaded_count}個のクエリを事前ロード完了")
+    else:
+        if noise_ratio > 0.0 and ease_mode:
+            print_info("ease_modeではノイズ注入は無効です")
+    
     try:
         print_info("ベンチマーク実行を開始します（モード: dynamic / utility）...\n")
 
@@ -485,7 +510,9 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
         # 結果保存
         output_dir = exp_dir / "time_dependent_output" / query_set
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_file = output_dir / f"benchmark_results_dynamic_utility{freq_suffix}.json"
+        # noise_ratio > 0 の場合はファイル名に _noise{XX} を付与して衝突を回避
+        noise_suffix = f"_noise{int(noise_ratio * 100)}" if noise_ratio > 0.0 else ""
+        output_file = output_dir / f"benchmark_results_dynamic_utility{freq_suffix}{noise_suffix}.json"
 
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
@@ -566,6 +593,18 @@ def main():
         '--ease', action='store_true',
         help='簡易ベンチマークモード: 各クエリ 1 回実行 + 頻度掛け'
     )
+    parser.add_argument(
+        '--noise-ratio',
+        type=float,
+        default=0.0,
+        help='ノイズ注入率 (0.0〜1.0)。指定した確率で各クエリ実行をノイズクエリに差し替える。ease_modeでは無効。例: 0.2 = 20%%のクエリがノイズに置換'
+    )
+    parser.add_argument(
+        '--noise-query-dir',
+        type=str,
+        default=None,
+        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: experiments/small_test_ver2/01_queries/job）'
+    )
 
     # Docker/Local switching
     add_docker_args(parser)
@@ -636,7 +675,9 @@ def main():
         elif phase == '9':
             success = phase9_execute_benchmark(
                 exp_dir, query_set, freq_suffix, result_data, settings,
-                pg_executor, ease_mode=args.ease
+                pg_executor, ease_mode=args.ease,
+                noise_ratio=args.noise_ratio,
+                noise_query_dir=args.noise_query_dir
             )
 
         else:
