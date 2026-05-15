@@ -125,8 +125,9 @@ def main():
     )
     parser.add_argument(
         "--pruning-method", type=str, default="basic",
-        choices=["basic", "iterative"],
-        help="候補削減手法 (basic: 事前近傍拡大, iterative: 反復的拡大) (default: basic)"
+        choices=["basic", "iterative", "step1_only", "step2_only"],
+        help="候補削減手法 (basic: WSTシングルパス, iterative: WST反復, "
+             "step1_only: タイムステップ別最適化のみ, step2_only: WST反復のみ) (default: basic)"
     )
     parser.add_argument(
         "--max-iterations", type=int, default=5,
@@ -218,127 +219,148 @@ def main():
     )
 
     # ========== 5. 各タイムステップで最適化実行 (Step 1) ==========
-    results = []
     pipeline_start = time.time()
-    total_start = time.time()
 
-    for t_idx, timestep in enumerate(timesteps):
-        freq_list = frequencies[timestep]
-        weighted_u_ij = build_weighted_u_ij(base_u_ij, freq_list, query_count)
+    if args.pruning_method != "step2_only":
+        results = []
+        total_start = time.time()
 
-        # 頻度の統計
-        nonzero_freq = [f for f in freq_list[:query_count] if f > 0]
-        active_queries = len(nonzero_freq)
+        for t_idx, timestep in enumerate(timesteps):
+            freq_list = frequencies[timestep]
+            weighted_u_ij = build_weighted_u_ij(base_u_ij, freq_list, query_count)
 
-        print_info(f"タイムステップ {timestep} ({t_idx+1}/{len(timesteps)}): "
-                   f"アクティブクエリ {active_queries}/{query_count}")
+            # 頻度の統計
+            nonzero_freq = [f for f in freq_list[:query_count] if f > 0]
+            active_queries = len(nonzero_freq)
 
-        result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
-        results.append(result)
+            print_info(f"タイムステップ {timestep} ({t_idx+1}/{len(timesteps)}): "
+                       f"アクティブクエリ {active_queries}/{query_count}")
 
-        print_success(f"  MV数: {result['mv_count']}, "
-                      f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
-                      f"目的関数値: {result['objective_value']:.4f}, "
-                      f"実行時間: {result['execution_time']:.3f}秒")
+            result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
+            results.append(result)
 
-    total_elapsed = time.time() - total_start
+            print_success(f"  MV数: {result['mv_count']}, "
+                          f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
+                          f"目的関数値: {result['objective_value']:.4f}, "
+                          f"実行時間: {result['execution_time']:.3f}秒")
 
-    # ========== 6. 結果サマリ ==========
-    print_header("結果サマリ")
-    print(f"  {'Timestep':>10s}  {'MV数':>6s}  {'ストレージ(MB)':>14s}  {'目的関数値':>16s}  {'実行時間(秒)':>12s}")
-    print(f"  {'─'*10}  {'─'*6}  {'─'*14}  {'─'*16}  {'─'*12}")
-    for r in results:
-        print(f"  {r['timestep']:>10s}  {r['mv_count']:>6d}  "
-              f"{r['total_size']/1024/1024:>14.2f}  "
-              f"{r['objective_value']:>16.4f}  "
-              f"{r['execution_time']:>12.3f}")
-    print(f"\n  合計実行時間: {total_elapsed:.3f}秒")
+        total_elapsed = time.time() - total_start
 
-    # タイムステップ間での MV の変動を分析
-    print_header("タイムステップ間 MV 変動")
-    for i in range(1, len(results)):
-        prev_mvs = set(results[i-1]['selected_mvs'])
-        curr_mvs = set(results[i]['selected_mvs'])
-        added = curr_mvs - prev_mvs
-        removed = prev_mvs - curr_mvs
-        common = prev_mvs & curr_mvs
-        print(f"  {results[i-1]['timestep']} → {results[i]['timestep']}: "
-              f"共通 {len(common)}, 追加 {len(added)}, 削除 {len(removed)}")
+        # ========== 6. 結果サマリ ==========
+        print_header("結果サマリ")
+        print(f"  {'Timestep':>10s}  {'MV数':>6s}  {'ストレージ(MB)':>14s}  {'目的関数値':>16s}  {'実行時間(秒)':>12s}")
+        print(f"  {'─'*10}  {'─'*6}  {'─'*14}  {'─'*16}  {'─'*12}")
+        for r in results:
+            print(f"  {r['timestep']:>10s}  {r['mv_count']:>6d}  "
+                  f"{r['total_size']/1024/1024:>14.2f}  "
+                  f"{r['objective_value']:>16.4f}  "
+                  f"{r['execution_time']:>12.3f}")
+        print(f"\n  合計実行時間: {total_elapsed:.3f}秒")
+
+        # タイムステップ間での MV の変動を分析
+        print_header("タイムステップ間 MV 変動")
+        for i in range(1, len(results)):
+            prev_mvs = set(results[i-1]['selected_mvs'])
+            curr_mvs = set(results[i]['selected_mvs'])
+            added = curr_mvs - prev_mvs
+            removed = prev_mvs - curr_mvs
+            common = prev_mvs & curr_mvs
+            print(f"  {results[i-1]['timestep']} → {results[i]['timestep']}: "
+                  f"共通 {len(common)}, 追加 {len(added)}, 削除 {len(removed)}")
+    else:
+        results = []
+        total_elapsed = 0.0
+        print_info("step2_only モード: タイムステップ別最適化をスキップ")
 
     # ========== 7. Seed 候補の収集 ==========
     print_header("Step 1: Seed 候補の収集")
 
-    # 各タイムステップの選択結果を Seed として収集
     node_name_to_idx = {name: idx for idx, name in enumerate(qp.node_list)}
-    per_timestep_seeds: dict[str, set[int]] = {}
-    seed_union = set()
 
-    for r in results:
-        ts_seeds = set(r['selected_mv_indices'])
-        per_timestep_seeds[r['timestep']] = ts_seeds
-        seed_union.update(ts_seeds)
-
-    # 全候補数との比較
+    # 全候補数の計算
     all_candidates_with_utility = set()
     for i in range(len(base_u_ij)):
         for j in range(len(base_u_ij[i])):
             if base_u_ij[i][j] > 0:
                 all_candidates_with_utility.add(j)
 
+    per_timestep_seeds: dict[str, set[int]] = {}
+    seed_union = set()
+
+    if args.pruning_method != "step2_only":
+        # 各タイムステップの選択結果を Seed として収集
+        for r in results:
+            ts_seeds = set(r['selected_mv_indices'])
+            per_timestep_seeds[r['timestep']] = ts_seeds
+            seed_union.update(ts_seeds)
+    else:
+        # step2_only: 全候補をseedとして使用（タイムステップ別最適化をスキップ）
+        seed_union = set(all_candidates_with_utility)
+        for ts in timesteps:
+            per_timestep_seeds[ts] = set(all_candidates_with_utility)
+
     print_info(f"Seed 和集合: {len(seed_union)} / {len(all_candidates_with_utility)} "
                f"({100.0 * (1 - len(seed_union) / max(len(all_candidates_with_utility), 1)):.1f}% 削減)")
 
     # ========== 7b. WST 階層的絞り込み (Step 2-3) ==========
-    print_header("Step 2-3: WST 階層的絞り込み")
-    print_info(f"削減手法: {args.pruning_method}")
-    print_info("WSTローカルILP MIPGap: 5.0%")
-    
-    # 共通パラメータ
-    pruner_kwargs = dict(
-        node_list=qp.node_list,
-        u_ij=base_u_ij,
-        X=qp.X,
-        b_j=b_j_from_json,
-        B_max=B_max,
-        timesteps=timesteps,
-        migration_cost=migration_costs,
-        query_frequency_by_timestep=frequencies,
-        per_timestep_seeds=per_timestep_seeds,
-        qm=qp.qm,
-        position_node_id=getattr(qp, "position_node_id", {}),
-        deeplist=getattr(qp, "deeplist", []),
-        gurobi_output=0,
-        local_mip_gap=0.0001,
-    )
-    
-    # 削減手法の選択
     wst_start = time.time()
-    if args.pruning_method == "iterative":
-        print_info(f"反復的削減: 最大イテレーション数/ノード = {args.max_iterations}")
-        if args.use_parallel:
-            print_info(f"並列処理: 有効, ワーカー数 = {args.max_workers or 'CPU数'}")
-        pruner = UtilityPrunerIterative(
-            **pruner_kwargs,
-            max_iterations=args.max_iterations,
-            use_parallel=args.use_parallel,
-            max_workers=args.max_workers,
-        )
-    else:
-        pruner = UtilityPruner(**pruner_kwargs)
 
-    promising_candidates = pruner.prune_candidates()
-    pruning_info = pruner.get_pruning_info(promising_candidates)
-    wst_elapsed = time.time() - wst_start
+    if args.pruning_method == "step1_only":
+        print_header("Step 2-3: WST スキップ（step1_only モード）")
+        print_info("タイムステップ別最適化の結果をそのまま候補として使用")
+        promising_candidates = set(seed_union)
+        pruning_info = {
+            "reduction_rate": 1.0 - len(promising_candidates) / max(len(all_candidates_with_utility), 1),
+        }
+        wst_elapsed = 0.0
+    else:
+        print_header("Step 2-3: WST 階層的絞り込み")
+        print_info(f"削減手法: {args.pruning_method}")
+        print_info("WSTローカルILP MIPGap: 0.01%")
+
+        pruner_kwargs = dict(
+            node_list=qp.node_list,
+            u_ij=base_u_ij,
+            X=qp.X,
+            b_j=b_j_from_json,
+            B_max=B_max,
+            timesteps=timesteps,
+            migration_cost=migration_costs,
+            query_frequency_by_timestep=frequencies,
+            per_timestep_seeds=per_timestep_seeds,
+            qm=qp.qm,
+            position_node_id=getattr(qp, "position_node_id", {}),
+            deeplist=getattr(qp, "deeplist", []),
+            gurobi_output=0,
+            local_mip_gap=0.0001,
+        )
+
+        if args.pruning_method in ("iterative", "step2_only"):
+            print_info(f"反復的削減: 最大イテレーション数/ノード = {args.max_iterations}")
+            if args.use_parallel:
+                print_info(f"並列処理: 有効, ワーカー数 = {args.max_workers or 'CPU数'}")
+            pruner = UtilityPrunerIterative(
+                **pruner_kwargs,
+                max_iterations=args.max_iterations,
+                use_parallel=args.use_parallel,
+                max_workers=args.max_workers,
+            )
+        else:
+            pruner = UtilityPruner(**pruner_kwargs)
+
+        promising_candidates = pruner.prune_candidates()
+        pruning_info = pruner.get_pruning_info(promising_candidates)
+        wst_elapsed = time.time() - wst_start
+
+        print_info(f"WST 後の有望候補数: {len(promising_candidates)} / {len(all_candidates_with_utility)} "
+                   f"({pruning_info['reduction_rate']*100:.1f}% 削減)")
+        print_info(f"WST 実行時間: {wst_elapsed:.2f} 秒")
+
+        if args.pruning_method in ("iterative", "step2_only"):
+            print_info(f"総イテレーション数: {pruning_info['total_iterations']}")
+            print_info(f"平均イテレーション/ノード: {pruning_info['avg_iterations_per_node']:.2f}")
 
     reduction_rate = pruning_info["reduction_rate"]
-    print_info(f"WST 後の有望候補数: {len(promising_candidates)} / {len(all_candidates_with_utility)} "
-               f"({reduction_rate*100:.1f}% 削減)")
-    print_info(f"WST 実行時間: {wst_elapsed:.2f} 秒")
-    
-    # 反復的手法の場合、追加統計を表示
-    if args.pruning_method == "iterative":
-        print_info(f"総イテレーション数: {pruning_info['total_iterations']}")
-        print_info(f"平均イテレーション/ノード: {pruning_info['avg_iterations_per_node']:.2f}")
 
     # ========== 8. 全時刻での時間依存最適化 (Step 4) ==========
     print_header("Step 4: 全時刻での時間依存最適化 (候補フィルタリング済み)")
@@ -411,7 +433,7 @@ def main():
             "freq_suffix": args.freq_suffix,
             "num_timesteps": len(timesteps),
             "pruning_method": args.pruning_method,
-            "max_iterations": args.max_iterations if args.pruning_method == "iterative" else None,
+            "max_iterations": args.max_iterations if args.pruning_method in ("iterative", "step2_only") else None,
         },
         "candidate_selection": {
             "total_candidates": len(all_candidates_with_utility),
@@ -568,7 +590,7 @@ def main():
             "static_protected_mv_names": [],
             **({"total_iterations": pruning_info["total_iterations"],
                 "avg_iterations_per_node": pruning_info["avg_iterations_per_node"]}
-               if args.pruning_method == "iterative" else {}),
+               if args.pruning_method in ("iterative", "step2_only") else {}),
         },
         "time_breakdown": time_breakdown,
     }
