@@ -9,7 +9,6 @@
 
 import json
 import logging
-import random
 import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -34,46 +33,6 @@ class TimeDependentQueryExecutor:
         self.settings = settings
         self.db_config = settings.database
         self.connection = None
-        
-        # ノイズ注入設定
-        # noise_ratio: 各クエリ実行をノイズに差し替える確率 (0.0〜1.0)
-        # noise_pool: 事前ロード済みの書き換え前クエリSQL辞書 {query_stem: sql_text}
-        self.noise_ratio: float = 0.0
-        self.noise_pool: Dict[str, str] = {}
-    
-    def load_noise_pool(self, noise_dir: Path) -> int:
-        """ノイズ用クエリプール（書き換え前の元クエリ）をメモリに事前ロード
-        
-        ベンチマーク開始前に一括で読み込むことで、実行時のディスクI/Oを排除する。
-        ノイズ発生時には、書き換え済みクエリの代わりに同名の元クエリを実行する。
-        
-        Args:
-            noise_dir: 元クエリ（書き換え前）のSQLファイルが格納されているディレクトリ
-            
-        Returns:
-            ロードできたクエリ数
-        """
-        if not noise_dir.exists():
-            logger.warning(f"Noise directory not found: {noise_dir}")
-            return 0
-        
-        sql_files = sorted(noise_dir.glob("*.sql"))
-        if not sql_files:
-            logger.warning(f"No SQL files found in noise directory: {noise_dir}")
-            return 0
-        
-        self.noise_pool = {}
-        for sql_file in sql_files:
-            try:
-                with open(sql_file, 'r', encoding='utf-8') as f:
-                    sql_text = f.read().strip()
-                if sql_text:
-                    self.noise_pool[sql_file.stem] = sql_text
-            except Exception as e:
-                logger.warning(f"Failed to load noise query {sql_file.name}: {e}")
-        
-        logger.info(f"Loaded {len(self.noise_pool)} original (non-rewritten) queries from {noise_dir}")
-        return len(self.noise_pool)
     
     def _get_connection(self):
         """データベース接続を取得または作成
@@ -290,16 +249,11 @@ class TimeDependentQueryExecutor:
         Returns:
             実行結果の辞書
         """
-        # ノイズ注入が有効かどうかを判定
-        # ease_modeでは実行回数の定義が変わるため、ノイズ注入は無効とする
-        use_noise = (not ease_mode) and (self.noise_ratio > 0.0) and (len(self.noise_pool) > 0)
-        
         results = []
         total_time = 0.0
         total_executions = 0
         successful_executions = 0
         failed_executions = 0
-        noise_executions = 0  # ノイズとして実行した回数
         
         for query_file, frequency in zip(query_files, frequencies):
             # 頻度が0の場合はスキップ
@@ -376,49 +330,29 @@ class TimeDependentQueryExecutor:
             else:
                 # 通常モード: 頻度分だけクエリを実行
                 for exec_idx in range(execution_count):
-                    # ノイズ注入判定: noise_ratioの確率で書き換え前の元クエリに差し替える
-                    if use_noise and random.random() < self.noise_ratio:
-                        original_sql = self.noise_pool.get(query_file.stem)
-                        if original_sql is not None:
-                            actual_sql = original_sql
-                            actual_name = f"[NOISE] {query_file.stem} (original)"
-                            is_noise = True
-                        else:
-                            # 元クエリがプールに見つからない場合はノイズをスキップ
-                            actual_sql = query_sql
-                            actual_name = query_file.name
-                            is_noise = False
-                    else:
-                        actual_sql = query_sql
-                        actual_name = query_file.name
-                        is_noise = False
-                    
                     if verbose:
-                        label = "NOISE" if is_noise else f"{exec_idx+1}/{execution_count}"
-                        logger.info(f"  [{label}] Executing {actual_name}...")
+                        logger.info(f"  [{exec_idx+1}/{execution_count}] Executing {query_file.name}...")
                     
                     success, elapsed, error = self._execute_query(
-                        actual_sql,
-                        actual_name,
+                        query_sql, 
+                        query_file.name, 
                         timeout_minutes
                     )
                     
                     execution_times.append(elapsed)
                     total_time += elapsed
                     total_executions += 1
-                    if is_noise:
-                        noise_executions += 1
                     
                     if success:
                         query_successful += 1
                         successful_executions += 1
                         if verbose:
-                            logger.info(f"    ✓ Success ({elapsed:.2f}s){'  [noise]' if is_noise else ''}")
+                            logger.info(f"    ✓ Success ({elapsed:.2f}s)")
                     else:
                         query_failed += 1
                         failed_executions += 1
                         if verbose:
-                            logger.warning(f"    ✗ Failed ({elapsed:.2f}s): {error}{'  [noise]' if is_noise else ''}")
+                            logger.warning(f"    ✗ Failed ({elapsed:.2f}s): {error}")
                 
                 # クエリごとの集計
                 avg_time = sum(execution_times) / len(execution_times) if execution_times else 0.0
@@ -439,8 +373,6 @@ class TimeDependentQueryExecutor:
             'total_executions': total_executions,
             'successful_executions': successful_executions,
             'failed_executions': failed_executions,
-            'noise_executions': noise_executions,
-            'noise_ratio_applied': self.noise_ratio if use_noise else 0.0,
             'total_time': round(total_time, 5),
             'ease_mode': ease_mode
         }
