@@ -106,18 +106,18 @@ class CFPruner:
         
         # Build the Workload Summary Tree
         self.tree = WorkloadSummaryTree(self.T)
-        
+
         # Pre-compute candidates once (optimization to avoid redundant filtering)
         # This is the same logic as TimeDependentOptimizer.initialize_candidates()
         self.cand_j = self._initialize_candidates()
-        
+
         # Parallel processing settings
         self.use_parallel = use_parallel
         if max_workers is None:
             self.max_workers = multiprocessing.cpu_count()
         else:
             self.max_workers = max_workers
-        
+
         logger.info(
             f"CFPruner initialized: T={self.T}, J={self.J}, "
             f"candidates={len(self.cand_j)}, "
@@ -424,6 +424,51 @@ class CFPruner:
         
         return promising_mvs
     
+    def _aggregate_frequencies(self, node: TreeNode) -> Dict[str, List[float]]:
+        """Aggregate frequencies over the node's period into 3 representative timesteps.
+
+        Splits [min_idx, max_idx] into 3 equal partitions and sums frequencies
+        within each partition, assigning totals to min, median, max timesteps.
+        When the period is too short to partition (duration < 3), the original
+        per-timestep frequencies are used as-is.
+        """
+        start_idx = node.min_idx
+        end_idx = node.max_idx
+        duration = end_idx - start_idx
+
+        aggregated_freq: Dict[str, List[float]] = {}
+        num_queries = self.I
+
+        if duration < 3:
+            for t_idx in [node.min_idx, node.median_idx, node.max_idx]:
+                ts_name = self.timesteps[t_idx]
+                aggregated_freq[ts_name] = self.freq[ts_name]
+            return aggregated_freq
+
+        partition_size = duration / 3.0
+        b1 = int(start_idx + partition_size)
+        b2 = int(start_idx + partition_size * 2)
+
+        ranges = [
+            (start_idx, b1),
+            (b1, b2),
+            (b2, end_idx + 1),
+        ]
+        target_indices = [node.min_idx, node.median_idx, node.max_idx]
+
+        for range_idx, (r_start, r_end) in enumerate(ranges):
+            total_freqs = [0.0] * num_queries
+            for t in range(r_start, r_end):
+                if t >= len(self.timesteps):
+                    continue
+                ts_name = self.timesteps[t]
+                for q in range(num_queries):
+                    total_freqs[q] += self.freq[ts_name][q]
+            target_ts_name = self.timesteps[target_indices[range_idx]]
+            aggregated_freq[target_ts_name] = total_freqs
+
+        return aggregated_freq
+
     def _recursive_solve(
         self,
         node: TreeNode,
@@ -484,6 +529,9 @@ class CFPruner:
             fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
             logger.info(f"  → Right child: fixing max (t={node.max_idx}) with {len(parent_max_mvs)} MVs")
             
+        # Aggregate frequencies over the node's period (same as UtilityPruner)
+        aggregated_freq = self._aggregate_frequencies(node)
+
         # Create and solve local ILP
         local_optimizer = LocalILPOptimizer(
             node_list=self.node_list,
@@ -494,7 +542,7 @@ class CFPruner:
             timestep_indices=timestep_indices,
             all_timesteps=self.timesteps,
             migration_cost=self.migration_cost,
-            query_frequency_by_timestep=self.freq,
+            query_frequency_by_timestep=aggregated_freq,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
             candidate_indices=self.cand_j,  # ★ 事前計算された候補を渡す
             gurobi_output=self.gurobi_output,

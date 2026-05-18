@@ -133,6 +133,23 @@ echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
 python -u ${SCRIPT_DIR}/run_utility_optimization.py \
   --query-set cluster_55_53_combined \
   --freq-suffix _2h_x2 \

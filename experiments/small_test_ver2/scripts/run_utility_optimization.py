@@ -74,6 +74,40 @@ def build_weighted_u_ij(base_u_ij, frequencies_for_timestep, query_count):
     return weighted
 
 
+def run_single_timestep_greedy(timestep_name, common_kwargs, weighted_u_ij):
+    """単一タイムステップの貪欲候補収集を実行する（ILP最適化なし、オーバーサンプリングなし）.
+
+    Args:
+        timestep_name: タイムステップ名 (表示用)
+        common_kwargs: UtilityOptimizerV2 の共通引数
+        weighted_u_ij: 頻度重み付き u_ij
+
+    Returns:
+        結果の辞書
+    """
+    kwargs = {**common_kwargs, "u_ij": weighted_u_ij}
+    optimizer = UtilityOptimizerV2(**kwargs)
+
+    start_time = time.time()
+    z_j = optimizer.initialize_greedy(budget_multiplier=1.0)
+    elapsed = time.time() - start_time
+
+    selected_mv_indices = [j for j, v in enumerate(z_j) if v == 1]
+    selected_mvs = [optimizer.node_list[j] for j in selected_mv_indices]
+    total_size = sum(optimizer.b_j[j] for j in selected_mv_indices)
+
+    return {
+        "timestep": timestep_name,
+        "selected_mvs": selected_mvs,
+        "selected_mv_indices": selected_mv_indices,
+        "mv_count": len(selected_mv_indices),
+        "total_size": total_size,
+        "objective_value": None,
+        "execution_time": elapsed,
+        "iterations": 0,
+    }
+
+
 def run_single_timestep(timestep_name, common_kwargs, weighted_u_ij):
     """単一タイムステップの最適化を実行する.
 
@@ -125,9 +159,10 @@ def main():
     )
     parser.add_argument(
         "--pruning-method", type=str, default="basic",
-        choices=["basic", "iterative", "step1_only", "step2_only"],
+        choices=["basic", "iterative", "step1_only", "step2_only", "greedy"],
         help="候補削減手法 (basic: WSTシングルパス, iterative: WST反復, "
-             "step1_only: タイムステップ別最適化のみ, step2_only: WST反復のみ) (default: basic)"
+             "step1_only: タイムステップ別最適化のみ, step2_only: WST反復のみ, "
+             "greedy: 各時刻で貪欲収集のみ→WST) (default: basic)"
     )
     parser.add_argument(
         "--max-iterations", type=int, default=5,
@@ -224,6 +259,10 @@ def main():
     if args.pruning_method != "step2_only":
         results = []
         total_start = time.time()
+        is_greedy_mode = args.pruning_method == "greedy"
+
+        if is_greedy_mode:
+            print_info("貪欲モード: 各時刻でオーバーサンプリングなしの貪欲収集を実行")
 
         for t_idx, timestep in enumerate(timesteps):
             freq_list = frequencies[timestep]
@@ -236,12 +275,17 @@ def main():
             print_info(f"タイムステップ {timestep} ({t_idx+1}/{len(timesteps)}): "
                        f"アクティブクエリ {active_queries}/{query_count}")
 
-            result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
+            if is_greedy_mode:
+                result = run_single_timestep_greedy(timestep, common_kwargs, weighted_u_ij)
+            else:
+                result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
             results.append(result)
 
+            obj_str = (f"{result['objective_value']:.4f}"
+                       if result['objective_value'] is not None else "N/A")
             print_success(f"  MV数: {result['mv_count']}, "
                           f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
-                          f"目的関数値: {result['objective_value']:.4f}, "
+                          f"目的関数値: {obj_str}, "
                           f"実行時間: {result['execution_time']:.3f}秒")
 
         total_elapsed = time.time() - total_start
@@ -251,9 +295,11 @@ def main():
         print(f"  {'Timestep':>10s}  {'MV数':>6s}  {'ストレージ(MB)':>14s}  {'目的関数値':>16s}  {'実行時間(秒)':>12s}")
         print(f"  {'─'*10}  {'─'*6}  {'─'*14}  {'─'*16}  {'─'*12}")
         for r in results:
+            obj_str = (f"{r['objective_value']:>16.4f}"
+                       if r['objective_value'] is not None else f"{'N/A':>16s}")
             print(f"  {r['timestep']:>10s}  {r['mv_count']:>6d}  "
                   f"{r['total_size']/1024/1024:>14.2f}  "
-                  f"{r['objective_value']:>16.4f}  "
+                  f"{obj_str}  "
                   f"{r['execution_time']:>12.3f}")
         print(f"\n  合計実行時間: {total_elapsed:.3f}秒")
 
@@ -335,7 +381,7 @@ def main():
             local_mip_gap=0.0001,
         )
 
-        if args.pruning_method in ("iterative", "step2_only"):
+        if args.pruning_method in ("iterative", "greedy"):
             print_info(f"反復的削減: 最大イテレーション数/ノード = {args.max_iterations}")
             if args.use_parallel:
                 print_info(f"並列処理: 有効, ワーカー数 = {args.max_workers or 'CPU数'}")
@@ -356,7 +402,7 @@ def main():
                    f"({pruning_info['reduction_rate']*100:.1f}% 削減)")
         print_info(f"WST 実行時間: {wst_elapsed:.2f} 秒")
 
-        if args.pruning_method in ("iterative", "step2_only"):
+        if args.pruning_method == "iterative":
             print_info(f"総イテレーション数: {pruning_info['total_iterations']}")
             print_info(f"平均イテレーション/ノード: {pruning_info['avg_iterations_per_node']:.2f}")
 
@@ -433,7 +479,7 @@ def main():
             "freq_suffix": args.freq_suffix,
             "num_timesteps": len(timesteps),
             "pruning_method": args.pruning_method,
-            "max_iterations": args.max_iterations if args.pruning_method in ("iterative", "step2_only") else None,
+            "max_iterations": args.max_iterations if args.pruning_method == "iterative" else None,
         },
         "candidate_selection": {
             "total_candidates": len(all_candidates_with_utility),
@@ -590,7 +636,7 @@ def main():
             "static_protected_mv_names": [],
             **({"total_iterations": pruning_info["total_iterations"],
                 "avg_iterations_per_node": pruning_info["avg_iterations_per_node"]}
-               if args.pruning_method in ("iterative", "step2_only") else {}),
+               if args.pruning_method == "iterative" else {}),
         },
         "time_breakdown": time_breakdown,
     }

@@ -32,43 +32,59 @@ restart_container() {
 
 
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method step2_only \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.0 \
-#   --ease \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
-
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-  --query-set cluster_53_55_12_14_combined \
-  --freq-suffix _join2 \
+  --query-set cluster_55_53_combined_ex \
+  --freq-suffix _2h_x2_complex \
   --pruning-method step2_only \
   --storage-mb 100 \
+  
 # python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set job \
-#   --freq-suffix _24_mono \
+#   --query-set cluster_55_53_combined_ex \
+#   --freq-suffix _2h_x2 \
 #   --noise-ratio 0.0 \
 #   --ease \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_24_mono_2.txt
-echo "完了時刻: $(date)"
+#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
+#   --query-set job \
+#   --freq-suffix _24_mono \
+#   --pruning-method basic \
+#   --storage-mb 100 \
+# # python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
+# #   --query-set job \
+# #   --freq-suffix _24_mono \
+# #   --noise-ratio 0.0 \
+# #   --ease \
+# #   2>&1 | tee ${OUTPUT_DIR}/log_cluster_24_mono_2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set job \
+#   --optimization-mode dynamic \
+#   --exp-suffix _24_mono \
+#   --use-docker \
+#   --use-pruning \
+#   --b-max 100 \
+#   --recalc \
+#   2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+# echo "完了時刻: $(date)"
 
 # restart_container
 # echo ""
@@ -100,7 +116,6 @@ echo "完了時刻: $(date)"
 #   --freq-suffix _2h_x2 \
 #   --pruning-method step2_only \
 #   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
   
 # python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
 #   --query-set cluster_55_53_combined \

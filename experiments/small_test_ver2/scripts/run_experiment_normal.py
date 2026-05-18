@@ -1162,11 +1162,8 @@ class NormalModeExperiment:
             
             # プルーニング結果を適用（候補フィルタリング）
             if candidate_filter is not None:
-                # TimeDependentOptimizerはinitialize_candidates()で候補を絞るが、
-                # その後にさらにフィルタリングすることはできない
-                # そのため、プルーニング結果をcand_jに直接適用
                 original_cand = optimizer.cand_j.copy()
-                optimizer.cand_j = [j for j in optimizer.cand_j if j in candidate_filter]
+                optimizer.set_candidates([j for j in optimizer.cand_j if j in candidate_filter])
                 self.print_info(
                     f"  候補をフィルタリング: {len(original_cand)} -> {len(optimizer.cand_j)}"
                 )

@@ -53,20 +53,24 @@ class UtilityOptimizerV2(BaseILPOptimizer):
         if seed is not None:
             random.seed(seed)
 
-    def initialize_greedy(self) -> list[int]:
+    def initialize_greedy(self, budget_multiplier: float = 5.0) -> list[int]:
         """Initialize solution using deterministic greedy heuristic.
 
         Selects MVs in order of (utility - maintenance_cost) / size
-        (knapsack-style efficiency) until 3x storage budget is exhausted
-        (oversampling). The real constraint is enforced by the ILP solver.
+        (knapsack-style efficiency) until budget is exhausted.
+        The real constraint is enforced by the ILP solver.
+
+        Args:
+            budget_multiplier: Multiplier applied to B_max for the greedy budget.
+                               Default 5.0 (oversampling). Use 1.0 to disable
+                               oversampling and respect the actual storage budget.
 
         Returns:
             Binary list indicating initial MV selection
         """
         mv_list = [0] * self.s_num
 
-        # Oversampling: use 3x budget for greedy to widen candidate set
-        greedy_budget = self.B_max * 5.0
+        greedy_budget = self.B_max * budget_multiplier
 
         # Calculate total utility for each node: sum of u_ij over all queries
         U_j_max = {}
