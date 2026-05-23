@@ -54,6 +54,7 @@ class UtilityPruner:
         deeplist: List,
         gurobi_output: int = 0,
         local_mip_gap: Optional[float] = None,
+        inherit_parent_constraints: bool = True,
     ):
         """初期化.
 
@@ -72,6 +73,7 @@ class UtilityPruner:
             deeplist: 各クエリの深さ情報
             gurobi_output: Gurobi 出力レベル (0=off)
             local_mip_gap: WSTローカルILPに適用するGurobi相対ギャップ (例: 0.01=1%)
+            inherit_parent_constraints: 親ノードの境界制約を子ノードに伝播するか (default: True)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -84,6 +86,7 @@ class UtilityPruner:
         self.per_timestep_seeds = per_timestep_seeds
         self.gurobi_output = gurobi_output
         self.local_mip_gap = local_mip_gap
+        self.inherit_parent_constraints = inherit_parent_constraints
 
         # 近傍拡大用
         self.qm = qm
@@ -367,19 +370,20 @@ class UtilityPruner:
         # --- 固定境界の構築 (CFPruner と同一) ---
         fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
 
-        if is_left_child and parent_min_mvs:
-            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_left_child and parent_max_mvs:
-            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+        if self.inherit_parent_constraints:
+            if is_left_child and parent_min_mvs:
+                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_left_child and parent_max_mvs:
+                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
-        if is_right_child and parent_min_mvs:
-            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_right_child and parent_max_mvs:
-            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+            if is_right_child and parent_min_mvs:
+                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_right_child and parent_max_mvs:
+                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
         # --- 候補集合の構築 ---
         parent_boundary_mvs = set()

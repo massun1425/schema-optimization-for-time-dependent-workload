@@ -10,9 +10,11 @@ Usage:
 import argparse
 import copy
 import json
+import multiprocessing
 import pickle
 import time
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 # プロジェクトルートをsys.pathに追加
@@ -141,6 +143,25 @@ def run_single_timestep(timestep_name, common_kwargs, weighted_u_ij):
     }
 
 
+def _run_timestep_worker(task: tuple) -> tuple:
+    """各タイムステップ最適化のワーカー関数 (ProcessPoolExecutor 用).
+
+    モジュールレベルで定義することで pickle 可能にする。
+
+    Args:
+        task: (t_idx, timestep_name, common_kwargs, weighted_u_ij, is_greedy) のタプル
+
+    Returns:
+        (t_idx, result_dict) のタプル
+    """
+    t_idx, timestep_name, common_kwargs, weighted_u_ij, is_greedy = task
+    if is_greedy:
+        result = run_single_timestep_greedy(timestep_name, common_kwargs, weighted_u_ij)
+    else:
+        result = run_single_timestep(timestep_name, common_kwargs, weighted_u_ij)
+    return t_idx, result
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="時間依存利得ベース最適化（UtilityOptimizerV2 × 各タイムステップ）"
@@ -169,16 +190,24 @@ def main():
         help="反復的削減の最大イテレーション数/ノード (default: 5)"
     )
     parser.add_argument(
+        "--use-parallel-step1", action="store_true",
+        help="Step 1（各タイムステップ最適化）の並列処理を有効にする (default: False)"
+    )
+    parser.add_argument(
         "--use-parallel", action="store_true",
         help="WSTノードの並列処理を有効にする (default: False)"
     )
     parser.add_argument(
         "--max-workers", type=int, default=None,
-        help="並列処理の最大ワーカー数 (default: CPU数)"
+        help="並列処理の最大ワーカー数（Step 1・WST 共通） (default: CPU数)"
     )
     parser.add_argument(
         "--gurobi-output", type=int, default=0, choices=[0, 1],
         help="Gurobiログ出力 (0=off, 1=on, default: 0)"
+    )
+    parser.add_argument(
+        "--no-wst-parent-constraints", action="store_true",
+        help="WSTにおける親ノードからの境界制約伝播を無効化する (default: 有効)"
     )
     args = parser.parse_args()
 
@@ -260,33 +289,68 @@ def main():
         results = []
         total_start = time.time()
         is_greedy_mode = args.pruning_method == "greedy"
+        max_workers_step1 = args.max_workers or multiprocessing.cpu_count()
 
         if is_greedy_mode:
             print_info("貪欲モード: 各時刻でオーバーサンプリングなしの貪欲収集を実行")
 
-        for t_idx, timestep in enumerate(timesteps):
-            freq_list = frequencies[timestep]
-            weighted_u_ij = build_weighted_u_ij(base_u_ij, freq_list, query_count)
+        if args.use_parallel_step1:
+            print_info(f"Step 1 並列処理: ワーカー数 = {max_workers_step1}")
 
-            # 頻度の統計
-            nonzero_freq = [f for f in freq_list[:query_count] if f > 0]
-            active_queries = len(nonzero_freq)
+            # 全タイムステップ分のタスクを事前構築
+            tasks = []
+            for t_idx, timestep in enumerate(timesteps):
+                freq_list = frequencies[timestep]
+                weighted_u_ij = build_weighted_u_ij(base_u_ij, freq_list, query_count)
+                tasks.append((t_idx, timestep, common_kwargs, weighted_u_ij, is_greedy_mode))
 
-            print_info(f"タイムステップ {timestep} ({t_idx+1}/{len(timesteps)}): "
-                       f"アクティブクエリ {active_queries}/{query_count}")
+            ordered_results = [None] * len(timesteps)
+            completed = 0
 
-            if is_greedy_mode:
-                result = run_single_timestep_greedy(timestep, common_kwargs, weighted_u_ij)
-            else:
-                result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
-            results.append(result)
+            with ProcessPoolExecutor(max_workers=max_workers_step1) as executor:
+                futures = {
+                    executor.submit(_run_timestep_worker, task): task[0]
+                    for task in tasks
+                }
+                for future in as_completed(futures):
+                    t_idx, result = future.result()
+                    ordered_results[t_idx] = result
+                    completed += 1
 
-            obj_str = (f"{result['objective_value']:.4f}"
-                       if result['objective_value'] is not None else "N/A")
-            print_success(f"  MV数: {result['mv_count']}, "
-                          f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
-                          f"目的関数値: {obj_str}, "
-                          f"実行時間: {result['execution_time']:.3f}秒")
+                    obj_str = (f"{result['objective_value']:.4f}"
+                               if result['objective_value'] is not None else "N/A")
+                    print_success(f"タイムステップ {result['timestep']} 完了 "
+                                  f"({completed}/{len(timesteps)}): "
+                                  f"MV数: {result['mv_count']}, "
+                                  f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
+                                  f"目的関数値: {obj_str}, "
+                                  f"実行時間: {result['execution_time']:.3f}秒")
+
+            results = ordered_results
+
+        else:
+            for t_idx, timestep in enumerate(timesteps):
+                freq_list = frequencies[timestep]
+                weighted_u_ij = build_weighted_u_ij(base_u_ij, freq_list, query_count)
+
+                nonzero_freq = [f for f in freq_list[:query_count] if f > 0]
+                active_queries = len(nonzero_freq)
+
+                print_info(f"タイムステップ {timestep} ({t_idx+1}/{len(timesteps)}): "
+                           f"アクティブクエリ {active_queries}/{query_count}")
+
+                if is_greedy_mode:
+                    result = run_single_timestep_greedy(timestep, common_kwargs, weighted_u_ij)
+                else:
+                    result = run_single_timestep(timestep, common_kwargs, weighted_u_ij)
+                results.append(result)
+
+                obj_str = (f"{result['objective_value']:.4f}"
+                           if result['objective_value'] is not None else "N/A")
+                print_success(f"  MV数: {result['mv_count']}, "
+                              f"ストレージ: {result['total_size']/1024/1024:.2f} MB, "
+                              f"目的関数値: {obj_str}, "
+                              f"実行時間: {result['execution_time']:.3f}秒")
 
         total_elapsed = time.time() - total_start
 
@@ -364,6 +428,9 @@ def main():
         print_info(f"削減手法: {args.pruning_method}")
         print_info("WSTローカルILP MIPGap: 0.01%")
 
+        inherit_constraints = not args.no_wst_parent_constraints
+        print_info(f"WST親制約伝播: {'有効' if inherit_constraints else '無効'}")
+
         pruner_kwargs = dict(
             node_list=qp.node_list,
             u_ij=base_u_ij,
@@ -379,6 +446,7 @@ def main():
             deeplist=getattr(qp, "deeplist", []),
             gurobi_output=0,
             local_mip_gap=0.0001,
+            inherit_parent_constraints=inherit_constraints,
         )
 
         if args.pruning_method in ("iterative", "greedy"):

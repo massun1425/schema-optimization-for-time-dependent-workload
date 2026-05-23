@@ -1007,9 +1007,9 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
-    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', b_max=None):
+    def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', b_max=None, inherit_parent_constraints=True):
         """フェーズ6: MV最適化
-        
+
         Args:
             mode: 'static', 'dynamic', または 'adaptive' (デフォルト: 'dynamic')
             use_pruning: プルーニングを使用するかどうか (デフォルト: False)
@@ -1018,6 +1018,7 @@ class NormalModeExperiment:
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
             use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
             static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
+            inherit_parent_constraints: WSTにおける親ノードからの境界制約伝播 (デフォルト: True)
         """
         # 最初にモードで分岐
         if mode == 'static':
@@ -1049,6 +1050,7 @@ class NormalModeExperiment:
             self.print_info(f"  プルーニングを使用します（{mode_str}実行）")
             if use_static_protection:
                 self.print_info(f"  静的保護: 有効（ハイブリッドアプローチ）")
+            self.print_info(f"  WST親制約伝播: {'有効' if inherit_parent_constraints else '無効'}")
             if pruning_parallel:
                 import multiprocessing
                 workers = pruning_workers or multiprocessing.cpu_count()
@@ -1122,6 +1124,7 @@ class NormalModeExperiment:
                     gurobi_output=0,  # プルーニング中は静かに
                     use_parallel=pruning_parallel,
                     max_workers=pruning_workers,
+                    inherit_parent_constraints=inherit_parent_constraints,
                 )
                 
                 promising_mvs = pruner.prune_candidates(use_static_protection=use_static_protection)
@@ -2858,9 +2861,9 @@ class NormalModeExperiment:
             executor.close()
 
     
-    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None):
+    def run_post_optimization_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None, inherit_parent_constraints=True):
         """最適化以降のフェーズを実行 (Phase 6-9)
-        
+
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
             use_pruning: CF Pruningを使用するか (デフォルト: False)
@@ -2869,22 +2872,24 @@ class NormalModeExperiment:
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
             use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
             static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
+            inherit_parent_constraints: WSTにおける親ノードからの境界制約伝播 (デフォルト: True)
         """
         self.print_header(f"最適化以降のフェーズ実行 ({optimization_mode}モード)")
-        
+
         # 全体の開始時刻を記録
         total_start_time = time.time()
-        
+
         # 最適化フェーズ（モードに応じて選択）
         optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(
-            mode=optimization_mode, 
+            mode=optimization_mode,
             use_pruning=use_pruning,
             pruning_parallel=pruning_parallel,
             pruning_workers=pruning_workers,
             static_timestep=static_timestep,
             use_static_protection=use_static_protection,
             static_algorithm=static_algorithm,
-            b_max=b_max
+            b_max=b_max,
+            inherit_parent_constraints=inherit_parent_constraints,
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
@@ -2922,9 +2927,9 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None, inherit_parent_constraints=True):
         """全フェーズを順次実行
-        
+
         Args:
             optimization_mode: 'static' または 'dynamic' (デフォルト: 'dynamic')
             use_pruning: CF Pruningを使用するか (デフォルト: False)
@@ -2932,15 +2937,15 @@ class NormalModeExperiment:
             pruning_workers: 並列実行時のワーカー数 (デフォルト: CPUコア数)
             static_timestep: 静的最適化時のタイムステップ ('first' or 'last')
             use_static_protection: 静的最適化のMVを聖域として保護する (デフォルト: False)
+            inherit_parent_constraints: WSTにおける親ノードからの境界制約伝播 (デフォルト: True)
         """
         self.print_header("小規模実験（通常モード） - 全フェーズ実行")
-        
+
         success = True
-        
+
         # 全体の開始時刻を記録
         total_start_time = time.time()
-        
-        
+
         # 基本フェーズ（モードに依存しない）
         basic_phases = [
             (1, "EXPLAIN JSON生成", self.phase1_generate_explain_json),
@@ -2949,16 +2954,17 @@ class NormalModeExperiment:
             (4, "マイグレーションプラン列挙", self.phase4_enumerate_migration_plans),
             (5, "マイグレーションコスト計算", self.phase5_calculate_migration_costs),
         ]
-        
+
         # 最適化フェーズ（モードに応じて選択）
         optimization_phase = (6, "MV最適化", lambda: self.phase6_optimize(
-            mode=optimization_mode, 
+            mode=optimization_mode,
             use_pruning=use_pruning,
             pruning_parallel=pruning_parallel,
             pruning_workers=pruning_workers,
             static_timestep=static_timestep,
             use_static_protection=use_static_protection,
-            b_max=b_max
+            b_max=b_max,
+            inherit_parent_constraints=inherit_parent_constraints,
         ))
         
         # SQL生成・クエリ書き換え・ベンチマークフェーズ
@@ -3154,7 +3160,12 @@ def main():
         default=100.0,
         help='ストレージ予算 B_max（MB単位、デフォルト: 100）。フェーズ6/6b/6cで使用'
     )
-    
+    parser.add_argument(
+        '--no-wst-parent-constraints',
+        action='store_true',
+        help='WSTにおける親ノードからの境界制約伝播を無効化する (default: 有効)'
+    )
+
     # Docker/Local switching arguments
     add_docker_args(parser)
     
@@ -3174,7 +3185,7 @@ def main():
     
     if args.phase == 'all':
         success = exp.run_all_phases(
-            optimization_mode=args.optimization_mode, 
+            optimization_mode=args.optimization_mode,
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
@@ -3182,11 +3193,12 @@ def main():
             use_static_protection=args.static_protection,
             noise_ratio=args.noise_ratio,
             noise_query_dir=args.noise_query_dir,
-            b_max=args.b_max
+            b_max=args.b_max,
+            inherit_parent_constraints=not args.no_wst_parent_constraints,
         )
     elif args.phase == 'post-opt':
         success = exp.run_post_optimization_phases(
-            optimization_mode=args.optimization_mode, 
+            optimization_mode=args.optimization_mode,
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
@@ -3196,7 +3208,8 @@ def main():
             ease_mode=args.ease,
             noise_ratio=args.noise_ratio,
             noise_query_dir=args.noise_query_dir,
-            b_max=args.b_max
+            b_max=args.b_max,
+            inherit_parent_constraints=not args.no_wst_parent_constraints,
         )
     elif args.phase == '0':
         success = exp.phase0_setup()
@@ -3217,13 +3230,14 @@ def main():
         )
     elif args.phase == '6':
         success = exp.phase6_optimize(
-            mode=args.optimization_mode, 
+            mode=args.optimization_mode,
             use_pruning=args.use_pruning,
             pruning_parallel=args.pruning_parallel,
             pruning_workers=args.pruning_workers,
             static_timestep=args.static_timestep,
             use_static_protection=args.static_protection,
-            b_max=args.b_max
+            b_max=args.b_max,
+            inherit_parent_constraints=not args.no_wst_parent_constraints,
         )
     elif args.phase == '6.5':
         success = exp.phase6b_optimize_static(timestep_position=args.static_timestep, static_algorithm=args.static_algorithm, b_max=args.b_max)

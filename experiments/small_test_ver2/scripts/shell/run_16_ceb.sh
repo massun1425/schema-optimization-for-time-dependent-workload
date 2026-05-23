@@ -30,84 +30,6 @@ restart_container() {
 
 
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.1 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.1 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
-
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.05 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.05 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
-
-
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
@@ -115,16 +37,15 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set cluster_55_53_combined \
+  --query-set cluster_55_53_combined_ex \
   --exp-suffix _2h_x2 \
   --optimization-mode static \
   --static-timestep average \
   --static-algorithm utility \
-  --noise-ratio 0.0 \
-  --b-max 1536 \
+  --noise-ratio 0.1 \
+  --b-max 100 \
   --use-docker \
   --recalc \
-  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
 echo "完了時刻: $(date)"
 
@@ -135,11 +56,167 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set cluster_55_53_combined \
+  --query-set cluster_55_53_combined_ex \
   --optimization-mode dynamic \
   --exp-suffix _2h_x2 \
   --use-docker \
   --use-pruning \
+  --noise-ratio 0.1 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
+
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.05 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.05 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
+
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set cluster_55_53_combined_ex \
+#   --exp-suffix _2h_x2 \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --noise-ratio 0.0 \
+#   --b-max 100 \
+#   --use-docker \
+#   --recalc \
+#   --ease \
+#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set cluster_55_53_combined_ex \
+#   --optimization-mode dynamic \
+#   --exp-suffix _2h_x2 \
+#   --use-docker \
+#   --use-pruning \
+#   --b-max 100 \
+#   --recalc \
+#   2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+# echo "完了時刻: $(date)"
+
+
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode adaptive \
+  --window-size 2 \
+  --noise-ratio 0.0 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_2h_x2_2.txt
+echo "完了時刻: $(date)"
+
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode adaptive \
+  --window-size 4 \
+  --noise-ratio 0.0 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_2h_x2_4.txt
+echo "完了時刻: $(date)"
+
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.3 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.3 \
   --b-max 100 \
   --recalc \
   2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
@@ -150,231 +227,187 @@ echo ""
 echo "------------------------------------------------------------------------"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
-python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-  --query-set cluster_55_53_combined \
-  --freq-suffix _2h_x2 \
-  --pruning-method iterative \
-  --storage-mb 1536 \
-  2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-  --query-set cluster_55_53_combined \
-  --freq-suffix _2h_x2 \
-  --noise-ratio 0.0 \
-  --ease \
-  2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.15 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.15 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.2 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.2 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
 echo "完了時刻: $(date)"
 
 
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.25 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_53 \
-#   --optimization-mode dynamic \
-#   --exp-suffix _instance53 \
-#   --use-pruning \
-#   --pruning-parallel \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_instance53.txt
-# echo "完了時刻: $(date)"
-
-  restart_container
-  echo ""
-  echo "------------------------------------------------------------------------"
-  echo "開始時刻: $(date)"
-  echo "------------------------------------------------------------------------"
-  python ${SCRIPT_DIR}/run_experiment_normal.py \
-    --phase post-opt \
-    --query-set cluster_55_53_combined \
-    --exp-suffix _2h_x2 \
-    --optimization-mode adaptive \
-    --window-size 2 \
-    --noise-ratio 0.0 \
-    --b-max 1536 \
-    --use-docker \
-    --recalc \
-    --ease \
-    2>&1 | tee ${OUTPUT_DIR}/log_adaptive_2h_x2_2.txt
-  echo "完了時刻: $(date)"
-
-
-  restart_container
-  echo ""
-  echo "------------------------------------------------------------------------"
-  echo "開始時刻: $(date)"
-  echo "------------------------------------------------------------------------"
-  python ${SCRIPT_DIR}/run_experiment_normal.py \
-    --phase post-opt \
-    --query-set cluster_55_53_combined \
-    --exp-suffix _2h_x2 \
-    --optimization-mode adaptive \
-    --window-size 4 \
-    --noise-ratio 0.0 \
-    --b-max 1536 \
-    --use-docker \
-    --recalc \
-    --ease \
-    2>&1 | tee ${OUTPUT_DIR}/log_adaptive_2h_x2_4.txt
-  echo "完了時刻: $(date)"
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.25 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
 
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.3 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.35 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.3 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.35 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.15 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.4 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.15 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.2 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.2 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase post-opt \
-#   --query-set cluster_55_53_combined \
-#   --exp-suffix _2h_x2 \
-#   --optimization-mode static \
-#   --static-timestep average \
-#   --static-algorithm utility \
-#   --noise-ratio 0.25 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
-# echo "完了時刻: $(date)"
-
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --pruning-method iterative \
-#   --storage-mb 100 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_1.txt
-  
-# python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
-#   --query-set cluster_55_53_combined \
-#   --freq-suffix _2h_x2 \
-#   --noise-ratio 0.25 \
-#   2>&1 | tee ${OUTPUT_DIR}/log_cluster_2h_x2_2.txt
-# echo "完了時刻: $(date)"
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --optimization-mode dynamic \
+  --exp-suffix _2h_x2 \
+  --use-docker \
+  --use-pruning \
+  --noise-ratio 0.4 \
+  --b-max 100 \
+  --recalc \
+  2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+echo "完了時刻: $(date)"
 
 echo ""
 echo "========================================================================"

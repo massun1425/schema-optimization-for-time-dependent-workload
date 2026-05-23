@@ -32,16 +32,16 @@ restart_container() {
 
 
 
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python -u ${SCRIPT_DIR}/run_utility_optimization.py \
-  --query-set cluster_55_53_combined_ex \
-  --freq-suffix _2h_x2_complex \
-  --pruning-method step2_only \
-  --storage-mb 100 \
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python -u ${SCRIPT_DIR}/run_utility_optimization.py \
+#   --query-set cluster_55_53_combined_ex \
+#   --freq-suffix _2h_x2_complex \
+#   --pruning-method step2_only \
+#   --storage-mb 100 \
   
 # python -u ${SCRIPT_DIR}/run_utility_benchmark.py \
 #   --query-set cluster_55_53_combined_ex \
@@ -76,15 +76,36 @@ python -u ${SCRIPT_DIR}/run_utility_optimization.py \
 # echo "------------------------------------------------------------------------"
 # python ${SCRIPT_DIR}/run_experiment_normal.py \
 #   --phase post-opt \
-#   --query-set job \
+#   --query-set cluster_55_53_combined_ex \
 #   --optimization-mode dynamic \
-#   --exp-suffix _24_mono \
+#   --exp-suffix _2h_x2 \
+#   --no-wst-parent-constraints \
 #   --use-docker \
 #   --use-pruning \
 #   --b-max 100 \
-#   --recalc \
-#   2>&1 | tee ${OUTPUT_DIR}/log_2h_2x.txt
+#   --recalc 
 # echo "完了時刻: $(date)"
+
+restart_container
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase post-opt \
+  --query-set cluster_55_53_combined_ex \
+  --exp-suffix _2h_x2 \
+  --optimization-mode static \
+  --static-timestep average \
+  --static-algorithm utility \
+  --noise-ratio 0.0 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_average_cluster_2h_x2.txt
+echo "完了時刻: $(date)"
+
 
 # restart_container
 # echo ""
