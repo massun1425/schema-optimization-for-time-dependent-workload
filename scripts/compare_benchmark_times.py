@@ -6,7 +6,7 @@ from pathlib import Path
 from collections import defaultdict
 
 # Paths
-base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2/time_dependent_output/job")
+base_dir = Path(__file__).parent.parent / "time_dependent_output" / "job"
 dynamic_file = base_dir / "benchmark_results_dynamic_16_mono.json"
 static_file = base_dir / "benchmark_results_static_16_mono.json"
 

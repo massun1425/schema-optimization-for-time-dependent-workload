@@ -3,8 +3,8 @@
 使い方:
     python3 filter_timeout_queries.py \\
         --benchmark-json <sequential_benchmark_results.json> \\
-        --src-dir  experiments/small_test_ver2/01_queries/cluster_55_25_26_3 \\
-        --out-dir  experiments/small_test_ver2/01_queries/cluster_55_25_26_3_filtered \\
+        --src-dir  01_queries/cluster_55_25_26_3 \\
+        --out-dir  01_queries/cluster_55_25_26_3_filtered \\
         --freq-name frequency_time_dependent_cluster_55.json
 
 タイムアウト判定:

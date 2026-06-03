@@ -5,9 +5,9 @@ IMDBデータベースセットアップスクリプト
 JOBベンチマーク用のIMDBデータベースをセットアップします。
 
 使い方:
-    python experiments/small_test_ver2/scripts/setup_imdb.py --download
-    python experiments/small_test_ver2/scripts/setup_imdb.py --create-db
-    python experiments/small_test_ver2/scripts/setup_imdb.py --all
+    python scripts/setup_imdb.py --download
+    python scripts/setup_imdb.py --create-db
+    python scripts/setup_imdb.py --all
 
 オプション:
     --download      : IMDBデータのダウンロードと展開
@@ -27,7 +27,7 @@ import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -493,7 +493,7 @@ def main():
         print("\n次のステップ:")
         print("1. config.yamlのdatabase.databaseを'imdbload'に変更")
         print("2. 実験スクリプトを実行:")
-        print("   python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all")
+        print("   python scripts/run_experiment_normal.py --phase all")
 
 
 if __name__ == "__main__":

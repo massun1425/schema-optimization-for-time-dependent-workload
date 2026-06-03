@@ -7,8 +7,8 @@ This script loads data from:
 
 And performs ILP optimization considering time-varying workloads
 and migration costs between timesteps.
-python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set job
-python experiments/small_test_ver2/scripts/run_time_dependent_with_migration.py --query-set job --migration-file simple_migration_costs.json
+python scripts/run_time_dependent_with_migration.py --query-set job
+python scripts/run_time_dependent_with_migration.py --query-set job --migration-file simple_migration_costs.json
 """
 
 import json

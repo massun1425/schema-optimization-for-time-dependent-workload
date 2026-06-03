@@ -10,7 +10,7 @@
     
     例:
     python export_total_time_to_csv.py \
-        experiments/small_test_ver2/time_dependent_output/job/result_1G \
+        time_dependent_output/job/result_1G \
         total_execution_times.csv
 """
 
@@ -182,7 +182,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_500M_originalcost_10')
+        result_dir = Path('time_dependent_output/job/result_500M_originalcost_10')
         output_filename = 'total_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])

@@ -12,7 +12,7 @@ Approach:
     This correctly accounts for migration costs from current state to next state.
 
 Usage:
-    python experiments/small_test_ver2/scripts/sliding_window_optimizer.py \\
+    python scripts/sliding_window_optimizer.py \\
         --query-set job
 """
 
@@ -311,10 +311,10 @@ def main():
     
     # Add project root to path
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
+    project_root = os.path.dirname(script_dir)
     sys.path.insert(0, project_root)
-    
-    from experiments.small_test_ver2.core.io_loaders import (
+
+    from core.io_loaders import (
         load_qp_inputs,
         load_timesteps_and_frequencies,
         load_full_build_costs_and_sizes,
@@ -335,7 +335,7 @@ def main():
     args = parser.parse_args()
     
     # Paths
-    base_dir = os.path.dirname(script_dir)  # experiments/small_test_ver2
+    base_dir = os.path.dirname(script_dir)  # project root
     
     logger.info("=" * 80)
     logger.info("Sliding Window Adaptive MV Optimization")

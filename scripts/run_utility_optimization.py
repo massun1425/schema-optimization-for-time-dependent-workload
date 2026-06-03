@@ -4,7 +4,7 @@
 各時刻ごとに独立して実行する。
 
 Usage:
-    python3 experiments/small_test_ver2/scripts/run_utility_optimization.py --query-set job --storage-mb 1024 --freq-suffix _16_1_10
+    python3 scripts/run_utility_optimization.py --query-set job --storage-mb 1024 --freq-suffix _16_1_10
 """
 
 import argparse
@@ -18,7 +18,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 # プロジェクトルートをsys.pathに追加
-project_root = Path(__file__).resolve().parent.parent.parent.parent
+project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
@@ -211,7 +211,7 @@ def main():
     )
     args = parser.parse_args()
 
-    exp_dir = project_root / "experiments" / "small_test_ver2"
+    exp_dir = project_root
     query_set = args.query_set
     B_max = float(args.storage_mb * 1024 * 1024)
 

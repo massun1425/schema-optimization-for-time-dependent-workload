@@ -8,8 +8,8 @@ simple_migration_costs.json の utility 値で pickle の u_ij を置換し、
 頻度による重み付けは行わない。
 
 Usage:
-    python3 experiments/small_test_ver2/scripts/run_utility_search.py --query-set job
-    python3 experiments/small_test_ver2/scripts/run_utility_search.py --query-set job --storage-mb 200
+    python3 scripts/run_utility_search.py --query-set job
+    python3 scripts/run_utility_search.py --query-set job --storage-mb 200
 """
 
 import argparse
@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 # プロジェクトルートを追加
-project_root = Path(__file__).resolve().parent.parent.parent.parent
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 # 実験ディレクトリも追加（io_loaders用）
@@ -89,7 +89,7 @@ def main():
     )
     args = parser.parse_args()
 
-    exp_dir = project_root / "experiments" / "small_test_ver2"
+    exp_dir = project_root
     query_set = args.query_set
     B_max = float(args.storage_mb * 1024 * 1024)
 

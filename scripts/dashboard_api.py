@@ -5,7 +5,7 @@ MV最適化ダッシュボード - FastAPI バックエンド
 HTML版ダッシュボードにデータを提供するAPIサーバー。
 
 起動方法:
-    cd experiments/small_test_ver2/scripts
+    cd scripts
     source ../../../.venv/bin/activate
     uvicorn dashboard_api:app --host 0.0.0.0 --port 8000 --reload
 
@@ -27,7 +27,7 @@ from typing import List, Dict, Any, Optional
 # プロジェクトルートをPythonパスに追加（pickle内のsrcモジュール解決用）
 SCRIPT_DIR = Path(__file__).resolve().parent
 EXP_DIR = SCRIPT_DIR.parent
-PROJECT_ROOT = EXP_DIR.parent.parent  # experiments/small_test_ver2 -> experiments -> project root
+PROJECT_ROOT = EXP_DIR  # scripts/ -> project root
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

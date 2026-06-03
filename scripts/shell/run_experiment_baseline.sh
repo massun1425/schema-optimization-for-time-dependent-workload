@@ -5,8 +5,8 @@
 
 set -e  # エラーが発生したら停止
 
-SCRIPT_DIR="experiments/small_test_ver2/scripts"
-OUTPUT_DIR="experiments/small_test_ver2/time_dependent_output/job"
+SCRIPT_DIR="scripts"
+OUTPUT_DIR="time_dependent_output/job"
 
 echo "========================================================================"
 echo "実験開始: $(date)"

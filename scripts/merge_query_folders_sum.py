@@ -7,10 +7,10 @@
 - 両方にあるクエリ: freq_dir1 + freq_dir2 (要素ごとの和)
 
 使い方:
-    python3 experiments/small_test_ver2/scripts/merge_query_folders_sum.py \
-        --dir1 experiments/small_test_ver2/01_queries/cluster_55_join_12 \
-        --dir2 experiments/small_test_ver2/01_queries/cluster_55_join_05_25 \
-        --out  experiments/small_test_ver2/01_queries/cluster_55_join_12_25 \
+    python3 scripts/merge_query_folders_sum.py \
+        --dir1 01_queries/cluster_55_join_12 \
+        --dir2 01_queries/cluster_55_join_05_25 \
+        --out  01_queries/cluster_55_join_12_25 \
         --freq-name frequency_time_dependent.json
 """
 

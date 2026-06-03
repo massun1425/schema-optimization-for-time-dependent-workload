@@ -9,7 +9,7 @@ from pathlib import Path
 import psycopg2
 
 # Add project root to path
-sys.path.insert(0, '/Users/masudakanji/lab/mv-query-optimization')
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import Settings
 
@@ -19,7 +19,7 @@ db_name = settings.database.database
 db_user = settings.database.user
 
 # Paths
-base_dir = Path('/Users/masudakanji/lab/mv-query-optimization/experiments/small_test_ver2')
+base_dir = Path(__file__).parent.parent
 plans_path = base_dir / '04_migration/job/simple_migration_plans.json'
 costs_path = base_dir / '04_migration/job/simple_migration_costs.json'
 

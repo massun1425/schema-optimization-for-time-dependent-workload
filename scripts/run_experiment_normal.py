@@ -26,7 +26,7 @@ logging.basicConfig(
 )
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -43,7 +43,7 @@ from utils.postgres_executor import PostgresExecutor, add_docker_args
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = "experiments/small_test_ver2", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False, window_size: int = 4):
+    def __init__(self, exp_dir: str = ".", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False, window_size: int = 4):
         """初期化
         
         Args:
@@ -751,7 +751,7 @@ class NormalModeExperiment:
             return False
     
 # フェーズ2.5のみ実行
-# python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2.5 --query-set job
+# python scripts/run_experiment_normal.py --phase 2.5 --query-set job
 
     def phase3_annotate_json(self):
         """フェーズ3: JSONファイルへのノードID付加"""
@@ -3031,7 +3031,7 @@ def main():
     parser.add_argument(
         '--config',
         type=str,
-        default='experiments/small_test_ver2',
+        default='.',
         help='実験ディレクトリのパス（設定ファイルは不要）'
     )
     parser.add_argument(
@@ -3146,7 +3146,7 @@ def main():
         '--noise-query-dir',
         type=str,
         default=None,
-        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: experiments/small_test_ver2/01_queries/job）'
+        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: 01_queries/job）'
     )
     parser.add_argument(
         '--window-size',

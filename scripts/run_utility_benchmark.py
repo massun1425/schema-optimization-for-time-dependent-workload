@@ -7,13 +7,13 @@ td_mv_optimization_result_utility{freq_suffix}.json を入力として、
 フェーズ 7〜9（SQL 生成・クエリ書き換え・ベンチマーク実行）を行う。
 
 使い方:
-    python experiments/small_test_ver2/scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1
+    python scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1
     
     # 簡易ベンチマーク（各クエリ1回 + 頻度掛け）
-    python experiments/small_test_ver2/scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1 --ease
+    python scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1 --ease
     
     # フェーズ指定
-    python experiments/small_test_ver2/scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1 --phase 7
+    python scripts/run_utility_benchmark.py --query-set job --freq-suffix _16_1 --phase 7
 """
 
 import argparse
@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -578,7 +578,7 @@ def main():
         help='実行するフェーズ (all: 7-9 全実行, 7: SQL 生成, 8: クエリ書き換え, 9: ベンチマーク)'
     )
     parser.add_argument(
-        '--config', type=str, default='experiments/small_test_ver2',
+        '--config', type=str, default='.',
         help='実験ディレクトリのパス'
     )
     parser.add_argument(
@@ -603,7 +603,7 @@ def main():
         '--noise-query-dir',
         type=str,
         default=None,
-        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: experiments/small_test_ver2/01_queries/job）'
+        help='ノイズ用クエリが格納されているディレクトリ（デフォルト: 01_queries/job）'
     )
 
     # Docker/Local switching

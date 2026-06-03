@@ -7,10 +7,10 @@ accurate costs that account for JOIN complexity (especially Nested Loop Joins).
 
 Usage (from project root: /home/masuda/projects/mv-query-optimization):
     # Basic usage (outputs to simple_migration_costs_recalc.json)
-    python3 experiments/small_test_ver2/scripts/recalculate_costs.py --query-set job
+    python3 scripts/recalculate_costs.py --query-set job
     
     # Overwrite original file
-    python3 experiments/small_test_ver2/scripts/recalculate_costs.py --query-set job --overwrite
+    python3 scripts/recalculate_costs.py --query-set job --overwrite
 """
 
 import json
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 # Add project root to path for pickle deserialization (pickle contains references to src.*)
-PROJECT_ROOT = Path("/home/masuda/projects/mv-query-optimization")
+PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -317,7 +317,7 @@ def main():
     args = parser.parse_args()
     
     # Paths
-    base_dir = Path("/home/masuda/projects/mv-query-optimization/experiments/small_test_ver2")
+    base_dir = Path(__file__).parent.parent
     pickle_path = base_dir / "03_parsed" / args.query_set / "qp_class.pkl"
     json_input_path = base_dir / "04_migration" / args.query_set / "simple_migration_costs.json"
     

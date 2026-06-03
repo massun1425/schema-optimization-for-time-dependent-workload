@@ -6,7 +6,7 @@ EXPLAIN ANALYZEの結果から直接パースし、QueryParserと同じ属性を
 すべて生成します。既存のpickleには依存しません。
 
 使い方:
-    python experiments/small_test_ver2/scripts/parse_actual_costs.py
+    python scripts/parse_actual_costs.py
 
 前提条件:
     1. run_explain_analyze.py を実行済み
@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
@@ -344,7 +344,7 @@ class ActualCostParserRunner:
     """実測コストパーサの実行クラス"""
     
     def __init__(self):
-        self.exp_dir = project_root / "experiments" / "small_test_ver2"
+        self.exp_dir = project_root
         self.json_real_dir = self.exp_dir / "02_json" / "job_real"
         self.pickle_dir = self.exp_dir / "03_parsed"
         self.output_pickle_path = self.pickle_dir / "job_real" / "qp_class.pkl"

@@ -10,7 +10,7 @@
     
     例:
     python export_benchmark_to_csv.py \
-        experiments/small_test_ver2/time_dependent_output/job/result_50M_2 \
+        time_dependent_output/job/result_50M_2 \
         benchmark_execution_times.csv
 """
 
@@ -171,7 +171,7 @@ def main():
     # コマンドライン引数の処理
     if len(sys.argv) < 2:
         # デフォルトのパス
-        result_dir = Path('experiments/small_test_ver2/time_dependent_output/job/result_100M_fix')
+        result_dir = Path('time_dependent_output/job/result_100M_fix')
         output_filename = 'benchmark_execution_times.csv'
     elif len(sys.argv) == 2:
         result_dir = Path(sys.argv[1])

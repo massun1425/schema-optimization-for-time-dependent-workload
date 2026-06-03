@@ -1,8 +1,8 @@
 import re
 import os
 
-input_path = 'experiments/small_test_ver2/time_dependent_output/cluster_55_25_26_3_ex/static_initial_mvs.sql'
-output_path = 'experiments/small_test_ver2/time_dependent_output/cluster_55_25_26_3_ex/static_initial_mvs_single_col.sql'
+input_path = 'time_dependent_output/cluster_55_25_26_3_ex/static_initial_mvs.sql'
+output_path = 'time_dependent_output/cluster_55_25_26_3_ex/static_initial_mvs_single_col.sql'
 
 def transform_sql(input_file, output_file):
     with open(input_file, 'r') as f:

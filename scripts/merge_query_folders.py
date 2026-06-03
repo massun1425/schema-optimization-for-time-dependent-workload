@@ -7,9 +7,9 @@
 
 使い方:
     python3 merge_query_folders.py \\
-        --dir1 experiments/small_test_ver2/01_queries/cluster_55_25_3 \\
-        --dir2 experiments/small_test_ver2/01_queries/cluster_55_26_3 \\
-        --out  experiments/small_test_ver2/01_queries/cluster_55_25_26_3 \\
+        --dir1 01_queries/cluster_55_25_3 \\
+        --dir2 01_queries/cluster_55_26_3 \\
+        --out  01_queries/cluster_55_25_26_3 \\
         --freq-name frequency_time_dependent_cluster_55.json
 """
 

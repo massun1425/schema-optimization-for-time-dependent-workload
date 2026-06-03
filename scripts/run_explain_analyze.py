@@ -6,12 +6,12 @@ EXPLAIN ANALYZE 実行スクリプト
 実測時間を含むJSON結果を保存します。
 
 使い方:
-    python experiments/small_test_ver2/scripts/run_explain_analyze.py
-    python experiments/small_test_ver2/scripts/run_explain_analyze.py --timeout 300
-    python experiments/small_test_ver2/scripts/run_explain_analyze.py --queries 1a 17a 20a
-    python experiments/small_test_ver2/scripts/run_explain_analyze.py --use-local  # ローカルpsql使用
+    python scripts/run_explain_analyze.py
+    python scripts/run_explain_analyze.py --timeout 300
+    python scripts/run_explain_analyze.py --queries 1a 17a 20a
+    python scripts/run_explain_analyze.py --use-local  # ローカルpsql使用
 
-    python experiments/small_test_ver2/scripts/run_explain_analyze.py --force
+    python scripts/run_explain_analyze.py --force
 
 オプション:
     --timeout: クエリタイムアウト秒数（デフォルト: 600秒）
@@ -29,7 +29,7 @@ import psycopg2
 import psycopg2.extras
 
 # プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # 実験ディレクトリのutilsを追加

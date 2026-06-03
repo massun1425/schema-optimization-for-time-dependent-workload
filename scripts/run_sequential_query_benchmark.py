@@ -9,8 +9,8 @@ What it does:
 5. Save results to JSON.
 
 Example:
-    .venv/bin/python experiments/small_test_ver2/scripts/run_sequential_query_benchmark.py \
-        --query-dir experiments/small_test_ver2/01_queries/cluster_55_26_3
+    .venv/bin/python scripts/run_sequential_query_benchmark.py \
+        --query-dir 01_queries/cluster_55_26_3
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Any
 import psycopg2
 
 # Add project root to import Settings
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config.settings import Settings
@@ -210,13 +210,13 @@ def main() -> int:
     parser.add_argument(
         "--query-dir",
         type=Path,
-        default=Path("experiments/small_test_ver2/01_queries/cluster_55_26_3"),
+        default=Path("01_queries/cluster_55_26_3"),
         help="Directory containing .sql query files",
     )
     parser.add_argument(
         "--output-json",
         type=Path,
-        default=Path("experiments/small_test_ver2/time_dependent_output/cluster_55_25_26_3/sequential_benchmark_results.json"),
+        default=Path("time_dependent_output/cluster_55_25_26_3/sequential_benchmark_results.json"),
         help="Output JSON file path",
     )
     parser.add_argument("--host", type=str, default="localhost")
