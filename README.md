@@ -1,462 +1,434 @@
-# Materialized View Query Optimization
-
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![PostgreSQL 18](https://img.shields.io/badge/postgresql-18-blue.svg)](https://www.postgresql.org/)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-
-マテリアライズドビュー選択を用いたクエリ最適化システム
-
-## 📋 概要
-
-このプロジェクトは、ILP（整数線形計画法）を用いてマテリアライズドビューを選択し、クエリ実行時間を最適化するシステムです。
-
-### 主要機能
-
-- **クエリ解析**: PostgreSQL EXPLAIN JSONからクエリプランを解析
-- **MV選択最適化**: 5種類のILPアルゴリズムによる最適化
-  - Normal ILP
-  - BigSubs ILP
-  - Utility-based
-  - Utility-Capacity
-  - Frequency-based
-- **クエリ書き換え**: 選択されたMVを使用するようクエリを自動書き換え
-- **ベンチマーク**: JOB/CEB/RedBenchでの性能評価
-
-## 🚀 クイックスタート
-
-### 前提条件
-
-- **Python 3.11以上** (pyenv推奨)
-- **Docker Desktop** (PostgreSQLコンテナ用)
-- **Gurobi Optimizer 12.0** (ライセンス必要)
-
-### ステップ1: PostgreSQLデータベースセットアップ
-
-#### 1.1 Dockerイメージのビルド
-
-```bash
-# IMDBデータを自動ダウンロード・セットアップ (初回は15-20分程度)
-docker build -t mv_postgres:1.0 .
-```
-
-#### 1.2 PostgreSQLコンテナの起動
-
-```bash
-# コンテナ起動 (初回はデータロードに5-10分程度)
-docker run -d \
-  --name mv_postgres \
-  -p 5432:5432 \
-  -v mv_postgres_data:/var/lib/postgresql/data \
-  mv_postgres:1.0
-
-# 起動確認
-docker ps
-
-# データベース接続テスト
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT count(*) FROM title;"
-
-docker exec -it mv_postgres psql -U postgres -d imdbload
-```
-
-**接続情報:**
-- ホスト: `localhost`
-- ポート: `5432`
-- データベース: `imdbload`
-- ユーザー: `postgres`
-- パスワード: `pass`
-
-### ステップ2: Python環境セットアップ
-
-#### 2.1 仮想環境の作成
-
-```bash
-# Python 3.11以上を使用
-python --version  # 3.11以上であることを確認
-
-# 仮想環境作成
-python -m venv .venv
-
-# 仮想環境をアクティベート
-source .venv/bin/activate  # macOS/Linux
-# または
-.venv\Scripts\activate  # Windows
-```
-
-#### 2.2 依存パッケージのインストール
-
-```bash
-# pipをアップグレード
-pip install --upgrade pip
-
-# 依存パッケージインストール
-pip install -r requirements.txt
-```
-
-### ステップ3: Gurobiライセンス設定
-
-プロジェクトの実行にはGurobiライセンスが必要です。
-
-1. [Gurobi公式サイト](https://www.gurobi.com/)でライセンスを取得
-2. ライセンスファイル(`gurobi.lic`)をプロジェクトルートに配置
-3. 環境変数を設定（任意）:
-
-```bash
-export GUROBI_HOME=/path/to/gurobi
-export GRB_LICENSE_FILE=/path/to/gurobi.lic
-```
-
-**ベンチマークデータ**: [JOB (Join Order Benchmark)](https://github.com/viktorleis/job)
-
-## 📚 使用方法
-
-### 実験実行
-
-```bash
-# 仮想環境をアクティベート（毎回必要）
-source .venv/bin/activate
-
-# 単一アルゴリズムで実験
-python scripts/run_experiment.py --algorithms normal
-
-# 複数アルゴリズムで実験
-python scripts/run_experiment.py --algorithms normal bigsubs utility
-
-# すべてのアルゴリズムで実験
-python scripts/run_experiment.py --algorithms none normal bigsubs utility utility_capacity frequency
-
-# 詳細ログ出力
-python scripts/run_experiment.py --algorithms normal --verbose
-
-# CSV比較を初期化してから実験
-python scripts/run_experiment.py --algorithms normal --initialize
-```
-
-### データベース接続確認
-
-```bash
-# Python から接続テスト
-python -c "import psycopg2; conn = psycopg2.connect(host='localhost', port=5432, database='imdbload', user='postgres', password='pass'); print('✓ データベース接続成功')"
-
-# psqlで直接接続
-psql -h localhost -p 5432 -U postgres -d imdbload
-# パスワード: pass
-```
-
-### 実験結果の確認
-
-```bash
-# 実験結果は Output/ ディレクトリに保存される
-ls -la Output/
-
-# 各ディレクトリの内容:
-# - experiment/run_mv/      : MV実行ログ
-# - experiment/mv_create/   : MV作成ログ
-# - query_rewrite/          : クエリ書き換え結果
-# - redbench/               : RedBenchベンチマーク結果
-```
-
-## 🧪 テスト
-
-```bash
-# 仮想環境をアクティベート
-source .venv/bin/activate
-
-# クエリパースのテスト
-python scripts/test_query_parse.py
-
-# ILP最適化のテスト (単一アルゴリズム)
-python scripts/test_optimization.py --algorithm bigsubs
-
-# MV作成SQL生成のテスト
-python scripts/test_mv_generation.py --algorithm bigsubs --max-mvs 5
-
-# 全アルゴリズムのテスト
-python scripts/test_optimization.py --algorithm all
-
-# 全テスト実行
-pytest
-
-# カバレッジレポート
-pytest --cov=src --cov-report=html
-
-# 特定のテストのみ
-pytest tests/unit/test_query_rewriter.py
-
-# パフォーマンステスト
-pytest -m performance
-```
-
-## 🏗️ プロジェクト構造
-
-```
-mv-query-optimization/
-├── Dockerfile              # PostgreSQLコンテナ定義
-├── requirements.txt        # Python依存パッケージ
-├── gurobi.lic             # Gurobiライセンス（要配置）
-├── src/                   # ソースコード
-│   ├── core/              # コアモジュール
-│   ├── database/          # データベース操作
-│   ├── optimization/      # ILPアルゴリズム
-│   ├── rewrite/           # クエリ書き換え
-│   └── utils/             # ユーティリティ
-├── scripts/               # CLIスクリプト
-│   └── run_experiment.py  # 実験実行スクリプト
-├── tests/                 # テストコード
-├── config/                # 設定ファイル
-├── data/                  # データとスキーマ
-│   ├── schema.sql         # データベーススキーマ
-│   └── setup.sql          # 初期化スクリプト
-├── dataset/               # ベンチマークデータセット
-│   └── redbench/          # RedBenchデータ
-├── Output/                # 実験結果（自動生成）
-└── docs/                  # ドキュメント
-```
-
-## 📊 対応アルゴリズム
-
-| アルゴリズム | 説明 | 用途 |
-|------------|------|------|
-| Normal ILP | 基本的なILP定式化 | ベースライン |
-| BigSubs ILP | 確率的フリップを使用 | 大規模問題 |
-| Utility-based | 効用最大化 | コスト重視 |
-| Utility-Capacity | 効用/容量比最大化 | ストレージ制約 |
-| Frequency-based | 頻度ベース選択 | 頻出パターン |
-
-## 🐳 Docker環境
-
-### アーキテクチャ
-
-このプロジェクトは以下の構成で動作します:
-
-- **Dockerコンテナ**: PostgreSQL 18 + IMDBデータベース
-- **ホストマシン**: Python実行環境 + プロジェクトコード
-
-この分離により、開発効率とデバッグ容易性が向上します。
-
-### PostgreSQLコンテナ管理
-
-```bash
-# コンテナ起動
-docker start mv_postgres
-
-# コンテナ停止
-docker stop mv_postgres
-
-# コンテナ再起動
-docker restart mv_postgres
-
-# コンテナログ確認
-docker logs mv_postgres
-
-# コンテナ内でコマンド実行
-docker exec -it mv_postgres psql -U postgres -d imdbload
-
-# コンテナ削除（データは保持）
-docker rm mv_postgres
-
-# ボリューム含めて完全削除
-docker rm -f mv_postgres
-docker volume rm mv_postgres_data
-```
-
-### データベースの再構築
-
-```bash
-# コンテナとボリュームを削除
-docker rm -f mv_postgres
-docker volume rm mv_postgres_data
-
-# イメージを再ビルド（IMDBデータを再ダウンロード）
-docker build -t mv_postgres:1.0 .
-
-# 新しいコンテナを起動
-docker run -d \
-  --name mv_postgres \
-  -p 5432:5432 \
-  -v mv_postgres_data:/var/lib/postgresql/data \
-  mv_postgres:1.0
-```
-
-### トラブルシューティング
-
-#### データベースに接続できない
-
-```bash
-# ポート確認
-docker port mv_postgres
-
-# コンテナ状態確認
-docker ps -a
-
-# ログでエラー確認
-docker logs mv_postgres | tail -50
-```
-
-#### データがロードされていない
-
-```bash
-# テーブル数確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "\dt"
-
-# レコード数確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT 'title' as table_name, count(*) FROM title;"
-```
-
-## 🔧 高度な設定
-
-### 開発環境のセットアップ
-
-```bash
-# 開発用パッケージのインストール
-pip install -r requirements-dev.txt
-
-# コードフォーマット
-black src/ tests/
-
-# リント
-flake8 src/ tests/
-
-# 型チェック
-mypy src/
-```
-
-### データベース接続設定のカスタマイズ
-
-プロジェクト内の接続設定は以下のファイルで管理されています:
-
-```python
-# src/database/connection.py
-DEFAULT_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'imdbload',
-    'user': 'postgres',
-    'password': 'pass'
-}
-```
-
-### JOB/CEBクエリ切り替え
-
-`utils.py`の`GET_CEB`値を変更:
-- `True`: CEBクエリ使用
-- `False`: JOBクエリ使用
-
-### RedBench設定
-
-RedBenchを使用する場合は、`dataset/redbench/run.py`の`DEFAULT_PSQL`定数を変更してください。
-
-## 💡 Tips
-
-### よく使うコマンド
-
-```bash
-# 仮想環境アクティベート（毎回必要）
-source .venv/bin/activate
-
-# データベース接続確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT version();"
-
-# 実験実行（詳細ログ付き）
-python scripts/run_experiment.py --algorithms normal --verbose
-
-# 実験結果の確認
-ls -lh Output/query_rewrite/
-
-# コンテナのログをリアルタイム表示
-docker logs -f mv_postgres
-```
-
-### パフォーマンスチューニング
-
-PostgreSQLのパフォーマンスを向上させるには:
-
-```bash
-# コンテナ内で設定変更
-docker exec -it mv_postgres bash
-echo "shared_buffers = 256MB" >> /var/lib/postgresql/data/postgresql.conf
-echo "work_mem = 16MB" >> /var/lib/postgresql/data/postgresql.conf
-exit
-
-# コンテナ再起動
-docker restart mv_postgres
-```
-
-## 📈 その他の実験
-
-プロジェクトには以下の実験スクリプトも含まれています:
-
-- `compare_insertquery.py`: INSERT クエリ性能比較
-- `compare_capacity.py`: ストレージ容量の影響評価
-- `compare_topk_beta.py`: Top-K MV選択の評価
-
-## ❓ FAQ
-
-### Q: Dockerコンテナが起動しない
-
-**A:** Docker Desktopが起動していることを確認してください。
-
-```bash
-open -a Docker  # macOS
-docker ps       # 起動確認
-```
-
-### Q: Python パッケージのインストールに失敗する
-
-**A:** Python 3.11以上を使用していることを確認してください。
-
-```bash
-python --version  # 3.11以上であることを確認
-python -m venv .venv  # 仮想環境を再作成
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Q: データベースに接続できない
-
-**A:** PostgreSQLコンテナが起動していることを確認してください。
-
-```bash
-docker ps | grep mv_postgres
-docker logs mv_postgres | tail -20
-```
-
-### Q: 実験結果が出力されない
-
-**A:** Output/ ディレクトリの権限を確認してください。
-
-```bash
-mkdir -p Output/{experiment/{run_mv,mv_create},query_rewrite,redbench}
-chmod -R 755 Output/
-```
-
-## 📝 ライセンス
-
-このプロジェクトは研究目的で開発されています。
-
-## 🤝 貢献
-
-バグ報告や機能提案は Issue でお願いします。
-
-プルリクエストも歓迎します:
-1. フォークする
-2. フィーチャーブランチを作成 (`git checkout -b feature/AmazingFeature`)
-3. 変更をコミット (`git commit -m 'Add some AmazingFeature'`)
-4. ブランチにプッシュ (`git push origin feature/AmazingFeature`)
-5. プルリクエストを作成
-
-## 📖 参考文献
-
-- [Join Order Benchmark (JOB)](https://github.com/viktorleis/job)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [Gurobi Optimizer](https://www.gurobi.com/documentation/)
-
-## 🙏 謝辞
-
-このプロジェクトはJOBベンチマークデータセットを使用しています。
+# 時間依存最適化（マイグレーションコスト考慮）の実行手順
+
+このREADMEは、`small_test_ver2` 環境で時間依存最適化（time-dependent optimization with migration costs）を実行するための手順を説明します。
+
+## 目次
+
+- [概要](#概要)
+- [クイックスタート](#クイックスタート)
+- [コマンドライン引数リファレンス](#コマンドライン引数リファレンス)
+- [実行手順（フェーズ別）](#実行手順フェーズ別)
+- [入力・出力ファイル](#入力出力ファイル)
+- [ディレクトリ構造](#ディレクトリ構造)
+- [トラブルシューティング](#トラブルシューティング)
 
 ---
 
-**開発者**: [Kaina3](https://github.com/Kaina3)  
-**最終更新**: 2025年10月7日
+## 概要
 
+時間依存最適化は、複数のタイムステップにわたるワークロード変化とマテリアライズドビュー（MV）のマイグレーションコストを考慮して、最適なMV選択を行います。
+
+### 主要な機能
+- 時刻ごとに変化するクエリ頻度に対応
+- MVの作成・維持・削除のコストを考慮
+- 容量制約（ストレージ予算）を満たしながら最適化
+- Gurobi を用いた整数線形計画（ILP）による厳密解の導出
+
+### 前提条件
+- Python 3.11+
+- Gurobi（ライセンス必要）
+- PostgreSQL（Docker または ローカル）
+- 必要なPythonパッケージ（`requirements.txt`）
+
+---
+
+## クイックスタート
+
+### 1. 最小限の手順
+
+```bash
+# 仮想環境をアクティベート
+source .venv/bin/activate
+
+# Dockerコンテナを起動
+docker start mv_postgres
+
+# 全フェーズを実行（Docker経由）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase all \
+  --query-set job \
+  --use-docker
+```
+
+### 2. 典型的な実験コマンド
+
+```bash
+# 動的モード + プルーニング + 周期16_2
+python experiments/small_test_ver2/scripts/run_experiment_normal.py \
+  --phase all \
+  --query-set job \
+  --optimization-mode dynamic \
+  --exp-suffix _16_2 \
+  --use-pruning \
+  --use-docker
+```
+
+---
+
+## コマンドライン引数リファレンス
+
+### 基本引数
+
+| 引数 | 値 | デフォルト | 説明 |
+|------|-----|---------|------|
+| `--phase` | `all`, `post-opt`, `0`-`9`, `6.5` | 必須 | 実行するフェーズ |
+| `--query-set` | 文字列 | `job` | クエリセット名 |
+| `--config` | パス | `experiments/small_test_ver2` | 実験ディレクトリ |
+
+### フェーズ一覧
+
+| 値 | 説明 |
+|----|------|
+| `all` | 全フェーズ（1-9）を順次実行 |
+| `post-opt` | Phase 6-9を実行（最適化以降） |
+| `0` | データベースセットアップ |
+| `1` | EXPLAIN JSON生成 |
+| `2` | クエリパース |
+| `3` | JSONノードID付加 |
+| `4` | マイグレーションプラン列挙 |
+| `5` | マイグレーションコスト計算 |
+| `6` | ILP最適化（動的/静的） |
+| `6.5` | 静的最適化のみ |
+| `7` | MV作成SQL生成 |
+| `8` | クエリ書き換え |
+| `9` | ベンチマーク実行 |
+
+### 最適化・ベンチマーク引数
+
+| 引数 | 値 | デフォルト | 説明 |
+|------|-----|---------|------|
+| `--optimization-mode` | `dynamic`, `static` | `dynamic` | 最適化モード（Phase 6-8で使用） |
+| `--benchmark-mode` | `dynamic`, `static`, `baseline` | `dynamic` | ベンチマークモード（Phase 9で使用） |
+| `--use-pruning` | フラグ | - | CF Pruningを使用（大規模データ向け） |
+| `--pruning-parallel` | フラグ | - | プルーニングを並列実行 |
+| `--pruning-workers` | 整数 | `16` | プルーニング並列実行時のワーカー数 |
+| `--static-timestep` | `first`, `last`, `average` | `last` | 静的最適化で使用するタイムステップ |
+| `--static-algorithm` | `normal`, `bigsubs`, `both` | `normal` | 静的最適化で使用するアルゴリズム |
+| `--exp-suffix` | 文字列 | 空 | 実験識別サフィックス（例: `_16_2`） |
+
+### コスト推定引数
+
+| 引数 | 説明 |
+|------|------|
+| `--use-neurocard` | NeuroCardを使用してコスト推定 |
+| `--use-sampling` | サンプリングを使用してコスト推定 |
+
+### PostgreSQL接続引数
+
+| 引数 | 説明 |
+|------|------|
+| `--use-docker` | Docker経由でpsqlを実行（デフォルト） |
+| `--use-local` | ローカルのpsqlを使用 |
+
+環境変数 `MV_USE_DOCKER=true/false` でデフォルトを変更可能。
+
+### 使用例
+
+```bash
+# 基本的な実行（動的モード）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job
+
+# 静的モードで最適化のみ
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
+
+# ベンチマーク比較（ベースライン）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
+
+# 大規模データ向け（プルーニング有効）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+
+# 異なる頻度設定の実験
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --exp-suffix _16_4
+
+# 静的最適化（最初のタイムステップで全実行）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase all --query-set job --optimization-mode static --static-timestep first
+
+# プルーニング並列実行（64ワーカー）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 64
+
+# ローカルPostgreSQL使用
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set job --use-local
+
+# BigSubs アルゴリズムで静的最適化
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static --static-algorithm bigsubs --static-timestep average --use-docker
+
+# 両アルゴリズム（normal + bigsubs）を実行して比較
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode static --static-algorithm both --static-timestep average --use-docker
+```
+
+---
+
+## 実行手順（フェーズ別）
+
+### Phase 1: EXPLAIN JSON生成
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --query-set job --use-docker
+```
+
+**出力**: `02_json/{query_set}/*.json`
+
+### Phase 2: クエリパース
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --query-set job
+```
+
+**出力**: `03_parsed/{query_set}/qp_class.pkl`, `parse_summary.json`
+
+### Phase 3: JSONノードID付加
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 3 --query-set job
+```
+
+**出力**: `02_json/{query_set}/*.json`（更新）
+
+### Phase 4: マイグレーションプラン列挙
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 4 --query-set job
+```
+
+**出力**: `04_migration/{query_set}/simple_migration_plans.json`
+
+### Phase 5: マイグレーションコスト計算
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 5 --query-set job
+```
+
+**出力**: `04_migration/{query_set}/simple_migration_costs.json`
+
+### Phase 6: ILP最適化
+
+```bash
+# 動的モード（デフォルト）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode dynamic
+
+# 静的モード（最後のタイムステップ）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static
+
+# 静的モード（最初のタイムステップ）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-timestep first
+
+# プルーニング使用（大規模データ向け）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning
+
+# プルーニング並列実行（32ワーカー）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning --pruning-parallel --pruning-workers 32
+```
+
+**出力**: `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json`
+
+### Phase 6 (静的モード + BigSubs)
+
+```bash
+# BigSubs アルゴリズムを使用
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-algorithm bigsubs --static-timestep average
+
+# 通常ILPとBigSubsを両方実行
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --optimization-mode static --static-algorithm both --static-timestep average
+```
+
+**出力**:
+- `normal`: `time_dependent_output/{query_set}/static_mv_optimization_result{suffix}.json`
+- `bigsubs`: `time_dependent_output/{query_set}/static_bigsubs_optimization_result{suffix}.json`
+
+### Phase 7: MV作成SQL生成
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 7 --query-set job --optimization-mode dynamic
+```
+
+**出力**: `time_dependent_output/{query_set}/timestep_*_*.sql`
+
+### Phase 8: クエリ書き換え
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 8 --query-set job --optimization-mode dynamic
+```
+
+**出力**: `time_dependent_output/{query_set}/jobs/timestep_*_*/`
+
+### Phase 9: ベンチマーク実行
+
+```bash
+# 動的MV
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode dynamic
+
+# 静的MV
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode static
+
+# ベースライン（MVなし）
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 9 --query-set job --benchmark-mode baseline
+```
+
+**出力**: `time_dependent_output/{query_set}/benchmark_results_{mode}{suffix}.json`
+
+---
+
+## 入力・出力ファイル
+
+### 入力ファイル
+
+| ファイル | 説明 |
+|---------|------|
+| `01_queries/{query_set}/*.sql` | SQLクエリファイル |
+| `01_queries/{query_set}/frequency_time_dependent{suffix}.json` | タイムステップごとの頻度設定 |
+| `config.yaml` | 実験環境設定 |
+
+### 出力ファイル
+
+| ファイル | 説明 |
+|---------|------|
+| `02_json/{query_set}/*.json` | EXPLAIN JSON（ノードID付き） |
+| `03_parsed/{query_set}/qp_class.pkl` | パース結果（pickle） |
+| `04_migration/{query_set}/simple_migration_*.json` | マイグレーション計画・コスト |
+| `time_dependent_output/{query_set}/td_mv_optimization_result{suffix}.json` | 動的最適化結果 |
+| `time_dependent_output/{query_set}/static_mv_optimization_result{suffix}.json` | 静的最適化結果（normal） |
+| `time_dependent_output/{query_set}/static_bigsubs_optimization_result{suffix}.json` | 静的最適化結果（bigsubs） |
+| `time_dependent_output/{query_set}/benchmark_results_*.json` | ベンチマーク結果 |
+| `time_dependent_output/{query_set}/benchmark_results_static_bigsubs*.json` | BigSubsベンチマーク結果 |
+
+---
+
+## ディレクトリ構造
+
+```
+experiments/small_test_ver2/
+├── scripts/                       # 実行スクリプト
+│   ├── run_experiment_normal.py   # メインスクリプト
+│   └── setup_imdb.py              # DBセットアップ
+├── core/                          # コア機能
+│   ├── time_dependent_optimizer.py
+│   ├── cf_pruner.py               # プルーニング
+│   └── io_loaders.py
+├── migration/                     # マイグレーション
+├── mv_generation/                 # MV生成
+├── utils/                         # ユーティリティ
+│   └── postgres_executor.py       # Docker/ローカル切り替え
+├── 01_queries/                    # クエリ定義
+├── 02_json/                       # EXPLAIN出力
+├── 03_parsed/                     # パース結果
+├── 04_migration/                  # マイグレーション計画
+├── time_dependent_output/         # 最適化結果
+└── config.yaml
+```
+
+---
+
+## トラブルシューティング
+
+### psqlコマンドが見つからない
+
+```
+[Errno 2] No such file or directory: 'psql'
+```
+
+**解決策**: Dockerモードを使用
+
+```bash
+docker start mv_postgres
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 1 --use-docker
+```
+
+### Gurobiライセンスエラー
+
+- 学術ライセンスを取得: https://www.gurobi.com/
+- `gurobi.lic` をプロジェクトルートに配置
+- 環境変数 `GRB_LICENSE_FILE` を設定
+
+### pickleファイルが見つからない
+
+Phase 2（クエリパース）を先に実行してください：
+
+```bash
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 2 --query-set job
+```
+
+### PostgreSQL接続エラー
+
+```bash
+# Dockerコンテナの状態確認
+docker ps | grep mv_postgres
+
+# コンテナを起動
+docker start mv_postgres
+
+# ログ確認
+docker logs mv_postgres | tail -20
+```
+
+---
+
+## 実験設定のカスタマイズ
+
+### ストレージ予算の変更
+
+`core/time_dependent_optimizer.py` または スクリプト内の `B_max` を編集。
+
+### 頻度設定の変更
+
+`01_queries/{query_set}/frequency_time_dependent{suffix}.json` を編集。
+
+### 新しいクエリセットの追加
+
+1. `01_queries/new_set/` を作成
+2. SQLファイルを配置
+3. `frequency_time_dependent.json` を作成
+4. `--query-set new_set` で実行
+
+### プルーニング並列化の推奨設定
+
+- **小規模データ（~100候補）**: `--pruning-workers 16`（デフォルト）
+- **中規模データ（~500候補）**: `--pruning-workers 32`
+- **大規模データ（1000+候補）**: `--pruning-workers 48-64`
+
+注意: Gurobiは各ILPを1スレッドで解くため、ワーカー数を増やしても線形にスケールしない場合があります。
+
+### 静的最適化のタイムステップ選択
+
+- `--static-timestep first`: 最初のタイムステップ（開始時点）のワークロードで最適化
+- `--static-timestep last`: 最後のタイムステップ（終了時点）のワークロードで最適化
+
+全フェーズ実行（`--phase all`）や部分実行（`--phase post-opt`）でも使用可能です。
+
+### 静的最適化アルゴリズムの選択
+
+- `--static-algorithm normal`: 通常のILP最適化（Gurobi）
+- `--static-algorithm bigsubs`: BigSubsヒューリスティック最適化
+- `--static-algorithm both`: 両方を実行して比較
+
+各アルゴリズムの結果は別ファイルに保存され、ベンチマークも独立して実行可能です。
+
+---
+
+## 参考
+
+- ILP定式化: `small_docs/explain/time_dependent_optimizer.md`
+- プロジェクト概要: `docs/`
+
+## 便利なSQLクエリ
+
+### MVサイズ一覧
+
+```sql
+SELECT matviewname AS mv_name,
+       pg_size_pretty(pg_total_relation_size(pg_class.oid)) AS total_size
+FROM pg_matviews
+JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
+WHERE pg_class.relkind = 'm'
+ORDER BY pg_total_relation_size(pg_class.oid) DESC;
+```
+
+### MV合計サイズ
+
+```sql
+SELECT pg_size_pretty(SUM(pg_total_relation_size(pg_class.oid))) AS total_mv_size
+FROM pg_matviews
+JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
+WHERE pg_class.relkind = 'm';
+```
+
+python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase post-opt --query-set job --optimization-mode dynamic --exp-suffix _16_4 --use-pruning --pruning-parallel --use-docker
