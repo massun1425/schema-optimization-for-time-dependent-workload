@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
 from src.core.query_parser import QueryParser
-from experiments.small_test_ver2.mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
+from mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
 
 class GetMigrationPlans:
     """MVのマイグレーションプランを取得"""

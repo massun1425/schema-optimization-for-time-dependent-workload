@@ -23,14 +23,14 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
-from experiments.small_test_ver2.core.io_loaders import (
+from core.io_loaders import (
     load_full_build_costs_and_sizes,
     load_timesteps_and_frequencies,
 )
-from experiments.small_test_ver2.core.utility_v2 import UtilityOptimizerV2
-from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
-from experiments.small_test_ver2.core.utility_pruner import UtilityPruner
-from experiments.small_test_ver2.core.utility_pruner_iterative import UtilityPrunerIterative
+from core.utility_v2 import UtilityOptimizerV2
+from core.time_dependent_optimizer import TimeDependentOptimizer
+from core.utility_pruner import UtilityPruner
+from core.utility_pruner_iterative import UtilityPrunerIterative
 
 
 # ========== ヘルパー関数 ==========

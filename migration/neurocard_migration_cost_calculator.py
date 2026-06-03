@@ -6,7 +6,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from experiments.small_test_ver2.migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
+from migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
 from src.estimation.neurocard_wrapper import NeuroCardEstimator
 
 class NeuroCardMigrationCostCalculator(SimpleMigrationCostCalculator):

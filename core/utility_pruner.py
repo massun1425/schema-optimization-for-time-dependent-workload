@@ -17,8 +17,8 @@ import logging
 import time
 from typing import Dict, List, Set, Optional
 
-from experiments.small_test_ver2.core.local_ilp_optimizer import LocalILPOptimizer
-from experiments.small_test_ver2.core.workload_summary_tree import (
+from core.local_ilp_optimizer import LocalILPOptimizer
+from core.workload_summary_tree import (
     TreeNode,
     WorkloadSummaryTree,
 )

@@ -943,7 +943,7 @@ class QueryParser:
             json_files: 処理されたJSONファイルのパスリスト（順序はクエリインデックスに対応）
             sql_dir: 元のSQLファイルが格納されているディレクトリのパス
         """
-        from experiments.small_test_ver2.mv_generation.original_sql_join_extractor import (
+        from mv_generation.original_sql_join_extractor import (
             extract_aliases_from_sql,
             extract_equijoin_conditions,
             find_sql_file_for_query,

@@ -29,8 +29,8 @@ experiment_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(experiment_dir))
 
 from config.settings import Settings
-from experiments.small_test_ver2.core.io_loaders import load_full_build_costs_and_sizes
-from experiments.small_test_ver2.core.utility_v2 import UtilityOptimizerV2
+from core.io_loaders import load_full_build_costs_and_sizes
+from core.utility_v2 import UtilityOptimizerV2
 from src.optimization.normal import NormalOptimizer
 
 

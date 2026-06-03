@@ -19,12 +19,12 @@ import sys
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from experiments.small_test_ver2.core.io_loaders import (
+from core.io_loaders import (
     load_qp_inputs,
     load_timesteps_and_frequencies,
     parse_migration_costs,
 )
-from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
+from core.time_dependent_optimizer import TimeDependentOptimizer
 
 # Set up logging
 logging.basicConfig(

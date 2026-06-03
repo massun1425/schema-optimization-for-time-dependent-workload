@@ -15,7 +15,7 @@ sys.path.insert(0, str(project_root))
 
 # Try to import, but handle missing gurobipy gracefully
 try:
-    from experiments.small_test_ver2.core.workload_summary_tree import WorkloadSummaryTree
+    from core.workload_summary_tree import WorkloadSummaryTree
     WORKLOAD_TREE_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: Could not import WorkloadSummaryTree: {e}")

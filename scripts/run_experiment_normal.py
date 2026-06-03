@@ -228,7 +228,7 @@ class NormalModeExperiment:
         if not self.recalc_mode:
             return None, None
             
-        from experiments.small_test_ver2.core.io_loaders import load_full_build_costs_and_sizes
+        from core.io_loaders import load_full_build_costs_and_sizes
         
         self.print_info("RECALC MODE: u_ij（利得）を utility で上書き中...")
         migration_cost, utilities, b_j = load_full_build_costs_and_sizes(
@@ -656,7 +656,7 @@ class NormalModeExperiment:
         self.print_header("クエリパース", 2)
         phase_start = time.time()
         
-        # from experiments.small_test_ver2.frequency_weighted_parser import FrequencyWeightedParser
+        # from frequency_weighted_parser import FrequencyWeightedParser
         
         # self.print_info("FrequencyWeightedParser を初期化")
         
@@ -880,7 +880,7 @@ class NormalModeExperiment:
                 return False
         
         try:
-            from experiments.small_test_ver2.migration.enumerate_simple_migration_plan import GetSimpleMigrationPlans
+            from migration.enumerate_simple_migration_plan import GetSimpleMigrationPlans
             
             self.print_info("マイグレーションプランを列挙中...")
             
@@ -925,7 +925,7 @@ class NormalModeExperiment:
         
         # job_realの場合は実測値からコストを生成
         if self.query_set == "job_real":
-            from experiments.small_test_ver2.migration.actual_cost_migration_calculator import ActualCostMigrationCalculator
+            from migration.actual_cost_migration_calculator import ActualCostMigrationCalculator
             CalculatorClass = ActualCostMigrationCalculator
             self.print_info("実測値（job_real）を使用してコストを生成します")
         else:
@@ -941,19 +941,19 @@ class NormalModeExperiment:
             # job_real以外の場合、使用するCalculatorを選択
             if self.query_set != "job_real":
                 if use_neurocard:
-                    from experiments.small_test_ver2.migration.neurocard_migration_cost_calculator import NeuroCardMigrationCostCalculator
+                    from migration.neurocard_migration_cost_calculator import NeuroCardMigrationCostCalculator
                     CalculatorClass = NeuroCardMigrationCostCalculator
                     self.print_info("NeuroCardを使用してサイズ推定を行います")
                 elif use_deepdb:
-                    from experiments.small_test_ver2.migration.deepdb_migration_cost_calculator import DeepDBMigrationCostCalculator
+                    from migration.deepdb_migration_cost_calculator import DeepDBMigrationCostCalculator
                     CalculatorClass = DeepDBMigrationCostCalculator
                     self.print_info("DeepDBを使用してサイズ推定を行います")
                 elif use_sampling:
-                    from experiments.small_test_ver2.migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
+                    from migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
                     CalculatorClass = SamplingMigrationCostCalculator
                     self.print_info("サンプリングを使用してサイズ推定を行います")
                 else:
-                    from experiments.small_test_ver2.migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
+                    from migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
                     CalculatorClass = SimpleMigrationCostCalculator
 
             
@@ -1060,11 +1060,11 @@ class NormalModeExperiment:
         phase_start = time.time()
         
         try:
-            from experiments.small_test_ver2.core.io_loaders import (
+            from core.io_loaders import (
                 load_timesteps_and_frequencies,
                 load_full_build_costs_and_sizes,
             )
-            from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
+            from core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
             B_max = float((b_max if b_max is not None else 100) * 1024 * 1024)
@@ -1107,7 +1107,7 @@ class NormalModeExperiment:
             pruning_info = None
             candidate_filter = None
             if use_pruning:
-                from experiments.small_test_ver2.core.cf_pruner import CFPruner
+                from core.cf_pruner import CFPruner
                 
                 self.print_info("CF Pruningを実行中...")
                 pruning_start = time.time()
@@ -1387,7 +1387,7 @@ class NormalModeExperiment:
         phase_start = time.time()
         
         try:
-            from experiments.small_test_ver2.core.io_loaders import (
+            from core.io_loaders import (
                 load_timesteps_and_frequencies,
                 load_full_build_costs_and_sizes,
             )
@@ -1595,7 +1595,7 @@ class NormalModeExperiment:
             
             # utility実行
             if static_algorithm == 'utility':
-                from experiments.small_test_ver2.core.utility_v2 import UtilityOptimizerV2
+                from core.utility_v2 import UtilityOptimizerV2
                 
                 self.print_info(f"UtilityOptimizerV2 で最適化を実行中...")
                 
@@ -1761,12 +1761,12 @@ class NormalModeExperiment:
         phase_start = time.time()
         
         try:
-            from experiments.small_test_ver2.core.io_loaders import (
+            from core.io_loaders import (
                 load_timesteps_and_frequencies,
                 load_full_build_costs_and_sizes,
             )
-            from experiments.small_test_ver2.core.two_step_optimizer import TwoStepOptimizer
-            from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
+            from core.two_step_optimizer import TwoStepOptimizer
+            from core.time_dependent_optimizer import TimeDependentOptimizer
             
             # ストレージ予算
             B_max = float((b_max if b_max is not None else 100) * 1024 * 1024)
@@ -2634,8 +2634,8 @@ class NormalModeExperiment:
         # 実行時間のばらつきを軽減する
         self._force_checkpoint()       
         
-        from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
-        from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
+        from benchmark import TimeDependentQueryExecutor
+        from core.io_loaders import load_timesteps_and_frequencies
         
         # モードに応じて最適化結果の読み込み要否を判定
         optimization_result = None

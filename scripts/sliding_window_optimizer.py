@@ -124,7 +124,7 @@ class SlidingWindowOptimizer:
         Returns:
             Set of selected MV indices
         """
-        from experiments.small_test_ver2.core.time_dependent_optimizer import TimeDependentOptimizer
+        from core.time_dependent_optimizer import TimeDependentOptimizer
         
         # Create single-timestep problem
         timesteps = ["static"]
@@ -165,7 +165,7 @@ class SlidingWindowOptimizer:
         Returns:
             Set of selected MV indices for the next timestep
         """
-        from experiments.small_test_ver2.core.local_ilp_optimizer import LocalILPOptimizer
+        from core.local_ilp_optimizer import LocalILPOptimizer
         
         # Create 2-timestep problem
         timestep_indices = [0, 1]  # Two timesteps

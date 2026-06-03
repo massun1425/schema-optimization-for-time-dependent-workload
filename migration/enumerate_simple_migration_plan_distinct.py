@@ -11,8 +11,8 @@ sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
 from src.core.query_parser import QueryParser
-from experiments.small_test_ver2.mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
-from experiments.small_test_ver2.mv_generation.original_sql_join_extractor import (
+from mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
+from mv_generation.original_sql_join_extractor import (
     extract_select_column_refs,
     extract_equijoin_conditions,
     extract_where_column_refs,

@@ -19,7 +19,7 @@ project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
-from experiments.small_test_ver2.migration.deepdb_estimator import DeepDBEstimator
+from migration.deepdb_estimator import DeepDBEstimator
 
 logger = logging.getLogger(__name__)
 

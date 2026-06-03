@@ -308,8 +308,8 @@ def phase9_execute_benchmark(exp_dir: Path, query_set: str, freq_suffix: str,
     """時間依存型ベンチマークを実行"""
     print_header("時間依存型ベンチマーク実行（utility ベース）", 9)
 
-    from experiments.small_test_ver2.benchmark import TimeDependentQueryExecutor
-    from experiments.small_test_ver2.core.io_loaders import load_timesteps_and_frequencies
+    from benchmark import TimeDependentQueryExecutor
+    from core.io_loaders import load_timesteps_and_frequencies
     import psycopg2
 
     # 既存のMVを全て削除（統一された初期状態を保証）
