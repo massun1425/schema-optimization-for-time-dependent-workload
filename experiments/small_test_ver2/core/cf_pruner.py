@@ -74,9 +74,10 @@ class CFPruner:
         gurobi_output: int = 0,
         use_parallel: bool = False,
         max_workers: Optional[int] = 16,
+        inherit_parent_constraints: bool = True,
     ):
         """Initialize the CF pruner.
-        
+
         Args:
             node_list: List of node IDs (MV candidates)
             u_ij: Utility matrix [I][J]
@@ -89,6 +90,7 @@ class CFPruner:
             gurobi_output: Gurobi log level (0=off, 1=on)
             use_parallel: Enable parallel processing (default: False)
             max_workers: Maximum number of worker processes (default: CPU count)
+            inherit_parent_constraints: Propagate parent boundary constraints to child nodes (default: True)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -99,6 +101,7 @@ class CFPruner:
         self.migration_cost = migration_cost
         self.freq = query_frequency_by_timestep
         self.gurobi_output = gurobi_output
+        self.inherit_parent_constraints = inherit_parent_constraints
         
         self.I = len(u_ij)  # Number of queries
         self.T = len(timesteps)
@@ -106,18 +109,18 @@ class CFPruner:
         
         # Build the Workload Summary Tree
         self.tree = WorkloadSummaryTree(self.T)
-        
+
         # Pre-compute candidates once (optimization to avoid redundant filtering)
         # This is the same logic as TimeDependentOptimizer.initialize_candidates()
         self.cand_j = self._initialize_candidates()
-        
+
         # Parallel processing settings
         self.use_parallel = use_parallel
         if max_workers is None:
             self.max_workers = multiprocessing.cpu_count()
         else:
             self.max_workers = max_workers
-        
+
         logger.info(
             f"CFPruner initialized: T={self.T}, J={self.J}, "
             f"candidates={len(self.cand_j)}, "
@@ -359,6 +362,7 @@ class CFPruner:
                         self.freq,
                         self.cand_j,
                         self.gurobi_output,
+                        self.inherit_parent_constraints,
                     )
                     future_to_task[future] = node
                 
@@ -424,6 +428,51 @@ class CFPruner:
         
         return promising_mvs
     
+    def _aggregate_frequencies(self, node: TreeNode) -> Dict[str, List[float]]:
+        """Aggregate frequencies over the node's period into 3 representative timesteps.
+
+        Splits [min_idx, max_idx] into 3 equal partitions and sums frequencies
+        within each partition, assigning totals to min, median, max timesteps.
+        When the period is too short to partition (duration < 3), the original
+        per-timestep frequencies are used as-is.
+        """
+        start_idx = node.min_idx
+        end_idx = node.max_idx
+        duration = end_idx - start_idx
+
+        aggregated_freq: Dict[str, List[float]] = {}
+        num_queries = self.I
+
+        if duration < 3:
+            for t_idx in [node.min_idx, node.median_idx, node.max_idx]:
+                ts_name = self.timesteps[t_idx]
+                aggregated_freq[ts_name] = self.freq[ts_name]
+            return aggregated_freq
+
+        partition_size = duration / 3.0
+        b1 = int(start_idx + partition_size)
+        b2 = int(start_idx + partition_size * 2)
+
+        ranges = [
+            (start_idx, b1),
+            (b1, b2),
+            (b2, end_idx + 1),
+        ]
+        target_indices = [node.min_idx, node.median_idx, node.max_idx]
+
+        for range_idx, (r_start, r_end) in enumerate(ranges):
+            total_freqs = [0.0] * num_queries
+            for t in range(r_start, r_end):
+                if t >= len(self.timesteps):
+                    continue
+                ts_name = self.timesteps[t]
+                for q in range(num_queries):
+                    total_freqs[q] += self.freq[ts_name][q]
+            target_ts_name = self.timesteps[target_indices[range_idx]]
+            aggregated_freq[target_ts_name] = total_freqs
+
+        return aggregated_freq
+
     def _recursive_solve(
         self,
         node: TreeNode,
@@ -461,29 +510,33 @@ class CFPruner:
         timestep_indices = [node.min_idx, node.median_idx, node.max_idx]
         
         # Prepare fixed MV constraints based on parent boundaries
-        # Paper Section 4.3.2: "child node solves a local ILP so that the 
+        # Paper Section 4.3.2: "child node solves a local ILP so that the
         # optimized column families at the min/max time steps are identical
         # to the ones found at the same time steps in the parent workload"
         fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
-        
-        # Left child: fix min to parent's min, max to parent's median
-        if is_left_child and parent_min_mvs:
-            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Left child: fixing min (t={node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_left_child and parent_max_mvs:
-            # For left child, parent_max_mvs contains parent's median MVs
-            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Left child: fixing max (t={node.max_idx}) with {len(parent_max_mvs)} MVs")
-        
-        # Right child: fix min to parent's median, max to parent's max
-        if is_right_child and parent_min_mvs:
-            # For right child, parent_min_mvs contains parent's median MVs
-            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Right child: fixing min (t={node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_right_child and parent_max_mvs:
-            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Right child: fixing max (t={node.max_idx}) with {len(parent_max_mvs)} MVs")
+
+        if self.inherit_parent_constraints:
+            # Left child: fix min to parent's min, max to parent's median
+            if is_left_child and parent_min_mvs:
+                fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Left child: fixing min (t={node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_left_child and parent_max_mvs:
+                # For left child, parent_max_mvs contains parent's median MVs
+                fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Left child: fixing max (t={node.max_idx}) with {len(parent_max_mvs)} MVs")
+
+            # Right child: fix min to parent's median, max to parent's max
+            if is_right_child and parent_min_mvs:
+                # For right child, parent_min_mvs contains parent's median MVs
+                fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Right child: fixing min (t={node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_right_child and parent_max_mvs:
+                fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Right child: fixing max (t={node.max_idx}) with {len(parent_max_mvs)} MVs")
             
+        # Aggregate frequencies over the node's period (same as UtilityPruner)
+        aggregated_freq = self._aggregate_frequencies(node)
+
         # Create and solve local ILP
         local_optimizer = LocalILPOptimizer(
             node_list=self.node_list,
@@ -494,7 +547,7 @@ class CFPruner:
             timestep_indices=timestep_indices,
             all_timesteps=self.timesteps,
             migration_cost=self.migration_cost,
-            query_frequency_by_timestep=self.freq,
+            query_frequency_by_timestep=aggregated_freq,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
             candidate_indices=self.cand_j,  # ★ 事前計算された候補を渡す
             gurobi_output=self.gurobi_output,
@@ -607,6 +660,7 @@ def _solve_node_static(
     freq: Dict[str, List[float]],
     cand_j: List[int],
     gurobi_output: int,
+    inherit_parent_constraints: bool = True,
 ) -> dict:
     """Solve local ILP for a single tree node (static function for parallel processing).
     
@@ -702,20 +756,21 @@ def _solve_node_static(
     
     # Prepare fixed MV constraints based on parent boundaries
     fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
-    
-    # Left child: fix min to parent's min, max to parent's median
-    if is_left_child:
-        if parent_min_mvs:
-            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-        if parent_max_mvs:
-            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
-    
-    # Right child: fix min to parent's median, max to parent's max
-    if is_right_child:
-        if parent_min_mvs:
-            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-        if parent_max_mvs:
-            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+
+    if inherit_parent_constraints:
+        # Left child: fix min to parent's min, max to parent's median
+        if is_left_child:
+            if parent_min_mvs:
+                fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+            if parent_max_mvs:
+                fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+
+        # Right child: fix min to parent's median, max to parent's max
+        if is_right_child:
+            if parent_min_mvs:
+                fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+            if parent_max_mvs:
+                fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
     
     # Create and solve local ILP
     local_optimizer = LocalILPOptimizer(

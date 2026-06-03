@@ -54,7 +54,6 @@ class UtilityPruner:
         deeplist: List,
         gurobi_output: int = 0,
         local_mip_gap: Optional[float] = None,
-        inherit_parent_constraints: bool = True,
     ):
         """初期化.
 
@@ -73,7 +72,6 @@ class UtilityPruner:
             deeplist: 各クエリの深さ情報
             gurobi_output: Gurobi 出力レベル (0=off)
             local_mip_gap: WSTローカルILPに適用するGurobi相対ギャップ (例: 0.01=1%)
-            inherit_parent_constraints: 親ノードの境界制約を子ノードに伝播するか (default: True)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -86,7 +84,6 @@ class UtilityPruner:
         self.per_timestep_seeds = per_timestep_seeds
         self.gurobi_output = gurobi_output
         self.local_mip_gap = local_mip_gap
-        self.inherit_parent_constraints = inherit_parent_constraints
 
         # 近傍拡大用
         self.qm = qm
@@ -195,12 +192,16 @@ class UtilityPruner:
 
         t0 = time.time()
 
-        # --- Step 1b: 各タイムステップの seeds を収集（近傍拡大なし）---
+        # --- Step 1b: 各タイムステップの seeds を近傍拡大 ---
+        expanded_seeds: Dict[str, Set[int]] = {}
         all_seed_union = set()
-        for seeds in self.per_timestep_seeds.values():
-            all_seed_union.update(seeds)
 
-        logger.info(f"全 Seed 和集合: {len(all_seed_union)} candidates")
+        for ts_name, seeds in self.per_timestep_seeds.items():
+            expanded = self.expand_neighbors(seeds)
+            expanded_seeds[ts_name] = expanded
+            all_seed_union.update(expanded)
+
+        logger.info(f"全 Seed 和集合 (近傍拡大後): {len(all_seed_union)} candidates")
 
         # --- WST 構築 ---
         if self.T < 3:
@@ -222,6 +223,7 @@ class UtilityPruner:
             parent_min_mvs=set(),
             parent_max_mvs=set(),
             promising_mvs=promising_mvs,
+            expanded_seeds=expanded_seeds,
             is_left_child=False,
             is_right_child=False,
         )
@@ -245,14 +247,16 @@ class UtilityPruner:
     def _build_node_candidates(
         self,
         tree_node: TreeNode,
+        expanded_seeds: Dict[str, Set[int]],
         parent_boundary_mvs: Set[int],
     ) -> tuple[List[int], dict]:
         """WST ノードの候補集合を構築する.
 
-        候補 = 範囲内タイムステップの元の Seed ∪ 親境界 MV（近傍拡大なし）
+        候補 = 範囲内タイムステップの拡大 Seed 和集合 ∪ 親境界 MV
 
         Args:
             tree_node: 現在の WST ノード
+            expanded_seeds: {timestep_name: 拡大済み Seed}
             parent_boundary_mvs: 親ノードの境界で使われた MV
 
         Returns:
@@ -265,12 +269,21 @@ class UtilityPruner:
                 if ts_name in self.per_timestep_seeds:
                     seed_indices.update(self.per_timestep_seeds[ts_name])
 
-        boundary_indices = parent_boundary_mvs - seed_indices
-        candidate_set = seed_indices | parent_boundary_mvs
+        expanded_set = set()
+        for t_idx in range(tree_node.min_idx, tree_node.max_idx + 1):
+            if t_idx < len(self.timesteps):
+                ts_name = self.timesteps[t_idx]
+                if ts_name in expanded_seeds:
+                    expanded_set.update(expanded_seeds[ts_name])
+
+        neighbor_indices = expanded_set - seed_indices
+        boundary_indices = parent_boundary_mvs - expanded_set
+        
+        candidate_set = expanded_set | parent_boundary_mvs
 
         stats = {
             "num_seeds": len(seed_indices),
-            "num_neighbors": 0,
+            "num_neighbors": len(neighbor_indices),
             "num_boundary": len(boundary_indices),
             "total": len(candidate_set)
         }
@@ -340,16 +353,21 @@ class UtilityPruner:
         parent_min_mvs: Set[int],
         parent_max_mvs: Set[int],
         promising_mvs: Set[int],
+        expanded_seeds: Dict[str, Set[int]],
         is_left_child: bool = False,
         is_right_child: bool = False,
     ) -> dict:
         """WST ノードで局所 ILP を解き、再帰的に子ノードへ伝播.
+
+        CFPruner._recursive_solve と同等のロジック。
+        違い: candidate_indices をノードごとに Seed ベースで構築する。
 
         Args:
             tree_node: 現在の WST ノード
             parent_min_mvs: 親の min 時刻の MV (境界制約)
             parent_max_mvs: 親の max 時刻の MV (境界制約)
             promising_mvs: 有望 MV の蓄積用集合 (in-place 更新)
+            expanded_seeds: 拡大済み Seed 辞書
             is_left_child: 左子ノードかどうか
             is_right_child: 右子ノードかどうか
 
@@ -370,20 +388,19 @@ class UtilityPruner:
         # --- 固定境界の構築 (CFPruner と同一) ---
         fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
 
-        if self.inherit_parent_constraints:
-            if is_left_child and parent_min_mvs:
-                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-                logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-            if is_left_child and parent_max_mvs:
-                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-                logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+        if is_left_child and parent_min_mvs:
+            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+            logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+        if is_left_child and parent_max_mvs:
+            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+            logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
-            if is_right_child and parent_min_mvs:
-                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-                logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-            if is_right_child and parent_max_mvs:
-                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-                logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+        if is_right_child and parent_min_mvs:
+            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+            logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+        if is_right_child and parent_max_mvs:
+            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+            logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
         # --- 候補集合の構築 ---
         parent_boundary_mvs = set()
@@ -391,7 +408,7 @@ class UtilityPruner:
             parent_boundary_mvs.update(fixed_set)
 
         node_candidates, stats = self._build_node_candidates(
-            tree_node, parent_boundary_mvs
+            tree_node, expanded_seeds, parent_boundary_mvs
         )
         
         # ターミナルへの詳細出力
@@ -453,6 +470,7 @@ class UtilityPruner:
                 parent_min_mvs=min_mvs,
                 parent_max_mvs=median_mvs,
                 promising_mvs=promising_mvs,
+                expanded_seeds=expanded_seeds,
                 is_left_child=True,
                 is_right_child=False,
             )
@@ -463,6 +481,7 @@ class UtilityPruner:
                 parent_min_mvs=median_mvs,
                 parent_max_mvs=max_mvs,
                 promising_mvs=promising_mvs,
+                expanded_seeds=expanded_seeds,
                 is_left_child=False,
                 is_right_child=True,
             )

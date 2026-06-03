@@ -64,6 +64,7 @@ class UtilityPrunerIterative:
         max_iterations: int = 5,  # 各ノードでの最大イテレーション数
         use_parallel: bool = False,
         max_workers: Optional[int] = None,
+        inherit_parent_constraints: bool = True,
     ):
         """初期化.
 
@@ -85,6 +86,7 @@ class UtilityPrunerIterative:
             max_iterations: 各ノードでの最大イテレーション数
             use_parallel: 並列処理を有効にするか (default: False)
             max_workers: 最大ワーカー数 (default: CPU数)
+            inherit_parent_constraints: 親ノードの境界制約を子ノードに伝播するか (default: True)
         """
         self.node_list = node_list
         self.u_ij = u_ij
@@ -98,6 +100,7 @@ class UtilityPrunerIterative:
         self.gurobi_output = gurobi_output
         self.local_mip_gap = local_mip_gap
         self.max_iterations = max_iterations
+        self.inherit_parent_constraints = inherit_parent_constraints
 
         # 近傍拡大用
         self.qm = qm
@@ -320,6 +323,7 @@ class UtilityPrunerIterative:
                         gurobi_output=self.gurobi_output,
                         local_mip_gap=self.local_mip_gap,
                         max_iterations=self.max_iterations,
+                        inherit_parent_constraints=self.inherit_parent_constraints,
                     )
                     futures[future] = node
 
@@ -613,19 +617,20 @@ class UtilityPrunerIterative:
         # --- 固定境界の構築 ---
         fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
 
-        if is_left_child and parent_min_mvs:
-            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_left_child and parent_max_mvs:
-            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+        if self.inherit_parent_constraints:
+            if is_left_child and parent_min_mvs:
+                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Left child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_left_child and parent_max_mvs:
+                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Left child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
-        if is_right_child and parent_min_mvs:
-            fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
-            logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
-        if is_right_child and parent_max_mvs:
-            fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
-            logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
+            if is_right_child and parent_min_mvs:
+                fixed_mvs_by_timestep[tree_node.min_idx] = parent_min_mvs.copy()
+                logger.info(f"  → Right child: fixing min (t={tree_node.min_idx}) with {len(parent_min_mvs)} MVs")
+            if is_right_child and parent_max_mvs:
+                fixed_mvs_by_timestep[tree_node.max_idx] = parent_max_mvs.copy()
+                logger.info(f"  → Right child: fixing max (t={tree_node.max_idx}) with {len(parent_max_mvs)} MVs")
 
         # 親境界 MV の集約
         parent_boundary_mvs = set()
@@ -744,6 +749,7 @@ def _solve_node_iterative_static(
     gurobi_output: int,
     local_mip_gap: Optional[float],
     max_iterations: int,
+    inherit_parent_constraints: bool = True,
 ) -> dict:
     """WST ノードで反復的最適化を実行（並列処理用の静的関数）.
 
@@ -767,15 +773,16 @@ def _solve_node_iterative_static(
     # --- 固定境界の構築 ---
     fixed_mvs_by_timestep: Dict[int, Set[int]] = {}
 
-    if is_left_child and parent_min_mvs:
-        fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-    if is_left_child and parent_max_mvs:
-        fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+    if inherit_parent_constraints:
+        if is_left_child and parent_min_mvs:
+            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+        if is_left_child and parent_max_mvs:
+            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
 
-    if is_right_child and parent_min_mvs:
-        fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
-    if is_right_child and parent_max_mvs:
-        fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
+        if is_right_child and parent_min_mvs:
+            fixed_mvs_by_timestep[node.min_idx] = parent_min_mvs.copy()
+        if is_right_child and parent_max_mvs:
+            fixed_mvs_by_timestep[node.max_idx] = parent_max_mvs.copy()
 
     # 親境界 MV の集約
     parent_boundary_mvs = set()
