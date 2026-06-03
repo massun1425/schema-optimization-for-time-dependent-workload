@@ -29,43 +29,43 @@ restart_container() {
 
 
 ######8time######
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase 6 \
-#   --query-set job \
-#   --exp-suffix _8_mono \
-#   --optimization-mode adaptive \
-#   --window-size 2 \
-#   --noise-ratio 0.0 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   --ease \
-#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_8_mono.txt
-# echo "完了時刻: $(date)"
 
-# restart_container
-# echo ""
-# echo "------------------------------------------------------------------------"
-# echo "開始時刻: $(date)"
-# echo "------------------------------------------------------------------------"
-# python ${SCRIPT_DIR}/run_experiment_normal.py \
-#   --phase 6 \
-#   --query-set job \
-#   --exp-suffix _8_mono \
-#   --optimization-mode adaptive \
-#   --window-size 4 \
-#   --noise-ratio 0.0 \
-#   --b-max 100 \
-#   --use-docker \
-#   --recalc \
-#   --ease \
-#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_8_mono.txt
-# echo "完了時刻: $(date)"
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase 6 \
+  --query-set job \
+  --exp-suffix _20_mono \
+  --optimization-mode adaptive \
+  --window-size 2 \
+  --noise-ratio 0.0 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_8_mono.txt
+echo "完了時刻: $(date)"
+
+
+echo ""
+echo "------------------------------------------------------------------------"
+echo "開始時刻: $(date)"
+echo "------------------------------------------------------------------------"
+python ${SCRIPT_DIR}/run_experiment_normal.py \
+  --phase 6 \
+  --query-set job \
+  --exp-suffix _20_mono \
+  --optimization-mode adaptive \
+  --window-size 4 \
+  --noise-ratio 0.0 \
+  --b-max 100 \
+  --use-docker \
+  --recalc \
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_8_mono.txt
+echo "完了時刻: $(date)"
 
 
 # restart_container
@@ -97,8 +97,7 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_8_mono_opt.txt
 # echo "完了時刻: $(date)"
 
-# ######12time######
-# restart_container
+
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -117,7 +116,6 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_12_mono.txt
 # echo "完了時刻: $(date)"
 
-# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -167,7 +165,6 @@ restart_container() {
 # echo "完了時刻: $(date)"
 
 # ######24time######
-# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -186,7 +183,6 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_24_mono.txt
 # echo "完了時刻: $(date)"
 
-# restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -235,8 +231,7 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_24_mono_opt.txt
 # echo "完了時刻: $(date)"
 
-# ######28time######
-# restart_container
+# # ######28time######
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -255,7 +250,7 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_28_mono.txt
 # echo "完了時刻: $(date)"
 
-# restart_container
+# # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -324,7 +319,7 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_32_mono.txt
 # echo "完了時刻: $(date)"
 
-# restart_container
+# # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -393,7 +388,7 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_36_mono.txt
 # echo "完了時刻: $(date)"
 
-# restart_container
+# # restart_container
 # echo ""
 # echo "------------------------------------------------------------------------"
 # echo "開始時刻: $(date)"
@@ -637,63 +632,63 @@ restart_container() {
 #   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_36_mono.txt
 # echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase 6 \
-  --query-set job \
-  --exp-suffix _8_mono \
-  --optimization-mode static \
-  --static-timestep average \
-  --static-algorithm utility \
-  --b-max 100 \
-  --use-docker 
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase 6 \
+#   --query-set job \
+#   --exp-suffix _8_mono \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --b-max 100 \
+#   --use-docker 
+# echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase 6 \
-  --query-set job \
-  --exp-suffix _16_mono \
-  --optimization-mode static \
-  --static-timestep average \
-  --static-algorithm utility \
-  --b-max 100 \
-  --use-docker 
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase 6 \
+#   --query-set job \
+#   --exp-suffix _16_mono \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --b-max 100 \
+#   --use-docker 
+# echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase 6 \
-  --query-set job \
-  --exp-suffix _24_mono \
-  --optimization-mode static \
-  --static-timestep average \
-  --static-algorithm utility \
-  --b-max 100 \
-  --use-docker 
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase 6 \
+#   --query-set job \
+#   --exp-suffix _24_mono \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --b-max 100 \
+#   --use-docker 
+# echo "完了時刻: $(date)"
 
-echo ""
-echo "------------------------------------------------------------------------"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase 6 \
-  --query-set job \
-  --exp-suffix _32_mono \
-  --optimization-mode static \
-  --static-timestep average \
-  --static-algorithm utility \
-  --b-max 100 \
-  --use-docker 
-echo "完了時刻: $(date)"
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase 6 \
+#   --query-set job \
+#   --exp-suffix _32_mono \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --b-max 100 \
+#   --use-docker 
+# echo "完了時刻: $(date)"
 

@@ -77,6 +77,11 @@ class TwoStepOptimizer:
         # Filter candidates with positive utility
         self.cand_j = self._initialize_candidates()
 
+        # Sparse utility index: y[i,j,t] is created only when u_ij[i][j] > 0
+        self.pos_js_by_i: Dict[int, List[int]] = {}
+        self.pos_is_by_j: Dict[int, List[int]] = {}
+        self._build_sparse_utility_index()
+
         self.model: gp.Model | None = None
         self.y: Dict[tuple, gp.Var] = {}  # y[i,j,t]: query i uses MV j at time t
         self.z: Dict[tuple, gp.Var] = {}  # z[j,t]: MV j exists at time t
@@ -95,6 +100,17 @@ class TwoStepOptimizer:
                 candidates.append(j)
         return candidates
 
+    def _build_sparse_utility_index(self) -> None:
+        """Build sparse index for positive-utility (i, j) pairs on candidates."""
+        self.pos_js_by_i = {i: [] for i in range(self.I)}
+        self.pos_is_by_j = {j: [] for j in self.cand_j}
+
+        for i in range(self.I):
+            for j in self.cand_j:
+                if self.u_ij[i][j] > 0:
+                    self.pos_js_by_i[i].append(j)
+                    self.pos_is_by_j[j].append(i)
+
     def _build_model(self) -> None:
         """Build the Gurobi model."""
         self.model = gp.Model("TwoStepMV")
@@ -104,7 +120,7 @@ class TwoStepOptimizer:
         # Variables for both timesteps (t=0: prev, t=1: curr)
         for t in [0, 1]:
             for i in range(self.I):
-                for j in self.cand_j:
+                for j in self.pos_js_by_i.get(i, []):  # Sparse y: only positive-utility pairs
                     self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
 
             for j in self.cand_j:
@@ -114,9 +130,9 @@ class TwoStepOptimizer:
                 else:
                     self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
 
-        # Creation variables (only for t=1)
+        # Creation variables (only for t=1); relaxed to continuous — exact under c >= z1-z0, c <= 1
         for j in self.cand_j:
-            self.c[j, 1] = m.addVar(vtype=gp.GRB.BINARY, name=f"c_{j}_1")
+            self.c[j, 1] = m.addVar(vtype=gp.GRB.CONTINUOUS, lb=0.0, ub=1.0, name=f"c_{j}_1")
 
         m.update()
 
@@ -126,11 +142,12 @@ class TwoStepOptimizer:
 
         for t, freq in [(0, self.prev_freq), (1, self.curr_freq)]:
             for i in range(self.I):
-                for j in self.cand_j:
+                for j in self.pos_js_by_i.get(i, []):  # Sparse: only positive-utility pairs
                     benefit = self.u_ij[i][j] * freq[i]
-                    if isinstance(self.y[i, j, t], gp.Var):
-                        workload_cost -= benefit * self.y[i, j, t]
-                    elif self.y[i, j, t] == 1:
+                    y_var = self.y.get((i, j, t), 0)
+                    if isinstance(y_var, gp.Var):
+                        workload_cost -= benefit * y_var
+                    elif y_var == 1:
                         workload_cost -= benefit
 
         # Migration cost at t=1
@@ -147,19 +164,24 @@ class TwoStepOptimizer:
         # --- Constraints ---
         for t in [0, 1]:
             for i in range(self.I):
-                for j in self.cand_j:
+                for j in self.pos_js_by_i.get(i, []):  # Sparse: only positive-utility pairs
                     # y <= z (usage implies materialization)
                     z_val = self.z[j, t]
+                    y_var = self.y.get((i, j, t))
+                    if y_var is None:
+                        continue
                     if isinstance(z_val, gp.Var):
-                        m.addConstr(self.y[i, j, t] <= z_val)
+                        m.addConstr(y_var <= z_val)
                     elif z_val == 0:
-                        m.addConstr(self.y[i, j, t] == 0)
+                        m.addConstr(y_var == 0)
                     # If z_val == 1, y is free (0 or 1)
 
         # At most one MV per query per timestep
         for t in [0, 1]:
             for i in range(self.I):
-                m.addConstr(gp.quicksum(self.y[i, j, t] for j in self.cand_j) <= 1)
+                sparse_ys = [self.y[i, j, t] for j in self.pos_js_by_i.get(i, []) if (i, j, t) in self.y]
+                if sparse_ys:
+                    m.addConstr(gp.quicksum(sparse_ys) <= 1)
 
         # Storage constraint (only for t=1 if t=0 is fixed)
         for t in [0, 1]:

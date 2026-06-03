@@ -103,4 +103,5 @@ CMD ["postgres", \
      "-c", "max_parallel_workers=8", \
      "-c", "max_parallel_workers_per_gather=2", \
      "-c", "max_parallel_maintenance_workers=2", \
-     "-c", "jit=off"]
+     "-c", "jit=off", \
+     "-c", "max_locks_per_transaction=256"]
