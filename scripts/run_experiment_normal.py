@@ -918,7 +918,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self, use_neurocard=False, use_deepdb=False, use_sampling=True, compare=False):
+    def phase5_calculate_migration_costs(self, use_neurocard=False, use_deepdb=False, use_sampling=True, compare=False, sampling_high=False):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -949,9 +949,13 @@ class NormalModeExperiment:
                     CalculatorClass = DeepDBMigrationCostCalculator
                     self.print_info("DeepDBを使用してサイズ推定を行います")
                 elif use_sampling:
-                    from migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
+                    if sampling_high:
+                        from migration.sampling_migration_cost_calculator_high import SamplingMigrationCostCalculator
+                        self.print_info("サンプリング（高サンプル率）を使用してサイズ推定を行います")
+                    else:
+                        from migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
+                        self.print_info("サンプリング（低サンプル率）を使用してサイズ推定を行います")
                     CalculatorClass = SamplingMigrationCostCalculator
-                    self.print_info("サンプリングを使用してサイズ推定を行います")
                 else:
                     from migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
                     CalculatorClass = SimpleMigrationCostCalculator
@@ -2927,7 +2931,7 @@ class NormalModeExperiment:
         
         return True
     
-    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None, inherit_parent_constraints=True):
+    def run_all_phases(self, optimization_mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, ease_mode=False, noise_ratio=0.0, noise_query_dir=None, b_max=None, inherit_parent_constraints=True, sampling_high=False):
         """全フェーズを順次実行
 
         Args:
@@ -2952,7 +2956,7 @@ class NormalModeExperiment:
             (2, "クエリパース", self.phase2_parse_queries),
             (3, "JSONノードID付加", self.phase3_annotate_json),
             (4, "マイグレーションプラン列挙", self.phase4_enumerate_migration_plans),
-            (5, "マイグレーションコスト計算", self.phase5_calculate_migration_costs),
+            (5, "マイグレーションコスト計算", lambda: self.phase5_calculate_migration_costs(use_sampling=True, sampling_high=sampling_high)),
         ]
 
         # 最適化フェーズ（モードに応じて選択）
@@ -3068,6 +3072,13 @@ def main():
         '--use-sampling',
         action='store_true',
         help='サンプリングを使用してコスト推定を行う'
+    )
+    parser.add_argument(
+        '--sampling-rate',
+        type=str,
+        default='low',
+        choices=['low', 'high'],
+        help='サンプリング率の選択 (low: 低サンプル率/Correlated Sampling, high: 高サンプル率/BERNOULLI) デフォルト: low'
     )
     parser.add_argument(
         '--sampling-parallel',
@@ -3195,6 +3206,7 @@ def main():
             noise_query_dir=args.noise_query_dir,
             b_max=args.b_max,
             inherit_parent_constraints=not args.no_wst_parent_constraints,
+            sampling_high=(args.sampling_rate == 'high'),
         )
     elif args.phase == 'post-opt':
         success = exp.run_post_optimization_phases(
@@ -3226,7 +3238,8 @@ def main():
             use_neurocard=args.use_neurocard,
             use_deepdb=args.use_deepdb,
             use_sampling=args.use_sampling,
-            compare=args.compare
+            compare=args.compare,
+            sampling_high=(args.sampling_rate == 'high')
         )
     elif args.phase == '6':
         success = exp.phase6_optimize(

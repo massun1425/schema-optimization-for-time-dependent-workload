@@ -6,13 +6,13 @@
 
 - [概要](#概要)
 - [前提条件・セットアップ](#前提条件セットアップ)
-- [ワークロードの準備（Redbench）](#ワークロードの準備redbench)
 - [実行手順（フェーズ別）](#実行手順フェーズ別)
 - [コマンドライン引数リファレンス](#コマンドライン引数リファレンス)
 - [実験スクリプト（シェル）](#実験スクリプトシェル)
 - [入力・出力ファイル](#入力出力ファイル)
 - [ディレクトリ構造](#ディレクトリ構造)
 - [トラブルシューティング](#トラブルシューティング)
+- [付録: 新規ワークロードの生成（Redbench）](#付録-新規ワークロードの生成redbench)
 
 ---
 
@@ -48,89 +48,29 @@ pip install -r requirements.txt
 1. [Gurobi公式サイト](https://www.gurobi.com/)でライセンスを取得（学術利用は無償）
 2. ライセンスファイル（`gurobi.lic`）をプロジェクトルートに配置
 
-```
-mv-query-optimization/
-└── gurobi.lic   ← ここに配置
-```
-
 ### 3. PostgreSQL（Docker）
 
 Dockerfileを使ってIMDBデータ込みのPostgreSQLコンテナをビルド・起動します。
 
 ```bash
 # コンテナをビルド（初回のみ・数分かかります）
-docker build -t mv_postgres .
+docker build -t imdb-postgres .
 
 # コンテナを起動
 docker run -d \
   --name mv_postgres \
+  --shm-size=4g \
+  --cpuset-cpus="0-7" \
+  --memory=16g \
   -p 5432:5432 \
-  mv_postgres
+  imdb-postgres
 
 # 起動確認
 docker exec mv_postgres pg_isready -U postgres
 ```
 
 > **注意**: Dockerfileはスキーマ作成・データロード・インデックス作成を自動で行います。
-
----
-
-## ワークロードの準備（Redbench）
-
-本実験のクエリセットは Redbench を用いて生成します。
-Redbench によるワークロード生成自体の手順は [`Redbench/README.md`](Redbench/README.md) を参照してください。
-
-Redbench が `workload.csv` を出力したあと、以下の2ステップで本実験で使用できる形式に変換します。
-
-### ステップ1: クエリセットの生成
-
-`workload.csv` から `01_queries/` 以下のSQLファイルと頻度JSONを生成します。
-
-```bash
-python scripts/generate_queryset_from_workload_csv.py \
-  --csv-path <workload.csv のパス> \
-  --output-query-dir 01_queries/<query_set名> \
-  --start 2024-05-25T00:00:00 \
-  --end   2024-05-26T23:59:59 \
-  --step-hours 4 \
-  --freq-suffix _my_workload \
-  --sanitize-ceb
-```
-
-| 引数 | 説明 |
-|------|------|
-| `--csv-path` | Redbench が生成した workload.csv |
-| `--output-query-dir` | 出力先（例: `01_queries/cluster_55_53_combined_ex`） |
-| `--start` / `--end` | 対象期間の開始・終了時刻 |
-| `--step-hours` | タイムステップの時間幅（デフォルト: 4時間） |
-| `--freq-suffix` | 頻度JSONファイルの識別サフィックス |
-| `--sanitize-ceb` | CEB系クエリを `SELECT COUNT(*)` 形式に変換 |
-| `--clean-output` | 出力先の既存 .sql を削除してから生成 |
-
-**出力**:
-- `01_queries/<query_set>/*.sql` — SQLクエリファイル
-- `01_queries/<query_set>/frequency_time_dependent<suffix>.json` — タイムステップごとの頻度設定
-
-### ステップ2: テーブル名の正規化
-
-Redbench が生成するSQLには `movie_info_1` のようなバージョンサフィックスが付きます。
-実際のIMDBデータベースのテーブル名（`movie_info`）に合わせて正規化します。
-
-```bash
-python scripts/normalize_queryset_table_versions.py \
-  --input-dir 01_queries/<query_set名> \
-  --in-place \
-  --copy-frequency-json
-```
-
-| 引数 | 説明 |
-|------|------|
-| `--input-dir` | 正規化対象のクエリセットディレクトリ |
-| `--in-place` | 入力ディレクトリを直接上書き |
-| `--output-dir` | 別ディレクトリに出力する場合に指定（`--in-place` と排他） |
-| `--copy-frequency-json` | 頻度JSONもコピー（`--output-dir` 使用時に有効） |
-
-正規化後、`01_queries/<query_set>/` が本実験のフェーズ1以降で使用できる形式になります。
+> データを永続化したい場合は `-v <ボリューム名>:/var/lib/postgresql` を `docker run` に追加してください。
 
 ---
 
@@ -505,8 +445,14 @@ docker logs mv_postgres | tail -30
 
 # 再ビルドが必要な場合
 docker rm mv_postgres
-docker build -t mv_postgres .
-docker run -d --name mv_postgres -p 5432:5432 mv_postgres
+docker build -t imdb-postgres .
+docker run -d \
+  --name mv_postgres \
+  --shm-size=4g \
+  --cpuset-cpus="0-7" \
+  --memory=16g \
+  -p 5432:5432 \
+  imdb-postgres
 ```
 
 ### PostgreSQL接続エラー
@@ -538,24 +484,67 @@ python scripts/recalculate_costs.py --query-set job --overwrite
 
 ---
 
-## 便利なSQLクエリ
+---
 
-### MVサイズ一覧
+## 付録: 新規ワークロードの生成（Redbench）
 
-```sql
-SELECT matviewname AS mv_name,
-       pg_size_pretty(pg_total_relation_size(pg_class.oid)) AS total_size
-FROM pg_matviews
-JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
-WHERE pg_class.relkind = 'm'
-ORDER BY pg_total_relation_size(pg_class.oid) DESC;
+既存のクエリセット（`01_queries/`）を使う場合は不要です。新しいワークロードを生成する場合のみ参照してください。
+
+Redbench によるワークロード生成自体の手順は [`Redbench/README.md`](Redbench/README.md) を参照してください。Redbench が `workload.csv` を出力したあと、以下の2ステップで本実験で使用できる形式に変換します。
+
+### ステップ1: クエリセットの生成
+
+`workload.csv` から `01_queries/` 以下のSQLファイルと頻度JSONを生成します。
+
+```bash
+WORKLOAD_CSV=<workload.csv のパス>
+QUERY_SET=<クエリセット名>        # 例: my_workload
+START=<開始時刻>                  # 例: 2024-05-25T00:00:00
+END=<終了時刻>                    # 例: 2024-05-26T23:59:59
+STEP_HOURS=<タイムステップ時間>   # 例: 4
+FREQ_SUFFIX=<頻度サフィックス>    # 例: _16_2_10
+
+python scripts/generate_queryset_from_workload_csv.py \
+  --csv-path ${WORKLOAD_CSV} \
+  --output-query-dir 01_queries/${QUERY_SET} \
+  --start ${START} \
+  --end   ${END} \
+  --step-hours ${STEP_HOURS} \
+  --freq-suffix ${FREQ_SUFFIX} \
+  --sanitize-ceb
 ```
 
-### MV合計サイズ
+| 引数 | 説明 |
+|------|------|
+| `--csv-path` | Redbench が生成した workload.csv |
+| `--output-query-dir` | 出力先（例: `01_queries/cluster_55_53_combined_ex`） |
+| `--start` / `--end` | 対象期間の開始・終了時刻 |
+| `--step-hours` | タイムステップの時間幅（デフォルト: 4時間） |
+| `--freq-suffix` | 頻度JSONファイルの識別サフィックス |
+| `--sanitize-ceb` | CEB系クエリを `SELECT COUNT(*)` 形式に変換 |
+| `--clean-output` | 出力先の既存 .sql を削除してから生成 |
 
-```sql
-SELECT pg_size_pretty(SUM(pg_total_relation_size(pg_class.oid))) AS total_mv_size
-FROM pg_matviews
-JOIN pg_class ON pg_class.relname = pg_matviews.matviewname
-WHERE pg_class.relkind = 'm';
+**出力**:
+- `01_queries/<query_set>/*.sql` — SQLクエリファイル
+- `01_queries/<query_set>/frequency_time_dependent<suffix>.json` — タイムステップごとの頻度設定
+
+### ステップ2: テーブル名の正規化
+
+Redbench が生成するSQLには `movie_info_1` のようなバージョンサフィックスが付きます。
+実際のIMDBデータベースのテーブル名（`movie_info`）に合わせて正規化します。
+
+```bash
+python scripts/normalize_queryset_table_versions.py \
+  --input-dir 01_queries/${QUERY_SET} \
+  --in-place \
+  --copy-frequency-json
 ```
+
+| 引数 | 説明 |
+|------|------|
+| `--input-dir` | 正規化対象のクエリセットディレクトリ |
+| `--in-place` | 入力ディレクトリを直接上書き |
+| `--output-dir` | 別ディレクトリに出力する場合に指定（`--in-place` と排他） |
+| `--copy-frequency-json` | 頻度JSONもコピー（`--output-dir` 使用時に有効） |
+
+正規化後、`01_queries/<query_set>/` が本実験のフェーズ1以降で使用できる形式になります。

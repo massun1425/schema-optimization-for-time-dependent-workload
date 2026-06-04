@@ -75,6 +75,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase 5 \
   --query-set ${QUERY_SET} \
   --use-sampling \
+  --sampling-rate high \
   --use-docker
 echo "完了時刻: $(date)"
 

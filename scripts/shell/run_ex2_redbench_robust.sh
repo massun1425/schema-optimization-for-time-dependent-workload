@@ -20,9 +20,9 @@ set -e
 SCRIPT_DIR="scripts"
 QUERY_SET="Redbench_synthetic"
 SUFFIX="_2h_x2"
-OUTPUT_DIR="time_dependent_output/${QUERY_SET}/log"
-RESULT_DIR="time_dependent_output/${QUERY_SET}/result_100M_robustness"
-BASE_DIR="time_dependent_output/${QUERY_SET}"
+OUTPUT_DIR="time_dependent_output/ex2/log"
+RESULT_DIR="time_dependent_output/ex2"
+BASE_DIR="time_dependent_output/Redbench_synthetic"
 
 echo "========================================================================"
 echo "実験開始: $(date)"
