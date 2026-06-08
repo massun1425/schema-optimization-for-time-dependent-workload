@@ -5,8 +5,8 @@ MV最適化ダッシュボード - FastAPI バックエンド
 HTML版ダッシュボードにデータを提供するAPIサーバー。
 
 起動方法:
-    cd scripts
-    source ../../../.venv/bin/activate
+    cd dashboard
+    source ../.venv/bin/activate
     uvicorn dashboard_api:app --host 0.0.0.0 --port 8000 --reload
 
 SSHポートフォワード:

@@ -1,19 +1,20 @@
 #!/bin/bash
 
-# タイムステップ数比較実験スクリプト（mono パターン）
-# タイムステップ数（8, 16, 24, 32）を変えた頻度ファイルを用いて
-# Dynamic(pruning有), Static(average, utility), Adaptive(w=4) を実行し
-# 結果を time_dependent_output/ex1_mono/cycles/ に集約する
+# result_100M_edbt 用実験スクリプト
+# 各周期設定（_16_1_10, _16_2_10, _16_3_10, _16_mono, _16_peak）に対して
+# Dynamic(pruning有/無), Static(average), Adaptive(w=4) を実行し
+# 結果を time_dependent_output/job/result_100M_edbt/ に集約する
 #
-# 使い方: bash scripts/shell/ex1_mono_cycle.sh
-#         nohup bash scripts/shell/ex1_mono_cycle.sh > ex1_mono_cycle.log 2>&1 &
+# 使い方: bash scripts/shell/run_16_ab.sh
+#         nohup bash scripts/shell/run_16_ab.sh > run_16_ab.log 2>&1 &
 
 set -e
 
 SCRIPT_DIR="scripts"
-OUTPUT_DIR="time_dependent_output/ex1_2/mono/log"
-RESULT_DIR="time_dependent_output/ex1_2/mono"
-BASE_DIR="time_dependent_output/job"
+OUTPUT_DIR="time_dependent_output/ex1_1/log"
+RESULT_DIR="time_dependent_output/ex1_1"
+BASE_DIR_JOB="time_dependent_output/job"
+BASE_DIR_REDBENCH="time_dependent_output/Redbench_synthetic"
 
 echo "========================================================================"
 echo "実験開始: $(date)"
@@ -35,66 +36,79 @@ restart_container() {
     echo ">>> PostgreSQL起動完了"
 }
 
+# pruning なし実行後に結果ファイルを _wo にリネームする関数
+rename_to_wo() {
+    local suffix=$1  # 例: _16_1_10
+    mv -f ${BASE_DIR}/td_mv_optimization_result${suffix}.json \
+          ${BASE_DIR}/td_mv_optimization_result${suffix}_wo.json
+    mv -f ${BASE_DIR}/benchmark_results_dynamic${suffix}.json \
+          ${BASE_DIR}/benchmark_results_dynamic${suffix}_wo.json
+}
+
 # ======================================================================
-# _8_mono
+# _16_2_10
 # ======================================================================
+
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_8_mono] Dynamic (pruning あり)"
+echo "[_16_2_10] Dynamic (pruning あり)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _8_mono_10 \
+  --exp-suffix _24_2_10 \
   --use-pruning \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_8_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_24_2_10.txt
 echo "完了時刻: $(date)"
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_8_mono] Static (average)"
+echo "[_16_2_10] Static (average)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode static \
   --static-timestep average \
   --static-algorithm utility \
-  --exp-suffix _8_mono_10 \
+  --exp-suffix _24_2_10 \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_8_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_24_2_10.txt
 echo "完了時刻: $(date)"
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_8_mono] Adaptive (w=4)"
+echo "[_16_2_10] Adaptive (w=4)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode adaptive \
   --window-size 4 \
-  --exp-suffix _8_mono_10 \
+  --exp-suffix _24_2_10 \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_8_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_24_2_10.txt
 echo "完了時刻: $(date)"
 
 # ======================================================================
@@ -109,15 +123,16 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _16_mono_10 \
+  --exp-suffix _24_mono \
   --use-pruning \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_24_mono.txt
 echo "完了時刻: $(date)"
 
 restart_container
@@ -128,16 +143,17 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode static \
   --static-timestep average \
   --static-algorithm utility \
-  --exp-suffix _16_mono_10 \
+  --exp-suffix _24_mono \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_16_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_24_mono.txt
 echo "完了時刻: $(date)"
 
 restart_container
@@ -148,143 +164,150 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode adaptive \
   --window-size 4 \
-  --exp-suffix _16_mono_10 \
+  --exp-suffix _24_mono \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_16_mono.txt
-echo "完了時刻: $(date)"
-
-# ======================================================================
-# _24_mono
-# ======================================================================
-
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "[_24_mono] Dynamic (pruning あり)"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _24_mono_10 \
-  --use-pruning \
-  --noise-ratio 0.0 \
-  --b-max 100 \
-  --recalc \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_24_mono.txt
-echo "完了時刻: $(date)"
-
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "[_24_mono] Static (average)"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode static \
-  --static-timestep average \
-  --static-algorithm utility \
-  --exp-suffix _24_mono_10 \
-  --noise-ratio 0.0 \
-  --b-max 100 \
-  --recalc \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_24_mono.txt
-echo "完了時刻: $(date)"
-
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "[_24_mono] Adaptive (w=4)"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode adaptive \
-  --window-size 4 \
-  --exp-suffix _24_mono_10 \
-  --noise-ratio 0.0 \
-  --b-max 100 \
-  --recalc \
-  --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_24_mono.txt
 echo "完了時刻: $(date)"
 
 # ======================================================================
-# _32_mono
+# _16_peak
 # ======================================================================
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_32_mono] Dynamic (pruning あり)"
+echo "[_16_peak] Dynamic (pruning あり)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _32_mono_10 \
+  --exp-suffix _24_peak \
   --use-pruning \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_32_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_24_peak.txt
 echo "完了時刻: $(date)"
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_32_mono] Static (average)"
+echo "[_16_peak] Static (average)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode static \
   --static-timestep average \
   --static-algorithm utility \
-  --exp-suffix _32_mono_10 \
+  --exp-suffix _24_peak \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_static_32_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_static_24_peak.txt
 echo "完了時刻: $(date)"
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_32_mono] Adaptive (w=4)"
+echo "[_16_peak] Adaptive (w=4)"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode adaptive \
   --window-size 4 \
-  --exp-suffix _32_mono_10 \
+  --exp-suffix _24_peak \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_32_mono.txt
+  --ease \
+  2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_24_peak.txt
 echo "完了時刻: $(date)"
 
+
 # ======================================================================
-# 結果を cycles/ に集約
+# Redbench
+# ======================================================================
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "[_16_peak] Dynamic (pruning あり)"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set Redbench_synthetic \
+#   --optimization-mode dynamic \
+#   --exp-suffix _2h_x2 \
+#   --use-pruning \
+#   --noise-ratio 0.0 \
+#   --b-max 100 \
+#   --recalc \
+#   --use-docker \
+#   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_2h_x2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "[_16_peak] Static (average)"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set Redbench_synthetic \
+#   --optimization-mode static \
+#   --static-timestep average \
+#   --static-algorithm utility \
+#   --exp-suffix _2h_x2 \
+#   --noise-ratio 0.0 \
+#   --b-max 100 \
+#   --recalc \
+#   --use-docker \
+#   2>&1 | tee ${OUTPUT_DIR}/log_static_2h_x2.txt
+# echo "完了時刻: $(date)"
+
+# restart_container
+# echo ""
+# echo "------------------------------------------------------------------------"
+# echo "[_16_peak] Adaptive (w=4)"
+# echo "開始時刻: $(date)"
+# echo "------------------------------------------------------------------------"
+# python ${SCRIPT_DIR}/run_experiment_normal.py \
+#   --phase post-opt \
+#   --query-set Redbench_synthetic \
+#   --optimization-mode adaptive \
+#   --window-size 4 \
+#   --exp-suffix _2h_x2 \
+#   --noise-ratio 0.0 \
+#   --b-max 100 \
+#   --recalc \
+#   --use-docker \
+#   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_2h_x2.txt
+# echo "完了時刻: $(date)"
+
+
+
+# ======================================================================
+# 結果を result_100M_edbt/ に集約
 # ======================================================================
 
 echo ""
@@ -292,12 +315,19 @@ echo "========================================================================"
 echo "結果を ${RESULT_DIR} に移動中..."
 echo "========================================================================"
 
-mv -f ${BASE_DIR}/td_mv_optimization_result_*.json        ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/static_mv_optimization_result_*.json    ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/adaptive_mv_optimization_result_*.json  ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_dynamic_*.json        ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_static_*.json         ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_adaptive_*.json       ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/td_mv_optimization_result_*.json         ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/static_mv_optimization_result_*.json     ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/adaptive_mv_optimization_result_*.json   ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/benchmark_results_dynamic_*.json         ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/benchmark_results_static_*.json          ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_JOB}/benchmark_results_adaptive_*.json        ${RESULT_DIR}/ 2>/dev/null || true
+
+mv -f ${BASE_DIR_REDBENCH}/td_mv_optimization_result_*.json       ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_REDBENCH}/static_mv_optimization_result_*.json   ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_REDBENCH}/adaptive_mv_optimization_result_*.json ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_REDBENCH}/benchmark_results_dynamic_*.json       ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_REDBENCH}/benchmark_results_static_*.json        ${RESULT_DIR}/ 2>/dev/null || true
+mv -f ${BASE_DIR_REDBENCH}/benchmark_results_adaptive_*.json      ${RESULT_DIR}/ 2>/dev/null || true
 
 echo ""
 echo "========================================================================"

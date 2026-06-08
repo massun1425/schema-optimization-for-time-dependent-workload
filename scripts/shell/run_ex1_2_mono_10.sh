@@ -55,6 +55,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_8_mono.txt
 echo "完了時刻: $(date)"
 
@@ -75,6 +76,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_static_8_mono.txt
 echo "完了時刻: $(date)"
 
@@ -94,6 +96,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_8_mono.txt
 echo "完了時刻: $(date)"
 
@@ -117,6 +120,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_mono.txt
 echo "完了時刻: $(date)"
 
@@ -137,6 +141,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_static_16_mono.txt
 echo "完了時刻: $(date)"
 
@@ -156,6 +161,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_16_mono.txt
 echo "完了時刻: $(date)"
 
@@ -179,6 +185,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_24_mono.txt
 echo "完了時刻: $(date)"
 
@@ -199,6 +206,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_static_24_mono.txt
 echo "完了時刻: $(date)"
 
@@ -218,6 +226,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_24_mono.txt
 echo "完了時刻: $(date)"
 
@@ -241,6 +250,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_dynamic_32_mono.txt
 echo "完了時刻: $(date)"
 
@@ -261,6 +271,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_static_32_mono.txt
 echo "完了時刻: $(date)"
 
@@ -280,6 +291,7 @@ python ${SCRIPT_DIR}/run_experiment_normal.py \
   --b-max 100 \
   --recalc \
   --use-docker \
+  --ease \
   2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_32_mono.txt
 echo "完了時刻: $(date)"
 
