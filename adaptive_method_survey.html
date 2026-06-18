@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Adaptive最適化手法の模倣妥当性 調査レポート</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a2e;
+    --muted: #5a5a72;
+    --accent: #2563eb;
+    --accent-soft: #eff6ff;
+    --border: #e2e8f0;
+    --strong: #16a34a;
+    --moderate: #d97706;
+    --weak: #dc2626;
+    --code-bg: #f5f7fa;
+    --warn-bg: #fff7ed;
+    --warn-border: #fdba74;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+    line-height: 1.75;
+    color: var(--fg);
+    background: #f0f2f5;
+    margin: 0;
+    padding: 0;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    background: var(--bg);
+    padding: 56px 64px 80px;
+    box-shadow: 0 1px 24px rgba(0,0,0,0.07);
+  }
+  h1 {
+    font-size: 1.9rem;
+    line-height: 1.35;
+    margin: 0 0 8px;
+    border-bottom: 3px solid var(--accent);
+    padding-bottom: 16px;
+  }
+  .subtitle { color: var(--muted); font-size: 0.95rem; margin-bottom: 40px; }
+  h2 {
+    font-size: 1.4rem;
+    margin-top: 52px;
+    padding-left: 14px;
+    border-left: 5px solid var(--accent);
+  }
+  h3 { font-size: 1.12rem; margin-top: 32px; color: #1e293b; }
+  p, li { font-size: 0.96rem; }
+  code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    color: #b91c1c;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 0.84rem;
+    line-height: 1.6;
+  }
+  pre code { background: none; padding: 0; color: #1e293b; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+    font-size: 0.9rem;
+  }
+  th, td {
+    border: 1px solid var(--border);
+    padding: 10px 12px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th { background: var(--accent-soft); font-weight: 600; }
+  tr:nth-child(even) td { background: #fafbfc; }
+  .badge {
+    display: inline-block;
+    padding: 2px 11px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .b-strong { background: var(--strong); }
+  .b-moderate { background: var(--moderate); }
+  .b-weak { background: var(--weak); }
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid #bfdbfe;
+    border-left: 5px solid var(--accent);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin: 24px 0;
+  }
+  .callout.warn {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+    border-left-color: #ea580c;
+  }
+  .callout h4 { margin: 0 0 8px; font-size: 1rem; }
+  .tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 1px 8px;
+    border-radius: 4px;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .tag-conf { background: #dcfce7; color: #166534; }
+  .tag-inf { background: #fef9c3; color: #854d0e; }
+  .toc {
+    background: #fafbfc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 28px;
+    margin-bottom: 32px;
+  }
+  .toc ol { margin: 6px 0; padding-left: 22px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .small { font-size: 0.82rem; color: var(--muted); }
+  .ref { font-size: 0.85rem; }
+  .ref li { margin-bottom: 10px; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+  .dim-yes { color: var(--strong); font-weight: 700; }
+  .dim-no { color: var(--weak); font-weight: 700; }
+  .dim-part { color: var(--moderate); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Adaptive最適化手法の模倣妥当性 調査レポート</h1>
+<div class="subtitle">
+  対象: <code>scripts/run_experiment_normal.py</code> の <code>phase6c_optimize_adaptive</code> /
+  <code>core/two_step_optimizer.py</code><br>
+  作成日: 2026-06-18 ／ 調査対象論文: CONST (2021), DeepSea (EDBT 2017) ＋ 代替候補
+</div>
+
+<div class="toc">
+  <strong>目次</strong>
+  <ol>
+    <li><a href="#summary">結論サマリ</a></li>
+    <li><a href="#current">現在のAdaptive実装の特性</a></li>
+    <li><a href="#const">CONST との照合</a></li>
+    <li><a href="#deepsea">DeepSea との照合</a></li>
+    <li><a href="#alt">より相応しい代表論文の候補</a></li>
+    <li><a href="#reco">推奨と論文での位置づけ方</a></li>
+    <li><a href="#refs">参考文献</a></li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="summary">1. 結論サマリ</h2>
+
+<div class="callout">
+  <h4>核心</h4>
+  <p>現在のAdaptive実装は、<strong>CONST・DeepSea のいずれとも「重要な機構の次元」では一致していません</strong>。
+  ただし「過去ワークロードに反応して構成を逐次再最適化する」という<strong>大枠の思想は両者と共有</strong>しています。
+  むしろ現在の実装は <strong>CONSTより高機能</strong>（CONSTは移行コストを無視・反応型なのに対し、本実装は移行コストを考慮・移動平均で予測）で、
+  <strong>DeepSeaとは目的関数の構造は一致するが解法（ILP vs 貪欲ヒューリスティック）と粒度が異なります</strong>。</p>
+</div>
+
+<p>「代表的な適応手法を模倣する」という目的に対しては、実装の<strong>機構（スライディングウィンドウ＋逐次再最適化＋移行コスト考慮＋近視眼的）</strong>に最も近い代表論文は、CONST/DeepSeaよりも以下の3本です。</p>
+
+<table>
+  <tr><th>順位</th><th>論文</th><th>本実装との一致軸</th><th>総合一致度</th></tr>
+  <tr>
+    <td>1</td>
+    <td><strong>DynaMat</strong> (Kotidis &amp; Roussopoulos, SIGMOD 1999)</td>
+    <td>MV対象・構築コスト vs 便益・継続的再最適化</td>
+    <td><span class="badge b-strong">Strong</span></td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td><strong>Bruno &amp; Chaudhuri</strong> "Online Approach to Physical Design Tuning" (ICDE 2007)</td>
+    <td>近視眼的・「将来便益 &gt; 構築コストなら作る」逐次再構成</td>
+    <td><span class="badge b-strong">Strong</span></td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td><strong>COLT</strong> (Schnaitter et al., SIGMOD 2006 demo / ICDE-W 2007)</td>
+    <td>スライディングウィンドウ(epoch)＋ステップ毎の貪欲再最適化</td>
+    <td><span class="badge b-strong">Strong</span></td>
+  </tr>
+</table>
+
+<div class="callout warn">
+  <h4>⚠ 引用上の注意（重要）</h4>
+  <ul style="margin:0">
+    <li><strong>DeepSea の著者が誤り</strong>: ご提示の「J. Du, B. Glavic, and G. Agrawal」は不正確です。実際の著者は
+    <strong>J. Du, B. Glavic, W. Tan, R. J. Miller</strong>（EDBT 2017）。Agrawal は参考文献に出てくるだけで著者ではありません。</li>
+    <li><strong>CONST に最も近い後続研究</strong>として、NoSE の著者 Mior らの
+    <em>"NoSQL Schema Design for Time-Dependent Workloads"</em> (arXiv:2303.16577) があります。これは
+    <strong>時間依存ワークロードに移行コストを組み込んだ時系列ILP</strong>で、まさに本研究と同じ方向性。CONSTが移行コストを無視している点を明示的に批判して拡張しており、本実装の最も近い「思想的先行研究」です。</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="current">2. 現在のAdaptive実装の特性</h2>
+
+<p><code>phase6c_optimize_adaptive</code> と <code>TwoStepOptimizer</code> を読んだ結果、本実装は次の機構を持ちます。</p>
+
+<h3>処理フロー</h3>
+<pre><code>初期MV: TimeDependentOptimizer（1ステップ, migration_cost=0 で純ワークロード最適）
+   ↓
+各タイムステップ t = 0..T-1:
+   ① 現在のMV構成を記録
+   ② 過去 W 時刻の頻度の単純移動平均を curr_freq とする（スライディングウィンドウ予測）
+   ③ TwoStepOptimizer を解く:
+        t=0: z を current_mvs に固定
+        t=1: z を最適化
+        目的: minimize  Σ_t Σ_ij -u_ij·freq_t[i]·y_ij      (ワークロード実行コスト)
+                       + w · Σ_j cost_j · c[j,1]            (新規MVの構築=移行コスト)
+   ④ current_mvs ← selected_mvs_t1（1ステップだけ先を見て更新）</code></pre>
+
+<h3>本質的な性質</h3>
+<table>
+  <tr><th>軸</th><th>本実装の挙動</th></tr>
+  <tr><td>最適化単位</td><td>2タイムステップ局所ILP（現在固定・次を最適化）を T 回</td></tr>
+  <tr><td>視野</td><td><span class="dim-yes">近視眼的（1ステップ先読み）</span></td></tr>
+  <tr><td>ワークロード予測</td><td><span class="dim-yes">直近 W 時刻の単純移動平均</span>（軽量な予測）</td></tr>
+  <tr><td>移行/構築コスト</td><td><span class="dim-yes">考慮あり</span>（新規作成MVの <code>cost_j</code> を目的関数に算入。削除コストは無し）</td></tr>
+  <tr><td>解法</td><td>厳密ILP（Gurobi）</td></tr>
+  <tr><td>対象</td><td>マテリアライズドビュー（MV）</td></tr>
+  <tr><td>再構成トリガ</td><td>毎タイムステップ無条件（変化検知トリガは無い）</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="const">3. CONST との照合</h2>
+<p class="small">M. Mozaffari, E. Nazemi, A.-M. Eftekhari-Moghadam. "CONST: Continuous online NoSQL schema tuning." <em>Softw. Pract. Exp.</em> 51(5):1147–1169, 2021.
+<span class="small">（本文はペイウォール。著者の先行論文・NoSE・第三者比較論文から再構成）</span></p>
+
+<h3>CONST のアルゴリズム要点</h3>
+<ul>
+  <li><span class="tag tag-conf">確認</span><strong>対象</strong>: NoSQL（Cassandra）の列ファミリ＝非正規化クエリテーブルのスキーマ調整。MV選択そのものではなく非正規化テーブルの選択。</li>
+  <li><span class="tag tag-conf">確認</span><strong>オンライン機構</strong>: IBMの MAPE-K 自律制御ループ。オンラインK-meansでワークロードをクラスタリングし、<strong>n-gramモデルのperplexity（困惑度）が閾値を超えたら「ワークロードが変化した」と判定して再構成をトリガ</strong>。固定窓でも周期実行でもなく、<strong>統計的変化検知トリガ</strong>。</li>
+  <li><span class="tag tag-conf">確認</span><strong>WHAT の決定</strong>: NoSE由来のコストベース選択だが、連続実行のため<strong>ヒューリスティック/逐次的にスキーマを変更</strong>（フルBIPの再求解はしない）。</li>
+  <li><span class="tag tag-conf">確認</span><strong>移行コスト</strong>: <strong>考慮しない</strong>。第三者（NoSE著者）が「CONSTはスキーマ変更時のDB移行コストを無視するため時間依存ワークロードでは最適でない」と明記。</li>
+  <li><span class="tag tag-conf">確認</span><strong>予測</strong>: <strong>反応型（予測しない）</strong>。観測履歴からクラスタ/モデルを学習し変化を検知するのみ。</li>
+</ul>
+
+<h3>本実装 vs CONST</h3>
+<table>
+  <tr><th>軸</th><th>CONST</th><th>本実装</th><th>一致</th></tr>
+  <tr><td>対象</td><td>NoSQL列ファミリ</td><td>MV</td><td><span class="dim-no">不一致</span></td></tr>
+  <tr><td>再構成トリガ</td><td>perplexity変化検知</td><td>毎ステップ無条件</td><td><span class="dim-no">不一致</span></td></tr>
+  <tr><td>WHATの解法</td><td>ヒューリスティック</td><td>厳密ILP</td><td><span class="dim-no">不一致</span></td></tr>
+  <tr><td>移行コスト</td><td>無視</td><td>考慮あり</td><td><span class="dim-no">逆（本実装の方が高機能）</span></td></tr>
+  <tr><td>予測</td><td>反応型</td><td>移動平均で予測型</td><td><span class="dim-no">逆（本実装の方が高機能）</span></td></tr>
+  <tr><td>大枠の思想</td><td colspan="2">「ワークロードに応じて物理設計を継続的に再調整するオンライン手法」</td><td><span class="dim-yes">一致</span></td></tr>
+</table>
+
+<div class="callout">
+  <p><strong>評価: <span class="badge b-weak">Weak</span></strong>　機構レベルでは大半が不一致、しかも移行コスト・予測の2軸では<strong>本実装の方がCONSTより進んでいる</strong>。
+  「CONSTを模倣した」と述べるのは正確ではなく、むしろ「CONSTの弱点（移行コスト無視・反応型）を補う方向」に位置する。</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="deepsea">4. DeepSea との照合</h2>
+<p class="small">J. Du, B. Glavic, W. Tan, R. J. Miller. "DeepSea: Progressive Workload-Aware Partitioning of Materialized Views in Scalable Data Analytics." <em>EDBT 2017</em>, pp. 198–209.
+<span class="small">（全文取得済み）</span></p>
+
+<h3>DeepSea のアルゴリズム要点</h3>
+<ul>
+  <li><span class="tag tag-conf">確認</span><strong>対象</strong>: <strong>MV選択と水平パーティショニングの同時最適化</strong>。MV選択も含む。中間結果（join/agg/proj）をビュー候補とし、選択属性でフラグメントに分割。フラグメントは<strong>重複を許す</strong>（再分割コスト削減の要）。</li>
+  <li><span class="tag tag-conf">確認</span><strong>"Progressive"</strong>: <strong>クエリ1件ごとにオンライン</strong>で構成を逐次精緻化。固定窓や周期実行は無く、各クエリがコスト便益フィルタを通れば再分割。適応は<strong>時間減衰関数 DEC</strong>で実現（直近の便益を重視）。</li>
+  <li><span class="tag tag-conf">確認</span><strong>決定アルゴリズム</strong>: <strong>貪欲＋コスト便益比 Φ のナップサック型ヒューリスティック</strong>。<strong>ILP/最適/競合アルゴリズムは「非現実的」として明示的に却下</strong>。</li>
+  <li><span class="tag tag-conf">確認</span><strong>目的関数 (Def. 4)</strong>:
+    <pre><code>COST(Q,C) = Σ_i COST(Q_i, C_i)  +  Σ_i COST(C_i, C_{i+1})
+            └ クエリ実行コスト ┘    └ 構成間の移行コスト ┘
+   s.t.  C_1 = ∅,  S(C_i) ≤ S_max</code></pre>
+    <span class="small">→ この「実行コスト＋移行コストの系列和を予算下で最小化」という形は、本実装のスライディングウィンドウILPの目的と<strong>構造的に一致</strong>。ただしDeepSeaはこれをILPで解かない。</span></li>
+  <li><span class="tag tag-conf">確認</span><strong>移行コスト</strong>: 明示的にモデル化。フラグメント作成コスト <code>COST(I) = w_write·S(I) + Σ w_read·S(重複フラグメント)</code> を <code>便益≥コスト</code> フィルタで判定。</li>
+  <li><span class="tag tag-conf">確認</span><strong>予測</strong>: 主に反応型（減衰履歴）だが、<strong>正規分布をMLEで当てはめる予測サブモデル</strong>でホットスポット近傍のフラグメント将来アクセスを予測。</li>
+</ul>
+
+<h3>本実装 vs DeepSea</h3>
+<table>
+  <tr><th>軸</th><th>DeepSea</th><th>本実装</th><th>一致</th></tr>
+  <tr><td>目的関数の構造</td><td>実行コスト＋移行コストの系列和</td><td>同左（2ステップ窓）</td><td><span class="dim-yes">一致</span></td></tr>
+  <tr><td>移行コスト考慮</td><td>あり（便益≥コストフィルタ）</td><td>あり（目的関数に算入）</td><td><span class="dim-yes">一致</span></td></tr>
+  <tr><td>対象</td><td>MV＋パーティション</td><td>MV</td><td><span class="dim-part">部分一致</span></td></tr>
+  <tr><td>視野/逐次性</td><td>クエリ毎に近視眼的</td><td>タイムステップ毎に近視眼的</td><td><span class="dim-part">部分一致</span></td></tr>
+  <tr><td>解法</td><td>貪欲Φ比ヒューリスティック</td><td>厳密ILP</td><td><span class="dim-no">不一致</span></td></tr>
+  <tr><td>粒度</td><td>フラグメント（ビュー部分範囲）</td><td>MV全体</td><td><span class="dim-no">不一致</span></td></tr>
+  <tr><td>予測</td><td>減衰履歴＋MLE正規分布</td><td>単純移動平均</td><td><span class="dim-part">部分一致（両者とも履歴ベース）</span></td></tr>
+</table>
+
+<div class="callout">
+  <p><strong>評価: <span class="badge b-moderate">Moderate</span></strong>　<strong>目的関数の構造（実行＋移行コストの系列最小化）と移行コスト考慮はよく一致</strong>するが、
+  DeepSeaは「ILPを明示的に却下した貪欲ヒューリスティック」「フラグメント粒度」である点で機構が異なる。
+  本実装はDeepSeaの<strong>目的（Def.4）をILPで素直に解いた版</strong>と言える（DeepSea自身は解いていない定式化）。</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="alt">5. より相応しい代表論文の候補</h2>
+
+<p>本実装の機構（<strong>スライディングウィンドウ予測 ＋ 移行コスト付き逐次再最適化 ＋ 近視眼的</strong>）を「代表的な適応手法の模倣」として位置づけるなら、以下が CONST/DeepSea より適切です。</p>
+
+<h3>① DynaMat <span class="badge b-strong">Strong</span> — MV側の最有力</h3>
+<p class="ref">Y. Kotidis, N. Roussopoulos. "DynaMat: A Dynamic View Management System for Data Warehouses." <em>SIGMOD 1999</em> / 拡張版 TODS 2001.</p>
+<ul>
+  <li>MVを<strong>動的プール（キャッシュ的）</strong>として管理。クエリ毎に「プールから答えるか」「新結果を採用するか」を判断。</li>
+  <li>選択と保守を単一の<strong>"goodness"指標</strong>（頻度・サイズ・recency・(再)計算/更新コスト）に統合し、構築コスト vs 便益を中心に据える。</li>
+  <li><strong>MVを対象</strong>・<strong>近視眼的貪欲</strong>・<strong>構築コスト考慮</strong>の3点で本実装に最も多く一致。差分は「キャッシュ的ヒューリスティック vs ILP」「recency減衰 vs 明示的移動平均窓」。</li>
+</ul>
+
+<h3>② Bruno &amp; Chaudhuri <span class="badge b-strong">Strong</span> — 「便益＞構築コストなら作る」の規範</h3>
+<p class="ref">N. Bruno, S. Chaudhuri. "An Online Approach to Physical Design Tuning." <em>ICDE 2007</em>, pp. 826–835.</p>
+<ul>
+  <li>常時稼働でワークロード変化に反応し、構造を逐次作成/削除。</li>
+  <li><strong>「将来のある時点での便益が構築コストを上回るなら作る」</strong>という規則を明示。これは本実装の便益 vs 構築コストのトレードオフそのもの。</li>
+  <li>近視眼的・反応型・逐次調整も一致。差分は「インデックス対象」「ILPでない」。</li>
+</ul>
+
+<h3>③ COLT <span class="badge b-strong">Strong</span> — スライディングウィンドウ＋ステップ毎再最適化</h3>
+<p class="ref">K. Schnaitter, S. Abiteboul, T. Milo, N. Polyzotis. "COLT: Continuous On-Line Tuning." <em>SIGMOD 2006 (demo)</em> ／ "On-Line Index Selection for Shifting Workloads," <em>ICDE Workshops (SMDB) 2007</em>.
+<br><span class="small">※ ご認識の「COLT SIGMOD 2007」は誤り。正しくは SIGMOD 2006 demo ＋ ICDE-W 2007。</span></p>
+<ul>
+  <li>クエリストリームを<strong>長さ w のepoch（＝スライディングウィンドウ）</strong>に分割し、直近epochの平均で便益推定（＝移動平均予測）。</li>
+  <li>epoch毎に予算下で<strong>貪欲に再選択</strong>。本実装の「窓予測→ステップ毎再最適化」ループと最も直接的に対応。</li>
+  <li>差分は「インデックス対象」「構築コストは別スケジューラ」「ILPでない」。</li>
+</ul>
+
+<h3>④ Weisgut &amp; Schlosser <span class="badge b-moderate">Moderate〜Strong</span> — 移行コスト付き多期間MILPの最近接</h3>
+<p class="ref">M. Weisgut, L. Hübscher, O. Nordemann, R. Schlosser. "Solver-Based Approaches for Robust Multi-Index Selection Problems with Reconfiguration Costs under Stochastic Dynamic Workloads." <em>ICORES 2022</em> ／ 拡張 SN Comp. Sci. 2023.</p>
+<ul>
+  <li><strong>MILP（ソルバーベース）で構成間の再構成コストを明示的に課す</strong>動的ワークロード向け定式化。本実装の移行コスト付きILPに構造的に最も近い。</li>
+  <li>差分は「インデックス対象」「ロバスト/多シナリオ（近視眼的単一予測ではない）」。</li>
+</ul>
+
+<h3>補足: 思想的に最も近い後続研究</h3>
+<div class="callout">
+  <p class="ref"><strong>Mior et al. "NoSQL Schema Design for Time-Dependent Workloads" (arXiv:2303.16577, 2023)</strong></p>
+  <p>CONSTが移行コストを無視する点を明示的に問題視し、<strong>時間依存ワークロードに移行コストを組み込んだ時系列ILP</strong>を提案。これは本研究（時間依存MV＋移行コストILP）と<strong>同じ問題設定・同じ動機</strong>であり、関連研究として必ず押さえるべき。本実装のDynamic/Adaptiveはこの系譜に位置づけるのが自然。</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="reco">6. 推奨と論文での位置づけ方</h2>
+
+<div class="callout">
+  <h4>推奨する記述方針</h4>
+  <ol>
+    <li><strong>「CONST/DeepSeaを忠実に再現した」とは書かない</strong>。機構が異なり、特にCONST比では本実装の方が高機能なため、誤解を招く。</li>
+    <li><strong>Adaptive手法は「オンライン/適応型物理設計チューニングの代表的クラスを模倣した比較ベースライン」</strong>と位置づける。
+    具体的には「直近ワークロードの移動平均で近未来を予測し、移行コストを考慮しつつ近視眼的に構成を逐次再最適化する」手法、と機構で定義する。</li>
+    <li>その代表として <strong>COLT（窓＋逐次再最適化）・Bruno&amp;Chaudhuri（便益&gt;構築コストで作る近視眼的調整）・DynaMat（適応的MV管理＋構築コスト）</strong> を引用。
+    CONST・DeepSea も「適応型物理設計の関連研究」として引けるが、模倣元というより<strong>同じ問題意識の関連研究</strong>として扱う。</li>
+    <li>静的手法（BigSubs）の忠実な再現と対比させ、<strong>「静的＝BigSubsを忠実再現／動的＝代表的オンライン手法群の機構を統合したベースライン」</strong>という非対称性を正直に明記する。これは査読でも防御しやすい。</li>
+  </ol>
+</div>
+
+<h3>本実装の機構的立ち位置（1文要約）</h3>
+<p>本実装のAdaptiveは、<strong>COLTのスライディングウィンドウ逐次再最適化</strong>＋<strong>Bruno&amp;Chaudhuri/DynaMatの「構築コスト vs 便益」近視眼的判断</strong>を、
+<strong>DeepSea(Def.4)型の実行＋移行コスト目的関数</strong>として<strong>厳密ILPで解いた合成手法</strong>である、と表現するのが最も正確。</p>
+
+<div class="callout warn">
+  <h4>付随する既知の課題（別途指摘済み）</h4>
+  <p>初期MVを <code>migration_cost=0</code> の別Optimizer（<code>TimeDependentOptimizer</code>）で算出しているため、頻度変化が無くても初期MV→次MVでMV数が減る現象が起きる。
+  これは「適応手法の模倣」とは独立の<strong>定式化の不整合バグ</strong>であり、初期MVも <code>TwoStepOptimizer</code> で（または収束反復で）求めて定式化を統一すべき。模倣妥当性の議論とは切り分けて扱うのがよい。</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="refs">7. 参考文献</h2>
+<ol class="ref">
+  <li>M. Mozaffari, E. Nazemi, A.-M. Eftekhari-Moghadam. "CONST: Continuous online NoSQL schema tuning." <em>Software: Practice and Experience</em> 51(5):1147–1169, 2021. DOI 10.1002/spe.2945.</li>
+  <li>J. Du, B. Glavic, W. Tan, R. J. Miller. "DeepSea: Progressive Workload-Aware Partitioning of Materialized Views in Scalable Data Analytics." <em>EDBT 2017</em>, pp. 198–209. （<a href="https://openproceedings.org/2017/conf/edbt/paper-20.pdf">openproceedings.org</a>）</li>
+  <li>Y. Kotidis, N. Roussopoulos. "DynaMat: A Dynamic View Management System for Data Warehouses." <em>SIGMOD 1999</em>, pp. 371–382. ／ "A Case for Dynamic View Management." <em>ACM TODS</em> 26(4), 2001.</li>
+  <li>N. Bruno, S. Chaudhuri. "An Online Approach to Physical Design Tuning." <em>ICDE 2007</em>, pp. 826–835.</li>
+  <li>K. Schnaitter, S. Abiteboul, T. Milo, N. Polyzotis. "COLT: Continuous On-Line Tuning." <em>SIGMOD 2006</em> (demo), pp. 793–795. ／ "On-Line Index Selection for Shifting Workloads." <em>ICDE Workshops (SMDB) 2007</em>, pp. 459–468.</li>
+  <li>K. Schnaitter, N. Polyzotis. "Semi-Automatic Index Tuning: Keeping DBAs in the Loop." <em>PVLDB</em> 5(5):478–489, 2012.</li>
+  <li>M. Weisgut, L. Hübscher, O. Nordemann, R. Schlosser. "Solver-Based Approaches for Robust Multi-Index Selection Problems with Reconfiguration Costs under Stochastic Dynamic Workloads." <em>ICORES 2022</em>, pp. 28–39. ／ R. Schlosser et al. "Robust Index Selection for Stochastic Dynamic Workloads." <em>SN Computer Science</em> 4:59, 2023.</li>
+  <li>Mior et al. "NoSQL Schema Design for Time-Dependent Workloads." arXiv:2303.16577, 2023.</li>
+  <li>A. Jindal, K. Karanasos, S. Rao, H. Patel. "Selecting Subexpressions to Materialize at Datacenter Scale." <em>PVLDB</em> 11(7):800–812, 2018.（BigSubs／静的手法の比較元）</li>
+  <li>L. Ma et al. "Query-based Workload Forecasting for Self-Driving Database Management Systems (QueryBot 5000)." <em>SIGMOD 2018</em>.（予測層の参考）</li>
+</ol>
+
+<hr>
+<p class="small">
+凡例: <span class="tag tag-conf">確認</span>＝一次/権威ある情報源で確認済み
+<span class="tag tag-inf">推定</span>＝周辺情報からの推定。<br>
+CONSTは本文ペイウォールのため、著者の先行論文（Tabriz J. 2019, Algorithm 1–3）・NoSE (TKDE 2017) のコストモデル・arXiv:2303.16577 の第三者評価から再構成した。DeepSeaは全文を取得して確認した。
+</p>
+
+</div>
+</body>
+</html>

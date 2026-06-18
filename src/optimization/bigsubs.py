@@ -33,16 +33,21 @@ class BigSubsOptimizer(BaseILPOptimizer):
             **kwargs: Keyword arguments for BaseILPOptimizer
         """
         # Extract BigSubs-specific parameters before calling super().__init__
-        self.U_j_max = kwargs.pop("U_j_max", None)
-        self.U_max = kwargs.pop("U_max", 0.0)
         self.y_ij_init = kwargs.pop("y_ij", None)
+        # Remove legacy external U_max/U_j_max params if passed (now computed internally)
+        kwargs.pop("U_j_max", None)
+        kwargs.pop("U_max", None)
 
         # Call parent constructor with remaining kwargs
         super().__init__(*args, **kwargs)
 
-        # Set defaults if not provided
-        if self.U_j_max is None:
-            self.U_j_max = [0] * self.s_num
+        # Compute U_max and U_j_max from u_ij (paper Algorithm 1 initialization)
+        self.U_j_max = [
+            sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
+            for j in range(self.s_num)
+        ]
+        self.U_max = sum(self.U_j_max)
+
         if self.y_ij_init is None:
             self.y_ij_init = [[0] * self.s_num for _ in range(len(self.u_ij))]
 
@@ -55,11 +60,8 @@ class BigSubsOptimizer(BaseILPOptimizer):
         Returns:
             Randomized MV selection
         """
-        k = random.randint(1, len(mv_list))
-        k_list = random.sample(range(len(mv_list)), k)
-        for i in k_list:
-            mv_list[i] = 1
-        return mv_list
+        # Independent Bernoulli assignment per MV (paper: random 0/1 labels)
+        return [random.randint(0, 1) for _ in range(len(mv_list))]
 
     def flip_probability(
         self,
@@ -72,6 +74,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         U_j_max: float,
         U_max: float,
         B_max: float,
+        iter_max: int = 50,
     ) -> float:
         """Calculate probability of flipping a node's materialization status.
 
@@ -85,11 +88,12 @@ class BigSubsOptimizer(BaseILPOptimizer):
             U_j_max: Maximum possible utility of node j
             U_max: Maximum possible total utility
             B_max: Storage budget
+            iter_max: Maximum iterations (used to compute p threshold)
 
         Returns:
             Flip probability between 0 and 1
         """
-        p = 160  # Iteration threshold
+        p = int(0.8 * iter_max)  # 80% of iter_max (paper default)
 
         # Capacity component
         if B_cur < B_max:
@@ -117,7 +121,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         else:
             p_j_utility = 0
 
-        return p_j_capacity * p_j_utility
+        return max(0.0, min(1.0, p_j_capacity * p_j_utility))
 
     def do_flip(self, probability: float, current_z: int) -> int:
         """Decide whether to flip based on probability.
@@ -159,9 +163,9 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         model.update()
 
-        # Objective: maximize utility minus maintenance cost
+        # Objective: maximize utility (paper Eq. 6)
         model.setObjective(
-            gp.quicksum(u_ij_row[j] * y[j] - self.m_cost[j] * y[j] for j in k), gp.GRB.MAXIMIZE
+            gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
         )
 
         # Constraints: overlapping subexpression
@@ -233,8 +237,8 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         y_ij = [list(row) for row in self.y_ij_init]
 
-        # Iterative refinement
-        while updated == 1 and iter_num < iter_max:
+        # Iterative refinement (paper: loop until no update AND iter >= iter_max)
+        while updated == 1 or iter_num < iter_max:
             updated = 0
 
             # Vertex labeling: decide which nodes to materialize
@@ -249,6 +253,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
                     self.U_j_max[j],
                     self.U_max,
                     self.B_max,
+                    iter_max,
                 )
                 z_j_new = self.do_flip(p_flip, z_j[j])
 
@@ -261,35 +266,21 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
                 z_j[j] = z_j_new
 
-            # Edge labeling: assign MVs to queries
+            # Edge labeling: assign MVs to queries (paper Algorithm 1 step 2)
+            # z_j is NOT modified here; only y_ij, U_cur, U_j_cur are updated
             U_cur = 0.0
             U_j_cur = [0.0] * len(z_j)
-            z_j_new = [0] * len(z_j)
 
             for i in range(len(self.q_s_list)):
-                # Find candidates for this query
                 M_i = [j for j in range(len(z_j)) if self.u_ij[i][j] > 0]
                 M_i_ = [j for j in range(len(z_j)) if z_j[j] > 0]
                 k = list(set(M_i) & set(M_i_))
 
-                # Solve local ILP for this query
                 y_ij[i] = self.local_ilp(self.u_ij[i], k)
 
-                # Update utilities
                 for j in k:
-                    if y_ij[i][j] == 1 and z_j_new[j] == 0:
-                        U_cur += self.u_ij[i][j] * y_ij[i][j] - self.m_cost[j] / len(self.q_s_list)
-                        z_j_new[j] = 1
+                    U_cur += self.u_ij[i][j] * y_ij[i][j]
                     U_j_cur[j] += self.u_ij[i][j] * y_ij[i][j]
-
-            # Update z_j and deduct maintenance costs
-            for j in range(len(z_j)):
-                z_j[j] = z_j_new[j]
-                U_cur -= self.m_cost[j] * z_j[j]
-
-            # B_cur を z_j に合わせて正しく再計算する
-            # Edge Labelingで使われなかったMVが削除されるため、B_curも更新が必要
-            B_cur = sum(z_j[j] * self.b_j[j] for j in range(len(z_j)))
 
             iter_num += 1
 
