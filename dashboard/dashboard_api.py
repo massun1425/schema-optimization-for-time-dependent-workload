@@ -177,30 +177,51 @@ async def get_result_files(query_set: str, subfolder: str = "") -> Dict[str, Lis
     # Adaptive最適化ファイル (adaptive_mv_optimization_result)
     adaptive_opt_files = [f.name for f in sorted(output_path.glob("adaptive_mv_optimization_result_*.json"),
                                                    key=lambda f: natural_sort_key(f.name))]
-    
+
+    # Peloton最適化ファイル (peloton_mv_optimization_result)
+    peloton_opt_files = [f.name for f in sorted(output_path.glob("peloton_mv_optimization_result_*.json"),
+                                                 key=lambda f: natural_sort_key(f.name))]
+
+    # BigSubs(静的)最適化ファイル (static_bigsubs_optimization_result)
+    bigsubs_opt_files = [f.name for f in sorted(output_path.glob("static_bigsubs_optimization_result_*.json"),
+                                                 key=lambda f: natural_sort_key(f.name))]
+
     # Dynamicベンチマークファイル (adaptive/static以外)
     bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_dynamic_*.json"),
                                           key=lambda f: natural_sort_key(f.name))]
-    
+
     # Adaptiveベンチマークファイル
     adaptive_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_adaptive_*.json"),
                                                     key=lambda f: natural_sort_key(f.name))]
-    
-    # Static最適化ファイル
+
+    # Pelotonベンチマークファイル
+    peloton_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_peloton_*.json"),
+                                                   key=lambda f: natural_sort_key(f.name))]
+
+    # Static最適化ファイル (bigsubs は別カテゴリのため除外)
     static_files = [f.name for f in sorted(output_path.glob("static_mv_optimization_result_*.json"),
                                            key=lambda f: natural_sort_key(f.name))]
-    
-    # Staticベンチマークファイル
+
+    # Staticベンチマークファイル (bigsubs は別カテゴリのため除外)
     static_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_static_*.json"),
-                                                  key=lambda f: natural_sort_key(f.name))]
-    
+                                                  key=lambda f: natural_sort_key(f.name))
+                          if "static_bigsubs" not in f.name]
+
+    # BigSubsベンチマークファイル
+    bigsubs_bench_files = [f.name for f in sorted(output_path.glob("benchmark_results_static_bigsubs_*.json"),
+                                                   key=lambda f: natural_sort_key(f.name))]
+
     return {
         "optimization": opt_files,
         "benchmark": bench_files,
         "static": static_files,
         "adaptive_optimization": adaptive_opt_files,
         "adaptive_benchmark": adaptive_bench_files,
-        "static_benchmark": static_bench_files
+        "static_benchmark": static_bench_files,
+        "peloton_optimization": peloton_opt_files,
+        "peloton_benchmark": peloton_bench_files,
+        "bigsubs_optimization": bigsubs_opt_files,
+        "bigsubs_benchmark": bigsubs_bench_files
     }
 
 
@@ -270,7 +291,12 @@ async def get_optimization_result(query_set: str, filename: str, subfolder: str 
     processed_timesteps.sort(key=lambda x: x['timestep'])
     
     # ファイル名からモードを判定
-    mode_type = 'adaptive' if 'adaptive' in filename else 'dynamic'
+    if 'peloton' in filename:
+        mode_type = 'peloton'
+    elif 'adaptive' in filename:
+        mode_type = 'adaptive'
+    else:
+        mode_type = 'dynamic'
     
     return {
         'type': mode_type,
@@ -370,6 +396,9 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
         if "benchmark_results_adaptive_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_adaptive_", "adaptive_mv_optimization_result_")
             mode = "adaptive"
+        elif "benchmark_results_peloton_" in optimization_filename:
+            opt_filename = optimization_filename.replace("benchmark_results_peloton_", "peloton_mv_optimization_result_")
+            mode = "peloton"
         elif "benchmark_results_dynamic_utility_" in optimization_filename:
             opt_filename = optimization_filename.replace("benchmark_results_dynamic_utility_", "dynamic_utility_optimization_result_")
             mode = "dynamic"
@@ -391,6 +420,12 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
         if "adaptive_mv_optimization_result_" in optimization_filename:
             bench_filename = optimization_filename.replace("adaptive_mv_optimization_result_", "benchmark_results_adaptive_")
             mode = "adaptive"
+        elif "peloton_mv_optimization_result_" in optimization_filename:
+            bench_filename = optimization_filename.replace("peloton_mv_optimization_result_", "benchmark_results_peloton_")
+            mode = "peloton"
+        elif "static_bigsubs_optimization_result_" in optimization_filename:
+            bench_filename = optimization_filename.replace("static_bigsubs_optimization_result_", "benchmark_results_static_bigsubs_")
+            mode = "static"
         elif "static_mv_optimization_result_" in optimization_filename:
             bench_filename = optimization_filename.replace("static_mv_optimization_result_", "benchmark_results_static_")
             mode = "static"

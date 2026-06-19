@@ -43,9 +43,9 @@ from utils.postgres_executor import PostgresExecutor, add_docker_args
 class NormalModeExperiment:
     """通常モード実験の段階的実行クラス"""
     
-    def __init__(self, exp_dir: str = ".", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False, window_size: int = 4):
+    def __init__(self, exp_dir: str = ".", query_set: str = "job", exp_suffix: str = "", use_docker: Optional[bool] = None, recalc_mode: bool = False, window_size: int = 4, freq_weight: str = "uniform"):
         """初期化
-        
+
         Args:
             exp_dir: 実験ディレクトリのパス
             query_set: 使用するクエリセット名 (例: job, job_like, explicit_join)
@@ -53,12 +53,14 @@ class NormalModeExperiment:
             use_docker: Dockerを使用するかどうか (None: 環境変数から判定)
             recalc_mode: 再計算コストを使用するかどうか
             window_size: 適応的最適化で使用する移動平均の幅（デフォルト: 4）
+            freq_weight: ウィンドウ内頻度の重み付け ("uniform"=単純移動平均, "linear"=DeepSea流の線形recency重み)
         """
         self.exp_dir = Path(exp_dir)
         self.query_set = query_set  # クエリセット名を保存
         self.exp_suffix = exp_suffix  # サフィックスを保存
         self.recalc_mode = recalc_mode
         self.window_size = window_size  # 移動平均の幅を保存
+        self.freq_weight = freq_weight  # ウィンドウ内頻度の重み付け方式
         
         # PostgreSQL Executorを初期化
         self.pg_executor = PostgresExecutor(use_docker=use_docker)
@@ -1029,6 +1031,8 @@ class NormalModeExperiment:
             return self.phase6b_optimize_static(timestep_position=static_timestep, static_algorithm=static_algorithm, b_max=b_max)
         elif mode == 'adaptive':
             return self.phase6c_optimize_adaptive(window_size=self.window_size, b_max=b_max)
+        elif mode == 'peloton':
+            return self.phase6c_optimize_adaptive(b_max=b_max, lookahead=True)
         
         # 以下は dynamic モードの処理
         self.print_header("ILP最適化（時間依存型）", 6)
@@ -1142,17 +1146,9 @@ class NormalModeExperiment:
                     f"{pruning_info['promising_candidates']}/{pruning_info['total_candidates']} MVが有望 "
                     f"({pruning_info['reduction_rate']*100:.1f}% 削減)"
                 )
-                
-                # 結果ディレクトリを準備
-                result_dir = self.exp_dir / "time_dependent_output" / self.query_set
-                result_dir.mkdir(parents=True, exist_ok=True)
-                
-                # プルーニング結果を保存
-                pruning_result_file = result_dir / f"pruning_result{self.exp_suffix}.json"
-                with open(pruning_result_file, 'w', encoding='utf-8') as f:
-                    json.dump(pruning_info, f, indent=2, ensure_ascii=False)
-                self.print_success(f"  プルーニング結果を {pruning_result_file} に保存")
-            
+                # NOTE: pruning_info は後段で enhanced_result['pruning_info'] として
+                # td_mv_optimization_result に保存されるため、別ファイル出力は行わない。
+
             # オプティマイザを初期化
             self.print_info("オプティマイザを初期化中...")
             optimizer = TimeDependentOptimizer(
@@ -1727,16 +1723,19 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
 
-    def phase6c_optimize_adaptive(self, window_size: Optional[int] = None, b_max=None):
-        """フェーズ6c: 適応的MV最適化（スライディングウィンドウ方式）
-        
-        2タイムステップILPを用いた適応的最適化。
-        - 初期MV: 全時刻の平均頻度で計算
+    def phase6c_optimize_adaptive(self, window_size: Optional[int] = None, b_max=None, lookahead: bool = False):
+        """フェーズ6c: 適応的MV最適化（スライディングウィンドウ方式）／Peloton（1ステップ先読み）
+
+        2タイムステップILPを用いた逐次最適化。
+        - 初期MV: 空集合から時刻0頻度で構築（案B）
         - 各ステップ: 現在のMVを固定し、次のMVを最適化
-        
+
         Args:
-            window_size: 移動平均の幅（Noneの場合はself.window_sizeを使用）
-        
+            window_size: 移動平均の幅（Noneの場合はself.window_sizeを使用）。lookahead時は未使用。
+            lookahead: True の場合 Peloton モード。ウィンドウを使わず「1つ先の時刻の実頻度」を
+                       そのまま curr_freq に用いる（完全1ステップ予知）。False は従来の適応型
+                       （過去 window_size 時刻の重み付き移動平均, 反応型）。
+
         出力形式は動的最適化と同じ構造。
         """
         if window_size is None:
@@ -1806,29 +1805,29 @@ class NormalModeExperiment:
             self.print_info("最初のタイムステップの頻度を使用...")
             initial_freq = frequencies[timesteps[0]]
             
-            # === 初期MV計算（最初のタイムステップの頻度で静的最適化）===
-            # 初期MVはマイグレーションコストを考慮せず、純粋にワークロードに最適なものを選択
-            self.print_info("初期MVを計算中（最初のタイムステップの頻度、マイグレーションコストなし）...")
+            # === 初期MV計算（案B: 空集合から実マイグレーションコストで構築）===
+            # 各ステップと同じ TwoStepOptimizer を使い、t=0 を空集合に固定して
+            # 時刻0の頻度に対し「便益 - 構築コスト」を最大化する集合を選ぶ。
+            # これにより初期MVと各ステップの定式化・便益モデルが一致し、頻度不変時に
+            # MV数が変動する不整合（migration_cost=0 由来）が解消される。
+            self.print_info("初期MVを計算中（案B: 空集合から実マイグレーションコストで構築）...")
             initial_start = time.time()
-            
-            # マイグレーションコストを0にする（初期MVでは考慮しない）
-            zero_migration_cost = {j: 0.0 for j in range(len(self.qp.node_list))}
-            
-            initial_optimizer = TimeDependentOptimizer(
+
+            initial_optimizer = TwoStepOptimizer(
                 node_list=self.qp.node_list,
                 u_ij=self.qp.u_ij,
                 X=self.qp.X,
                 b_j=b_j,
                 B_max=B_max,
-                timesteps=["initial"],
-                migration_cost=zero_migration_cost,  # マイグレーションコストを0に設定
-                query_frequency_by_timestep={"initial": initial_freq},
+                prev_freq=initial_freq,   # t=0 は空固定のため実質無関係
+                curr_freq=initial_freq,   # 時刻0の頻度で最適化
+                migration_cost=migration_cost,  # 実コスト（0ではない）
+                fixed_mvs=set(),          # t=0 を「MVなし」に固定 → 満額構築コスト
                 gurobi_output=0,
             )
             initial_result = initial_optimizer.optimize()
-            initial_z = initial_result["z_by_timestep"][0]
-            current_mvs = set(j for j, v in enumerate(initial_z) if v == 1)
-            
+            current_mvs = set(initial_result["selected_mvs_t1"])
+
             initial_solve_time = time.time() - initial_start
             self.print_success(f"  初期MV数: {len(current_mvs)}, 計算時間: {initial_solve_time:.2f}s")
             
@@ -1837,7 +1836,11 @@ class NormalModeExperiment:
             # - 時刻tのビューは時刻(t-N+1, ..., t-1, t)の平均頻度で最適化
             # - 例: window_size=4の場合、時刻5のビューは時刻2,3,4,5の平均頻度で最適化
             # - タイムステップが不足する場合は、最初のタイムステップを拡張して使用
-            self.print_info(f"適応的最適化を開始（過去{window_size}時刻の単純移動平均使用）...")
+            if lookahead:
+                self.print_info("Peloton最適化を開始（1ステップ先読み: 次時刻の実頻度を使用, ウィンドウなし）...")
+            else:
+                _decay_desc = "線形減衰(DeepSea流)" if self.freq_weight == "linear" else "一様平均"
+                self.print_info(f"適応的最適化を開始（過去{window_size}時刻, {_decay_desc}）...")
             
             z_by_timestep = []
             step_solve_times = []
@@ -1855,48 +1858,69 @@ class NormalModeExperiment:
                 z_t = [1 if j in current_mvs else 0 for j in range(len(self.qp.node_list))]
                 z_by_timestep.append(z_t)
                 
-                # N時刻の単純移動平均を計算（過去N時刻: t-N+1, ..., t-1, t）
-                # 時刻tのビューは時刻t-N+1, ..., t-1, tの平均頻度で最適化
-                freq_window = []
-                for offset in range(-window_size + 1, 1):  # -N+1, ..., -1, 0
-                    target_idx = t + offset
-                    if target_idx < 0:
-                        # タイムステップが足りない場合、最初のタイムステップを拡張して使用
-                        freq_window.append(frequencies[timesteps[0]])
-                    else:
-                        # 通常のタイムステップ
-                        freq_window.append(frequencies[timesteps[target_idx]])
-                
-                # N時刻の平均を計算
                 query_count = len(self.qp.u_ij)
-                curr_freq = [0.0] * query_count
-                for i in range(query_count):
-                    total = sum(freq_window[j][i] for j in range(window_size))
-                    curr_freq[i] = total / window_size
-                
-                # どの時刻の平均を使用したかをログ出力
-                used_indices = [max(0, t + offset) for offset in range(-window_size + 1, 1)]
-                self.print_info(f"    {window_size}時刻移動平均: timesteps[{used_indices}] の平均を使用")
-                
-                # 2タイムステップILP（現在のMVを固定、次のMVを最適化）
-                step_optimizer = TwoStepOptimizer(
-                    node_list=self.qp.node_list,
-                    u_ij=self.qp.u_ij,
-                    X=self.qp.X,
-                    b_j=b_j,
-                    B_max=B_max,
-                    prev_freq=prev_freq,
-                    curr_freq=curr_freq,
-                    migration_cost=migration_cost,
-                    fixed_mvs=current_mvs,
-                    gurobi_output=0,
-                )
-                
-                step_result = step_optimizer.optimize()
-                next_mvs = step_result["selected_mvs_t1"]
-                
-                step_elapsed = time.time() - step_start
-                step_solve_times.append(step_elapsed)
+                # 最終タイムステップでは「次のMV」を計算しても結果が使われない（記録対象が無い）ため、
+                # 頻度集約・2タイムステップILP・候補生成を丸ごとスキップする（adaptive/peloton 共通）。
+                is_last = (t + 1 >= len(timesteps))
+                next_mvs = set(current_mvs)
+                step_elapsed = 0.0
+
+                if not is_last:
+                    if lookahead:
+                        # Peloton: 1つ先の時刻の実頻度をそのまま使用（ウィンドウなし・完全予知）
+                        src_freq = frequencies[timesteps[t + 1]]
+                        curr_freq = [0.0] * query_count
+                        for i in range(query_count):
+                            curr_freq[i] = src_freq[i] if i < len(src_freq) else 1.0
+                        self.print_info(f"    1ステップ先読み: timesteps[{t + 1}] の実頻度を使用")
+                    else:
+                        # 過去N時刻(t-N+1, ..., t-1, t)の頻度をウィンドウとして取得
+                        # freq_window は古い→新しい順（index window_size-1 が現在時刻t）
+                        freq_window = []
+                        for offset in range(-window_size + 1, 1):  # -N+1, ..., -1, 0
+                            target_idx = t + offset
+                            if target_idx < 0:
+                                # タイムステップが足りない場合、最初のタイムステップを拡張して使用
+                                freq_window.append(frequencies[timesteps[0]])
+                            else:
+                                freq_window.append(frequencies[timesteps[target_idx]])
+
+                        # ウィンドウ内頻度の重み（古い→新しい順）。uniform=単純移動平均, linear=線形recency重み。
+                        # 重み和で正規化し頻度スケールを保つ（移行コスト vs 便益はスケール依存のため必須）。
+                        if self.freq_weight == "linear":
+                            weights = [k + 1 for k in range(window_size)]
+                        else:  # "uniform"
+                            weights = [1 for _ in range(window_size)]
+                        wsum = sum(weights)
+
+                        curr_freq = [0.0] * query_count
+                        for i in range(query_count):
+                            total = sum(weights[k] * freq_window[k][i] for k in range(window_size))
+                            curr_freq[i] = total / wsum
+
+                        used_indices = [max(0, t + offset) for offset in range(-window_size + 1, 1)]
+                        avg_kind = "線形減衰(DeepSea流)" if self.freq_weight == "linear" else "一様平均"
+                        self.print_info(f"    {window_size}時刻{avg_kind}: timesteps[{used_indices}] を使用")
+
+                    # 2タイムステップILP（現在のMVを固定、次のMVを最適化）
+                    step_optimizer = TwoStepOptimizer(
+                        node_list=self.qp.node_list,
+                        u_ij=self.qp.u_ij,
+                        X=self.qp.X,
+                        b_j=b_j,
+                        B_max=B_max,
+                        prev_freq=prev_freq,
+                        curr_freq=curr_freq,
+                        migration_cost=migration_cost,
+                        fixed_mvs=current_mvs,
+                        gurobi_output=0,
+                    )
+                    step_result = step_optimizer.optimize()
+                    next_mvs = step_result["selected_mvs_t1"]
+                    step_elapsed = time.time() - step_start
+                    step_solve_times.append(step_elapsed)
+                else:
+                    self.print_info("    最終タイムステップのため次MV最適化をスキップ")
                 
                 # migration_analysis形式で記録
                 timestep_info = {
@@ -1961,9 +1985,10 @@ class NormalModeExperiment:
                     ]
                 }
                 
-                # 状態更新
-                prev_freq = curr_freq
-                current_mvs = next_mvs
+                # 状態更新（最終ステップは curr_freq 未定義かつ更新不要のためスキップ）
+                if not is_last:
+                    prev_freq = curr_freq
+                    current_mvs = next_mvs
             
             total_solve_time = time.time() - phase_start
             
@@ -1972,7 +1997,7 @@ class NormalModeExperiment:
             
             # 結果を動的最適化形式で構築
             result = {
-                "algorithm": "adaptive_sliding_window",
+                "algorithm": "peloton_lookahead" if lookahead else "adaptive_sliding_window",
                 "timesteps": timesteps,
                 "node_list": self.qp.node_list,
                 # "z_by_timestep": z_by_timestep,
@@ -2000,12 +2025,15 @@ class NormalModeExperiment:
             # 結果保存
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
-            result_file = result_dir / f"adaptive_mv_optimization_result_w{window_size}{self.exp_suffix}.json"
-            
+            if lookahead:
+                result_file = result_dir / f"peloton_mv_optimization_result{self.exp_suffix}.json"
+            else:
+                result_file = result_dir / f"adaptive_mv_optimization_result_w{window_size}{self.exp_suffix}.json"
+
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
-            
-            self.print_success(f"適応的最適化結果を {result_file} に保存")
+
+            self.print_success(f"{'Peloton' if lookahead else '適応的'}最適化結果を {result_file} に保存")
             
             # サマリー表示
             self.print_info(f"\n=== 最適化サマリー ===")
@@ -2046,14 +2074,16 @@ class NormalModeExperiment:
                 self.print_info(f"  SQL生成時間: {self.phase_times['phase7_static_sql_generation']:.2f} 秒")
             return success
         
-        # Dynamic/Adaptive mode: タイムステップごとのマイグレーションSQL作成
-        mode_name = "適応的" if mode == 'adaptive' else "動的"
+        # Dynamic/Adaptive/Peloton mode: タイムステップごとのマイグレーションSQL作成
+        mode_name = {"adaptive": "適応的", "peloton": "Peloton"}.get(mode, "動的")
         self.print_header(f"マイグレーションSQL作成（{mode_name}）", 7)
-        
+
         if self.result is None:
-            # Load optimization result (adaptive or dynamic)
+            # Load optimization result (adaptive / peloton / dynamic)
             if mode == 'adaptive':
                 result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
+            elif mode == 'peloton':
+                result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"peloton_mv_optimization_result{self.exp_suffix}.json"
             else:
                 result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
             
@@ -2324,8 +2354,8 @@ class NormalModeExperiment:
             
             return success
         
-        # Dynamic/Adaptive モードの処理
-        mode_name = "適応的" if mode == 'adaptive' else "時間依存型"
+        # Dynamic/Adaptive/Peloton モードの処理
+        mode_name = {"adaptive": "適応的", "peloton": "Peloton"}.get(mode, "時間依存型")
         self.print_header(f"{mode_name}クエリ書き換え", 8)
         
         # フェーズ時間計測開始
@@ -2343,20 +2373,22 @@ class NormalModeExperiment:
             with open(self.pickle_path, 'rb') as f:
                 self.qp = pickle.load(f)
         
-        # Load optimization result (adaptive or dynamic)
+        # Load optimization result (adaptive / peloton / dynamic)
         if mode == 'adaptive':
             result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
+        elif mode == 'peloton':
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"peloton_mv_optimization_result{self.exp_suffix}.json"
         else:
             result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"td_mv_optimization_result{self.exp_suffix}.json"
-        
+
         if not result_file.exists():
             self.print_error(f"最適化結果が見つかりません: {result_file}")
             self.print_info("先にフェーズ6を実行してください")
             return False
-        
+
         with open(result_file, 'r', encoding='utf-8') as f:
             result_data = json.load(f)
-        
+
         # Check if result is from time-dependent/adaptive optimizer
         if 'migration_analysis' not in result_data:
             self.print_error(f"{mode_name}最適化結果ではありません")
@@ -2664,18 +2696,33 @@ class NormalModeExperiment:
         elif mode == 'adaptive':
             # 適応的最適化結果を読み込み
             result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"adaptive_mv_optimization_result_w{self.window_size}{self.exp_suffix}.json"
-            
+
             if not result_file.exists():
                 self.print_error("適応的最適化結果が見つかりません")
                 self.print_info("先にフェーズ6を --optimization-mode adaptive で実行してください")
                 return False
-            
+
             with open(result_file, 'r', encoding='utf-8') as f:
                 optimization_result = json.load(f)
-                
+
             migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set
             rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
-            
+
+        elif mode == 'peloton':
+            # Peloton（1ステップ先読み）最適化結果を読み込み
+            result_file = self.exp_dir / "time_dependent_output" / self.query_set / f"peloton_mv_optimization_result{self.exp_suffix}.json"
+
+            if not result_file.exists():
+                self.print_error("Peloton最適化結果が見つかりません")
+                self.print_info("先にフェーズ6を --optimization-mode peloton で実行してください")
+                return False
+
+            with open(result_file, 'r', encoding='utf-8') as f:
+                optimization_result = json.load(f)
+
+            migration_sql_dir = self.exp_dir / "time_dependent_output" / self.query_set
+            rewritten_queries_base_dir = self.exp_dir / "time_dependent_output" / self.query_set / "jobs"
+
         elif mode == 'static':
             # 静的最適化結果を読み込み（アルゴリズムに応じてファイルを選択）
             if static_algorithm == 'bigsubs':
@@ -2803,8 +2850,8 @@ class NormalModeExperiment:
                     static_algorithm=static_algorithm,
                     ease_mode=ease_mode
                 )
-            else:  # dynamic or adaptive
-                # 動的/適応的MV: マイグレーションあり
+            else:  # dynamic / adaptive / peloton
+                # 動的/適応的/Peloton MV: マイグレーションあり
                 benchmark_results = executor.execute_time_dependent_benchmark(
                     optimization_result=optimization_result,
                     migration_sql_dir=migration_sql_dir,
@@ -3048,15 +3095,15 @@ def main():
         '--benchmark-mode',
         type=str,
         default='dynamic',
-        choices=['dynamic', 'adaptive', 'static', 'baseline'],
-        help='ベンチマークモード (dynamic: 動的MV, adaptive: 適応的MV, static: 静的MV, baseline: MVなし)'
+        choices=['dynamic', 'adaptive', 'peloton', 'static', 'baseline'],
+        help='ベンチマークモード (dynamic: 動的MV, adaptive: 適応的MV, peloton: 1ステップ先読み, static: 静的MV, baseline: MVなし)'
     )
     parser.add_argument(
         '--optimization-mode',
         type=str,
         default='dynamic',
-        choices=['static', 'dynamic', 'adaptive'],
-        help='最適化モード (static: 初期タイムステップのみ, dynamic: 時間依存型最適化, adaptive: 適応的最適化)'
+        choices=['static', 'dynamic', 'adaptive', 'peloton'],
+        help='最適化モード (static: 初期タイムステップのみ, dynamic: 時間依存型最適化, adaptive: 適応的最適化, peloton: 1ステップ先読み完全予知)'
     )
     parser.add_argument(
         '--use-neurocard',
@@ -3166,6 +3213,13 @@ def main():
         help='適応的最適化で使用する移動平均の幅（デフォルト: 4）'
     )
     parser.add_argument(
+        '--freq-weight',
+        type=str,
+        default='uniform',
+        choices=['uniform', 'linear'],
+        help='適応的最適化のウィンドウ内頻度の重み付け（uniform=単純移動平均, linear=DeepSea流の線形recency重み）'
+    )
+    parser.add_argument(
         '--b-max',
         type=float,
         default=100.0,
@@ -3188,7 +3242,8 @@ def main():
         exp_suffix=args.exp_suffix,
         use_docker=args.use_docker,
         recalc_mode=args.recalc,
-        window_size=args.window_size
+        window_size=args.window_size,
+        freq_weight=args.freq_weight
     )
     
     # 接続モードを表示

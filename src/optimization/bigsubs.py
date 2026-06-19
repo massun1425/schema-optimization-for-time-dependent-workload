@@ -237,8 +237,11 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         y_ij = [list(row) for row in self.y_ij_init]
 
-        # Iterative refinement (paper: loop until no update AND iter >= iter_max)
-        while updated == 1 or iter_num < iter_max:
+        # Iterative refinement: at most iter_max iterations, stop early on convergence.
+        # (Paper's pseudocode uses OR which can exceed iter_max / risk non-termination;
+        #  we adopt the safer "max iterations, early-stop on convergence" interpretation,
+        #  matching the paper's natural-language description.)
+        while updated == 1 and iter_num < iter_max:
             updated = 0
 
             # Vertex labeling: decide which nodes to materialize

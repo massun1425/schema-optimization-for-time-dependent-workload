@@ -299,6 +299,17 @@ async function onSubfolderChange() {
         });
     }
 
+    // Peloton最適化ファイル（時間依存型と同じ構造）
+    if (files.peloton_optimization) {
+        files.peloton_optimization.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[Peloton] ${f}`;
+            opt.dataset.type = 'peloton';
+            resultSelect.appendChild(opt);
+        });
+    }
+
     // 静的最適化ファイル
     files.static.forEach(f => {
         const opt = document.createElement('option');
@@ -307,6 +318,17 @@ async function onSubfolderChange() {
         opt.dataset.type = 'static';
         resultSelect.appendChild(opt);
     });
+
+    // BigSubs(静的)最適化ファイル（静的と同じ構造のため static エンドポイントを使用）
+    if (files.bigsubs_optimization) {
+        files.bigsubs_optimization.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            opt.textContent = `[BigSubs] ${f}`;
+            opt.dataset.type = 'static';
+            resultSelect.appendChild(opt);
+        });
+    }
 
     resultSelect.addEventListener('change', onResultFileChange);
 
@@ -1016,12 +1038,32 @@ async function loadComparisonFiles() {
             });
         }
 
+        // Pelotonベンチマークファイル
+        if (files.peloton_benchmark) {
+            files.peloton_benchmark.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[Peloton] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
+
         // 静的ベンチマークファイル
         if (files.static_benchmark) {
             files.static_benchmark.forEach(f => {
                 const opt = document.createElement('option');
                 opt.value = f;
                 opt.textContent = `[静的] ${f}`;
+                fileSelect.appendChild(opt);
+            });
+        }
+
+        // BigSubsベンチマークファイル
+        if (files.bigsubs_benchmark) {
+            files.bigsubs_benchmark.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                opt.textContent = `[BigSubs] ${f}`;
                 fileSelect.appendChild(opt);
             });
         }

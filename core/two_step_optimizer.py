@@ -54,8 +54,10 @@ class TwoStepOptimizer:
             prev_freq: Query frequencies for previous timestep
             curr_freq: Query frequencies for current timestep
             migration_cost: Fixed migration cost for each MV {j: cost}
-            fixed_mvs: Set of MV indices that must be materialized at t=0
-                       If None, t=0 is also optimized
+            fixed_mvs: Set of MV indices that must be materialized at t=0.
+                       None  -> t=0 is optimized freely (no fixing).
+                       set() -> t=0 is fixed to NO MVs (build-from-empty init).
+                       {..}  -> t=0 is fixed to the given configuration.
             gurobi_output: Gurobi log level (0=off, 1=on)
             migration_cost_weight: Weight for migration cost in objective
         """
@@ -67,7 +69,10 @@ class TwoStepOptimizer:
         self.prev_freq = prev_freq
         self.curr_freq = curr_freq
         self.migration_cost = migration_cost
-        self.fixed_mvs = fixed_mvs or set()
+        # Distinguish None (optimize t=0 freely) from a set (fix t=0 to that set,
+        # including the empty set which means "fix t=0 to no MVs").
+        self._t0_fixed = fixed_mvs is not None
+        self.fixed_mvs = fixed_mvs if fixed_mvs is not None else set()
         self.gurobi_output = gurobi_output
         self.migration_cost_weight = migration_cost_weight
 
@@ -88,7 +93,7 @@ class TwoStepOptimizer:
         self.c: Dict[tuple, gp.Var] = {}  # c[j,t]: MV j is created at time t
 
         logger.debug(f"TwoStepOptimizer: I={self.I}, J={self.J}, candidates={len(self.cand_j)}")
-        logger.debug(f"Fixed MVs at t=0: {len(self.fixed_mvs)}")
+        logger.debug(f"t=0 fixed: {self._t0_fixed} ({len(self.fixed_mvs)} MVs)")
 
     def _initialize_candidates(self) -> List[int]:
         """Filter candidates with positive utility."""
@@ -124,8 +129,8 @@ class TwoStepOptimizer:
                     self.y[i, j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"y_{i}_{j}_{t}")
 
             for j in self.cand_j:
-                if t == 0 and self.fixed_mvs:
-                    # Fixed at t=0: set z as constant
+                if t == 0 and self._t0_fixed:
+                    # Fixed at t=0: set z as constant (empty set => all zeros)
                     self.z[j, t] = 1 if j in self.fixed_mvs else 0
                 else:
                     self.z[j, t] = m.addVar(vtype=gp.GRB.BINARY, name=f"z_{j}_{t}")
@@ -176,43 +181,37 @@ class TwoStepOptimizer:
                         m.addConstr(y_var == 0)
                     # If z_val == 1, y is free (0 or 1)
 
-        # At most one MV per query per timestep
-        for t in [0, 1]:
-            for i in range(self.I):
-                sparse_ys = [self.y[i, j, t] for j in self.pos_js_by_i.get(i, []) if (i, j, t) in self.y]
-                if sparse_ys:
-                    m.addConstr(gp.quicksum(sparse_ys) <= 1)
+        # NOTE: No "at most one MV per query" constraint. A query may benefit from
+        # multiple non-overlapping MVs (benefits sum), matching TimeDependentOptimizer.
 
-        # Storage constraint (only for t=1 if t=0 is fixed)
+        # Storage constraint (skip t=0 only when it is fixed and assumed feasible)
         for t in [0, 1]:
-            if t == 0 and self.fixed_mvs:
+            if t == 0 and self._t0_fixed:
                 continue  # Skip - already fixed and assumed feasible
             storage_sum = gp.quicksum(
-                self.b_j[j] * self.z[j, t] 
-                for j in self.cand_j 
+                self.b_j[j] * self.z[j, t]
+                for j in self.cand_j
                 if isinstance(self.z[j, t], gp.Var)
             )
-            # Add fixed storage if t=1
-            if t == 1 and self.fixed_mvs:
-                # No fixed MVs at t=1, but we need total storage
-                pass
             m.addConstr(storage_sum <= self.B_max)
 
-        # Inclusion exclusion (if MV j includes MV u, and z[j]=1, then z[u]=0)
+        # Inclusion/overlap exclusion (y-level, per query) matching TimeDependentOptimizer:
+        # a single query cannot use two overlapping MVs together, but both may be
+        # materialized for different queries.
         for t in [0, 1]:
-            if t == 0 and self.fixed_mvs:
-                continue  # Skip - already fixed
-            for j in self.cand_j:
-                for u in self.cand_j:
-                    if j != u and self.X[j][u] == 1:
-                        z_j = self.z[j, t]
-                        z_u = self.z[u, t]
-                        if isinstance(z_j, gp.Var) and isinstance(z_u, gp.Var):
-                            m.addConstr(z_j + z_u <= 1)
-                        elif isinstance(z_j, gp.Var) and z_u == 1:
-                            m.addConstr(z_j == 0)
-                        elif z_j == 1 and isinstance(z_u, gp.Var):
-                            m.addConstr(z_u == 0)
+            for i in range(self.I):
+                for j in self.pos_js_by_i.get(i, []):
+                    y_var = self.y.get((i, j, t))
+                    if y_var is None:
+                        continue
+                    overlap = gp.quicksum(
+                        self.y[i, u, t] * self.X[j][u]
+                        for u in self.pos_js_by_i.get(i, [])
+                        if u != j and self.X[j][u] != 0 and (i, u, t) in self.y
+                    )
+                    m.addConstr(
+                        y_var + overlap / max(1, len(self.cand_j)) <= 1
+                    )
 
         # Creation flag: c[j,1] = max(0, z[j,1] - z[j,0])
         for j in self.cand_j:
