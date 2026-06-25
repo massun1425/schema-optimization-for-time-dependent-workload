@@ -42,6 +42,7 @@ from typing import Dict, List, Set, Tuple, Optional
 import gurobipy as gp
 
 from core.local_ilp_optimizer import LocalILPOptimizer
+from core.sparse_structures import SparseMatrix
 from core.workload_summary_tree import (
     TreeNode,
     WorkloadSummaryTree,
@@ -134,12 +135,20 @@ class CFPruner:
         Returns only nodes that have positive utility for at least one query.
         This is computed once and shared across all LocalILP instances.
         """
-        candidates = []
-        for j in range(self.J):
-            has_utility = any(self.u_ij[i][j] > 0 for i in range(self.I))
-            if has_utility:
-                candidates.append(j)
-        
+        if isinstance(self.u_ij, SparseMatrix):
+            cset = set()
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    if v > 0:
+                        cset.add(j)
+            candidates = sorted(cset)
+        else:
+            candidates = []
+            for j in range(self.J):
+                has_utility = any(self.u_ij[i][j] > 0 for i in range(self.I))
+                if has_utility:
+                    candidates.append(j)
+
         logger.info(f"Filtered to {len(candidates)} candidates (from {self.J} total nodes)")
         return candidates
     

@@ -13,6 +13,11 @@ from config.settings import Settings
 from ..core.models import MaterializedView, OptimizationResult
 from ..core.query_manager import QueryManager
 
+try:
+    from core.sparse_structures import SparseMatrix
+except Exception:  # pragma: no cover - sparse module optional
+    SparseMatrix = ()
+
 
 class BaseILPOptimizer(ABC):
     """Abstract base class for ILP-based materialized view selection.
@@ -437,18 +442,28 @@ class BaseILPOptimizer(ABC):
             if z_leaf_1 + z_non_leaf_2 > 1:
                 print(f"WARNING: Constraint violated! Both leaf_1 and non_leaf_2 are selected")
 
-        # Initialize solution arrays in full index space
-        ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
         ret_z = [0] * len(self.b_j)
 
-        # Extract solution from candidate variables and map to original indices
-        for j_idx in range(len(cand_j)):
-            j_orig = cand_j[j_idx]
-            ret_z[j_orig] = int(z[j_idx].X)
-            
-            for i_idx in range(len(cand_i)):
-                i_orig = cand_i[i_idx]
-                ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X) if (i_idx, j_idx) in y else 0
+        if isinstance(self.u_ij, SparseMatrix):
+            # Sparse: a dense I*J ret_y is infeasible at scale; store only the
+            # selected (i, j) pairs as {i_orig: {j_orig: 1}}. Downstream uses z_j
+            # for materialized views; y_ij is metadata only.
+            ret_y = {}
+            for j_idx in range(len(cand_j)):
+                j_orig = cand_j[j_idx]
+                ret_z[j_orig] = int(z[j_idx].X)
+                for i_idx in range(len(cand_i)):
+                    if (i_idx, j_idx) in y and int(y[i_idx, j_idx].X) == 1:
+                        ret_y.setdefault(cand_i[i_idx], {})[j_orig] = 1
+        else:
+            # Initialize solution arrays in full index space
+            ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
+            for j_idx in range(len(cand_j)):
+                j_orig = cand_j[j_idx]
+                ret_z[j_orig] = int(z[j_idx].X)
+                for i_idx in range(len(cand_i)):
+                    i_orig = cand_i[i_idx]
+                    ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X) if (i_idx, j_idx) in y else 0
 
         obj_val = self.model.objVal
 

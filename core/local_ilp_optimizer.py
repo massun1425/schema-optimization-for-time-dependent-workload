@@ -15,6 +15,8 @@ from typing import Dict, List, Set, Tuple, Optional
 
 import gurobipy as gp
 
+from core.sparse_structures import SparseMatrix
+
 logger = logging.getLogger(__name__)
 
 
@@ -145,6 +147,13 @@ class LocalILPOptimizer:
         
         Returns only nodes that have positive utility for at least one query.
         """
+        if isinstance(self.u_ij, SparseMatrix):
+            cset = set()
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    if v > 0:
+                        cset.add(j)
+            return sorted(cset)
         candidates = []
         for j in range(self.J):
             has_utility = any(self.u_ij[i][j] > 0 for i in range(self.I))
@@ -157,11 +166,23 @@ class LocalILPOptimizer:
         self.pos_is_by_j = {j: [] for j in self.cand_j}
         self.pos_js_by_i = {i: [] for i in range(self.I)}
 
-        for i in range(self.I):
-            for j in self.cand_j:
-                if self.u_ij[i][j] > 0:
-                    self.pos_js_by_i[i].append(j)
-                    self.pos_is_by_j[j].append(i)
+        if isinstance(self.u_ij, SparseMatrix):
+            cand_set = set(self.cand_j)
+            for i, row in self.u_ij.rows.items():
+                for j, v in row.items():
+                    if v > 0 and j in cand_set:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
+            for i in self.pos_js_by_i:
+                self.pos_js_by_i[i].sort()
+            for j in self.pos_is_by_j:
+                self.pos_is_by_j[j].sort()
+        else:
+            for i in range(self.I):
+                for j in self.cand_j:
+                    if self.u_ij[i][j] > 0:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
 
     def _get_y(self, i: int, j: int, t: int):
         """Get y[i,j,t] variable/constant (returns 0 for non-created sparse entries)."""

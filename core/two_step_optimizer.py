@@ -12,6 +12,8 @@ from typing import Dict, List, Set, Optional
 
 import gurobipy as gp
 
+from core.sparse_structures import SparseMatrix
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +99,13 @@ class TwoStepOptimizer:
 
     def _initialize_candidates(self) -> List[int]:
         """Filter candidates with positive utility."""
+        if isinstance(self.u_ij, SparseMatrix):
+            cset = set(self.fixed_mvs)
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    if v > 0:
+                        cset.add(j)
+            return sorted(cset)
         candidates = []
         for j in range(self.J):
             has_utility = any(self.u_ij[i][j] > 0 for i in range(self.I))
@@ -110,11 +119,23 @@ class TwoStepOptimizer:
         self.pos_js_by_i = {i: [] for i in range(self.I)}
         self.pos_is_by_j = {j: [] for j in self.cand_j}
 
-        for i in range(self.I):
-            for j in self.cand_j:
-                if self.u_ij[i][j] > 0:
-                    self.pos_js_by_i[i].append(j)
-                    self.pos_is_by_j[j].append(i)
+        if isinstance(self.u_ij, SparseMatrix):
+            cand_set = set(self.cand_j)
+            for i, row in self.u_ij.rows.items():
+                for j, v in row.items():
+                    if v > 0 and j in cand_set:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
+            for i in self.pos_js_by_i:
+                self.pos_js_by_i[i].sort()
+            for j in self.pos_is_by_j:
+                self.pos_is_by_j[j].sort()
+        else:
+            for i in range(self.I):
+                for j in self.cand_j:
+                    if self.u_ij[i][j] > 0:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
 
     def _build_model(self) -> None:
         """Build the Gurobi model."""

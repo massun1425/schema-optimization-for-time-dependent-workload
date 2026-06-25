@@ -27,6 +27,11 @@ if str(_project_root) not in sys.path:
 from src.core.models import OptimizationResult
 from src.optimization.base import BaseILPOptimizer
 
+try:
+    from core.sparse_structures import SparseMatrix
+except Exception:  # pragma: no cover - sparse module optional
+    SparseMatrix = ()
+
 
 class UtilityOptimizerV2(BaseILPOptimizer):
     """Utility-based ILP optimizer (bug-fixed version).
@@ -73,9 +78,14 @@ class UtilityOptimizerV2(BaseILPOptimizer):
         greedy_budget = self.B_max * budget_multiplier
 
         # Calculate total utility for each node: sum of u_ij over all queries
-        U_j_max = {}
-        for j in range(self.s_num):
-            U_j_max[j] = sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
+        U_j_max = {j: 0.0 for j in range(self.s_num)}
+        if isinstance(self.u_ij, SparseMatrix):
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    U_j_max[j] += v
+        else:
+            for j in range(self.s_num):
+                U_j_max[j] = sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
 
         # Calculate utility - maintenance cost for each node
         net_utility = {}
@@ -118,16 +128,22 @@ class UtilityOptimizerV2(BaseILPOptimizer):
         z_j = self.initialize_greedy()
 
         M = []
-        for i in range(len(self.q_s_list)):
-            M_i = []
-            M_i_ = []
-            for j in range(len(z_j)):
-                if self.u_ij[i][j] > 0:
-                    M_i.append(j)
-                if z_j[j] > 0:
-                    M_i_.append(j)
-            k = list(set(M_i) & set(M_i_))
-            M.append(k)
+        if isinstance(self.u_ij, SparseMatrix):
+            mat_set = set(j for j in range(len(z_j)) if z_j[j] > 0)
+            for i in range(len(self.q_s_list)):
+                row = self.u_ij.rows.get(i, {})
+                M.append([j for j, v in row.items() if v > 0 and j in mat_set])
+        else:
+            for i in range(len(self.q_s_list)):
+                M_i = []
+                M_i_ = []
+                for j in range(len(z_j)):
+                    if self.u_ij[i][j] > 0:
+                        M_i.append(j)
+                    if z_j[j] > 0:
+                        M_i_.append(j)
+                k = list(set(M_i) & set(M_i_))
+                M.append(k)
 
         cand_i = [i for i in range(len(M)) if len(M[i]) != 0]
         cand_j = [j for j in range(len(z_j)) if z_j[j] == 1]
@@ -246,16 +262,22 @@ class UtilityOptimizerV2(BaseILPOptimizer):
 
             # Build M: beneficial subqueries for each query
             M = []
-            for i in range(len(self.q_s_list)):
-                M_i = []
-                M_i_ = []
-                for j in range(len(z_j_expanded)):
-                    if self.u_ij[i][j] > 0:
-                        M_i.append(j)
-                    if z_j_expanded[j] > 0:
-                        M_i_.append(j)
-                k = list(set(M_i) & set(M_i_))
-                M.append(k)
+            if isinstance(self.u_ij, SparseMatrix):
+                mat_set = set(j for j in range(len(z_j_expanded)) if z_j_expanded[j] > 0)
+                for i in range(len(self.q_s_list)):
+                    row = self.u_ij.rows.get(i, {})
+                    M.append([j for j, v in row.items() if v > 0 and j in mat_set])
+            else:
+                for i in range(len(self.q_s_list)):
+                    M_i = []
+                    M_i_ = []
+                    for j in range(len(z_j_expanded)):
+                        if self.u_ij[i][j] > 0:
+                            M_i.append(j)
+                        if z_j_expanded[j] > 0:
+                            M_i_.append(j)
+                    k = list(set(M_i) & set(M_i_))
+                    M.append(k)
 
             # Identify candidate queries and subqueries
             cand_i = [i for i in range(len(M)) if len(M[i]) != 0]

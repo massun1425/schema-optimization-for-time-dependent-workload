@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 from ..core.models import OptimizationResult
 from .base import BaseILPOptimizer
 
+try:
+    from core.sparse_structures import SparseMatrix
+except Exception:  # pragma: no cover - sparse module optional
+    SparseMatrix = ()  # isinstance(x, ()) is always False
+
 
 class BigSubsOptimizer(BaseILPOptimizer):
     """BigSubs optimization with randomized search and local ILP.
@@ -42,13 +47,23 @@ class BigSubsOptimizer(BaseILPOptimizer):
         super().__init__(*args, **kwargs)
 
         # Compute U_max and U_j_max from u_ij (paper Algorithm 1 initialization)
-        self.U_j_max = [
-            sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
-            for j in range(self.s_num)
-        ]
+        self._sparse = isinstance(self.u_ij, SparseMatrix)
+        if self._sparse:
+            # Sparse: column sums over stored non-zeros only (no O(I*J) scan).
+            self.U_j_max = [0.0] * self.s_num
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    self.U_j_max[j] += v
+        else:
+            self.U_j_max = [
+                sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
+                for j in range(self.s_num)
+            ]
         self.U_max = sum(self.U_j_max)
 
-        if self.y_ij_init is None:
+        if self.y_ij_init is None and not self._sparse:
+            # Dense initial y_ij. In sparse mode y_ij is tracked as per-query
+            # selected-index lists instead (a dense I*J array is infeasible).
             self.y_ij_init = [[0] * self.s_num for _ in range(len(self.u_ij))]
 
     def initialize_random(self, mv_list: list[int]) -> list[int]:
@@ -156,10 +171,10 @@ class BigSubsOptimizer(BaseILPOptimizer):
         model = gp.Model("local_ilp")
         model.Params.OutputFlag = 0
 
-        # Variables
-        y = {}
-        for j in range(len(self.b_j)):
-            y[j] = model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}")
+        # Variables: only for candidates in k (= M_i ∩ M_i').
+        # 目的関数・制約に現れるのは k のみ。全候補(s_num)分を生成すると大規模ワークロードで
+        # 毎回数万変数を作ることになり致命的に遅くなるため、k だけ生成する。
+        y = {j: model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}") for j in k}
 
         model.update()
 
@@ -168,7 +183,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
             gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
         )
 
-        # Constraints: overlapping subexpression
+        # Constraints: overlapping subexpression (paper Eq. 7; 正規化は総候補数 len(b_j)=m)
         for i in k:
             k_minus = [s for s in k if s != i]
             if k_minus:
@@ -178,12 +193,42 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         model.optimize()
 
-        # Extract solution
+        # Extract solution (k 以外は常に0)
         y_opt = [0] * len(self.b_j)
-        for j in range(len(self.b_j)):
+        for j in k:
             y_opt[j] = int(y[j].X)
 
         return y_opt
+
+    def local_ilp_selected(self, u_ij_row, k: list[int]) -> list[int]:
+        """Sparse variant of local_ilp: return only the selected MV indices.
+
+        Identical model to local_ilp() but avoids allocating a dense length-J
+        result vector per query (which is infeasible at large scale).
+        ``u_ij_row`` may be a dict or any object supporting ``row[j]``.
+        """
+        if not k:
+            return []
+
+        model = gp.Model("local_ilp")
+        model.Params.OutputFlag = 0
+
+        y = {j: model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}") for j in k}
+        model.update()
+
+        model.setObjective(
+            gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
+        )
+
+        for i in k:
+            k_minus = [s for s in k if s != i]
+            if k_minus:
+                model.addConstr(
+                    y[i] + gp.quicksum(y[j] * self.X[i][j] for j in k_minus) / len(self.b_j) <= 1
+                )
+
+        model.optimize()
+        return [j for j in k if int(y[j].X) == 1]
 
     def initialize_candidates(self, **kwargs) -> tuple[list[int], list[int]]:
         """Initialize MV candidates (not used in BigSubs).
@@ -232,10 +277,16 @@ class BigSubsOptimizer(BaseILPOptimizer):
         U_j_cur = [0.0] * len(z_j)
         best_u = 0.0
         best_b = 0.0
-        best_y_ij = self.y_ij_init
         best_z_j = z_j.copy()
 
-        y_ij = [list(row) for row in self.y_ij_init]
+        if self._sparse:
+            # y_ij tracked as per-query lists of selected node indices (sparse).
+            y_sel = [[] for _ in range(len(self.u_ij))]
+            best_y_sel = [[] for _ in range(len(self.u_ij))]
+            best_y_ij = best_y_sel
+        else:
+            best_y_ij = self.y_ij_init
+            y_ij = [list(row) for row in self.y_ij_init]
 
         # Iterative refinement: at most iter_max iterations, stop early on convergence.
         # (Paper's pseudocode uses OR which can exceed iter_max / risk non-termination;
@@ -274,16 +325,30 @@ class BigSubsOptimizer(BaseILPOptimizer):
             U_cur = 0.0
             U_j_cur = [0.0] * len(z_j)
 
-            for i in range(len(self.q_s_list)):
-                M_i = [j for j in range(len(z_j)) if self.u_ij[i][j] > 0]
-                M_i_ = [j for j in range(len(z_j)) if z_j[j] > 0]
-                k = list(set(M_i) & set(M_i_))
+            if self._sparse:
+                # Materialized set computed ONCE per iteration (not per query),
+                # and per-query candidates come from the stored non-zeros only.
+                mat_set = set(j for j in range(len(z_j)) if z_j[j] > 0)
+                for i in range(len(self.q_s_list)):
+                    row = self.u_ij.rows.get(i, {})
+                    k = [j for j, v in row.items() if v > 0 and j in mat_set]
+                    sel = self.local_ilp_selected(row, k)
+                    y_sel[i] = sel
+                    for j in sel:
+                        v = row[j]
+                        U_cur += v
+                        U_j_cur[j] += v
+            else:
+                for i in range(len(self.q_s_list)):
+                    M_i = [j for j in range(len(z_j)) if self.u_ij[i][j] > 0]
+                    M_i_ = [j for j in range(len(z_j)) if z_j[j] > 0]
+                    k = list(set(M_i) & set(M_i_))
 
-                y_ij[i] = self.local_ilp(self.u_ij[i], k)
+                    y_ij[i] = self.local_ilp(self.u_ij[i], k)
 
-                for j in k:
-                    U_cur += self.u_ij[i][j] * y_ij[i][j]
-                    U_j_cur[j] += self.u_ij[i][j] * y_ij[i][j]
+                    for j in k:
+                        U_cur += self.u_ij[i][j] * y_ij[i][j]
+                        U_j_cur[j] += self.u_ij[i][j] * y_ij[i][j]
 
             iter_num += 1
 
@@ -310,7 +375,10 @@ class BigSubsOptimizer(BaseILPOptimizer):
             if U_cur > best_u and B_cur <= self.B_max:
                 best_u = U_cur
                 best_b = B_cur
-                best_y_ij = [list(row) for row in y_ij]
+                if self._sparse:
+                    best_y_ij = [list(s) for s in y_sel]
+                else:
+                    best_y_ij = [list(row) for row in y_ij]
                 best_z_j = z_j.copy()
 
         execution_time = time.time() - start_time

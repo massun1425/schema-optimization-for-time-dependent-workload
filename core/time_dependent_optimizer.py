@@ -12,6 +12,8 @@ from typing import Dict, List, Tuple
 
 import gurobipy as gp
 
+from core.sparse_structures import SparseMatrix
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,11 +104,25 @@ class TimeDependentOptimizer:
         self.pos_js_by_i = {i: [] for i in range(self.I)}
         self.pos_is_by_j = {j: [] for j in self.cand_j}
 
-        for i in range(self.I):
-            for j in self.cand_j:
-                if self.u_ij[i][j] > 0:
-                    self.pos_js_by_i[i].append(j)
-                    self.pos_is_by_j[j].append(i)
+        if isinstance(self.u_ij, SparseMatrix):
+            # Sparse: walk only stored non-zeros (same result, no O(I*J) scan).
+            cand_set = set(self.cand_j)
+            for i, row in self.u_ij.rows.items():
+                for j, v in row.items():
+                    if v > 0 and j in cand_set:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
+            # Match the dense path's ordering (ascending) for identical models.
+            for i in self.pos_js_by_i:
+                self.pos_js_by_i[i].sort()
+            for j in self.pos_is_by_j:
+                self.pos_is_by_j[j].sort()
+        else:
+            for i in range(self.I):
+                for j in self.cand_j:
+                    if self.u_ij[i][j] > 0:
+                        self.pos_js_by_i[i].append(j)
+                        self.pos_is_by_j[j].append(i)
 
     def set_candidates(self, candidates: List[int]) -> None:
         """Replace candidate set and rebuild sparse utility indexes.
@@ -132,10 +148,17 @@ class TimeDependentOptimizer:
             List of candidate node indices (nodes with u_ij > 0 for some query i)
         """
         candidates = set()
-        for i in range(self.I):
-            for j in range(self.J):
-                if self.u_ij[i][j] > 0:
-                    candidates.add(j)
+        if isinstance(self.u_ij, SparseMatrix):
+            # Sparse: a node is a candidate iff some query has positive utility.
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    if v > 0:
+                        candidates.add(j)
+        else:
+            for i in range(self.I):
+                for j in range(self.J):
+                    if self.u_ij[i][j] > 0:
+                        candidates.add(j)
         return sorted(list(candidates))
 
     def build_variables(self) -> None:
@@ -314,15 +337,28 @@ class TimeDependentOptimizer:
             # Extract solution
             # Initialize full arrays with zeros for all nodes
             z_by_t = [[0] * self.J for _ in range(self.T)]
-            y_by_t = [[[0] * self.J for _ in range(self.I)] for _ in range(self.T)]
-            
+            # y_by_timestep is discarded by the caller (phase6) and unused here,
+            # so for sparse runs store it as per-timestep dicts of selected (i, j)
+            # pairs instead of a dense T*I*J array (which OOMs at large scale:
+            # ~3TB at 40k queries). Dense path kept byte-identical.
+            sparse_mode = isinstance(self.u_ij, SparseMatrix)
+            if sparse_mode:
+                y_by_t = [dict() for _ in range(self.T)]
+            else:
+                y_by_t = [[[0] * self.J for _ in range(self.I)] for _ in range(self.T)]
+
             # Fill in candidate values
             for t in range(self.T):
                 for j in self.cand_j:
                     z_by_t[t][j] = int(round(self.z[j, t].X))
                 for i in range(self.I):
                     for j in self.pos_js_by_i.get(i, []):
-                        y_by_t[t][i][j] = int(round(self.y[i, j, t].X))
+                        val = int(round(self.y[i, j, t].X))
+                        if sparse_mode:
+                            if val:
+                                y_by_t[t][(i, j)] = 1
+                        else:
+                            y_by_t[t][i][j] = val
             
             obj = float(self.model.objVal)
 

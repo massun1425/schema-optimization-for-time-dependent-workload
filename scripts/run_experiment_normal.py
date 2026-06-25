@@ -30,6 +30,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
+from core.sparse_structures import SparseMatrix
 from src.core.query_parser import QueryParser
 from src.optimization.factory import OptimizerFactory
 from src.utils.legacy import get_all_job_queries, natural_sort_key
@@ -240,14 +241,22 @@ class NormalModeExperiment:
         )
         
         updated_count = 0
-        for i in range(len(self.qp.u_ij)):
-            for j in range(len(self.qp.u_ij[i])):
-                # 既存の構造（使用関係）がある場所のみ更新
-                if self.qp.u_ij[i][j] > 0:
-                    # utilities を使って利得を更新（migration_cost ではなく）
-                    if j in utilities:
-                        self.qp.u_ij[i][j] = utilities[j]
+        if isinstance(self.qp.u_ij, SparseMatrix):
+            # スパース: 既存の非ゼロ（使用関係）だけを走査して更新（O(I*J)走査を回避）
+            for row in self.qp.u_ij.rows.values():
+                for j in list(row.keys()):
+                    if row[j] > 0 and j in utilities:
+                        row[j] = utilities[j]
                         updated_count += 1
+        else:
+            for i in range(len(self.qp.u_ij)):
+                for j in range(len(self.qp.u_ij[i])):
+                    # 既存の構造（使用関係）がある場所のみ更新
+                    if self.qp.u_ij[i][j] > 0:
+                        # utilities を使って利得を更新（migration_cost ではなく）
+                        if j in utilities:
+                            self.qp.u_ij[i][j] = utilities[j]
+                            updated_count += 1
                         
         self.print_success(f"  {updated_count}箇所の利得エントリを更新しました")
         return migration_cost, b_j  # migration_cost はそのまま返す（作成コスト用）
@@ -1475,11 +1484,20 @@ class NormalModeExperiment:
             recalc_migration_cost, _ = self._update_u_ij_if_recalc()
 
             # 重み付き効用を計算 (u_ij * frequency)
-            weighted_u_ij = []
-            for i in range(len(self.qp.u_ij)):
-                freq = selected_frequencies[i]
-                weighted_row = [u * freq for u in self.qp.u_ij[i]]
-                weighted_u_ij.append(weighted_row)
+            if isinstance(self.qp.u_ij, SparseMatrix):
+                # スパース: 非ゼロのみを頻度で重み付けし、SparseMatrixとして保持
+                wrows = {}
+                for i, row in self.qp.u_ij.rows.items():
+                    freq = selected_frequencies[i]
+                    if freq:
+                        wrows[i] = {j: v * freq for j, v in row.items()}
+                weighted_u_ij = SparseMatrix(wrows, self.qp.u_ij.I, self.qp.u_ij.J)
+            else:
+                weighted_u_ij = []
+                for i in range(len(self.qp.u_ij)):
+                    freq = selected_frequencies[i]
+                    weighted_row = [u * freq for u in self.qp.u_ij[i]]
+                    weighted_u_ij.append(weighted_row)
             
             # サイズデータの読み込み（MV作成コストはsubquery_costsを使用するためcreation_costsは不要）
             _, _, b_j_from_migration = load_full_build_costs_and_sizes(
@@ -1658,14 +1676,20 @@ class NormalModeExperiment:
                 
                 # weighted_u_ij に基づいて U_j_max と U_max を計算
                 # オリジナルのBigSubsに合わせて、max ではなく sum を使用
-                weighted_U_j_max = [
-                    sum((weighted_u_ij[i][j] for i in range(len(weighted_u_ij))))
-                    for j in range(len(self.qp.node_list))
-                ]
-                weighted_U_max = sum(weighted_U_j_max)
-                
-                # y_ijはクエリパーサから取得（オリジナルの静的実験と同様）
-                initial_y_ij = self.qp.y_ij if hasattr(self.qp, 'y_ij') else [[0] * len(self.qp.node_list) for _ in range(len(weighted_u_ij))]
+                # NOTE: BigSubsはU_j_max/U_max/y_ijを内部で再計算するため、スパース時は
+                #       密な O(I*J) 構築（巨大I*J配列）を完全にスキップする。
+                if isinstance(weighted_u_ij, SparseMatrix):
+                    weighted_U_j_max = None
+                    weighted_U_max = None
+                    initial_y_ij = None
+                else:
+                    weighted_U_j_max = [
+                        sum((weighted_u_ij[i][j] for i in range(len(weighted_u_ij))))
+                        for j in range(len(self.qp.node_list))
+                    ]
+                    weighted_U_max = sum(weighted_U_j_max)
+                    # y_ijはクエリパーサから取得（オリジナルの静的実験と同様）
+                    initial_y_ij = self.qp.y_ij if hasattr(self.qp, 'y_ij') else [[0] * len(self.qp.node_list) for _ in range(len(weighted_u_ij))]
                 
                 bigsubs_optimizer = BigSubsOptimizer(
                     qm=self.qp.qm,
@@ -3304,6 +3328,7 @@ def main():
             pruning_workers=args.pruning_workers,
             static_timestep=args.static_timestep,
             use_static_protection=args.static_protection,
+            static_algorithm=args.static_algorithm,
             b_max=args.b_max,
             inherit_parent_constraints=not args.no_wst_parent_constraints,
         )
