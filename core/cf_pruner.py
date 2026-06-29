@@ -42,7 +42,17 @@ from typing import Dict, List, Set, Tuple, Optional
 import gurobipy as gp
 
 from core.local_ilp_optimizer import LocalILPOptimizer
-from core.sparse_structures import SparseMatrix
+from core.sparse_structures import (
+    SparseMatrix,
+    SparseMatrixBase,
+    SparseXBase,
+    SharedSparseMatrix,
+    SharedSparseX,
+    build_u_csr,
+    build_x_csr,
+    put_array_to_shm,
+    attach_array_from_shm,
+)
 from core.workload_summary_tree import (
     TreeNode,
     WorkloadSummaryTree,
@@ -334,71 +344,78 @@ class CFPruner:
         maximizing parallelism.
         """
         promising_mvs: Set[int] = set()
-        
+
         if not self.tree.root:
             return promising_mvs
-        
+
         # Track statistics
         self.node_count = 0
         self.total_nodes = len(self.tree.get_all_nodes())
-        
-        # Level-by-level processing (BFS approach)
-        # Each level: (node, parent_min_mvs, parent_max_mvs, is_left, is_right)
-        current_level = [(self.tree.root, set(), set(), False, False)]
-        
-        while current_level:
-            next_level = []
-            
-            # Process all nodes at this level in parallel
-            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
-                # Submit all tasks for this level
-                future_to_task = {}
-                for node, parent_min, parent_max, is_left, is_right in current_level:
-                    future = executor.submit(
-                        _solve_node_static,
-                        node,
-                        parent_min,
-                        parent_max,
-                        is_left,
-                        is_right,
-                        self.node_list,
-                        self.u_ij,
-                        self.X,
-                        self.b_j,
-                        self.B_max,
-                        self.timesteps,
-                        self.migration_cost,
-                        self.freq,
-                        self.cand_j,
-                        self.gurobi_output,
-                        self.inherit_parent_constraints,
+
+        # Use ONE persistent pool across levels. For the sparse backend, place
+        # u_ij/X into shared memory ONCE and have workers attach (zero per-task
+        # pickling, single physical copy, portable). Dense backend falls back to
+        # the original per-task argument passing.
+        sparse = isinstance(self.u_ij, SparseMatrixBase) and isinstance(self.X, SparseXBase)
+        shms = []
+        executor = None
+        try:
+            if sparse:
+                logger.info("Parallel: building CSR + shared memory (one copy for all workers)...")
+                u_indptr, u_col, u_data = build_u_csr(self.u_ij)
+                x_indptr, x_idx = build_x_csr(self.X)
+                specs = []
+                for arr in (u_indptr, u_col, u_data, x_indptr, x_idx):
+                    shm, spec = put_array_to_shm(arr)
+                    shms.append(shm)
+                    specs.append(spec)
+                init_args = (
+                    tuple(specs), self.I, self.J, self.node_list, self.b_j,
+                    self.B_max, self.timesteps, self.migration_cost, self.freq,
+                    self.cand_j, self.gurobi_output, self.inherit_parent_constraints,
+                )
+                executor = ProcessPoolExecutor(
+                    max_workers=self.max_workers, initializer=_pp_init, initargs=init_args
+                )
+
+                def _submit(node, pmin, pmax, il, ir):
+                    return executor.submit(_pp_solve, node, pmin, pmax, il, ir)
+            else:
+                executor = ProcessPoolExecutor(max_workers=self.max_workers)
+
+                def _submit(node, pmin, pmax, il, ir):
+                    return executor.submit(
+                        _solve_node_static, node, pmin, pmax, il, ir,
+                        self.node_list, self.u_ij, self.X, self.b_j, self.B_max,
+                        self.timesteps, self.migration_cost, self.freq, self.cand_j,
+                        self.gurobi_output, self.inherit_parent_constraints,
                     )
-                    future_to_task[future] = node
-                
-                # Collect results as they complete
-                for future in as_completed(future_to_task):
-                    node = future_to_task[future]
+
+            # Level-by-level BFS: (node, parent_min, parent_max, is_left, is_right)
+            current_level = [(self.tree.root, set(), set(), False, False)]
+            while current_level:
+                next_level = []
+                future_to_node = {}
+                for node, parent_min, parent_max, is_left, is_right in current_level:
+                    future_to_node[_submit(node, parent_min, parent_max, is_left, is_right)] = node
+
+                for future in as_completed(future_to_node):
+                    node = future_to_node[future]
                     try:
                         result = future.result()
-                        
-                        # Update progress
                         self.node_count += 1
                         progress = f"[{self.node_count}/{self.total_nodes}]"
-                        
-                        # Extract optimal MVs and pool MVs
+
                         optimal_mvs = result['selected_mvs']
                         pool_mvs = result.get('pool_mvs', set())
-                        
-                        # Combine for promising set
                         all_mvs = optimal_mvs.copy()
                         if pool_mvs:
                             all_mvs.update(pool_mvs)
-                        
-                        # Collect promising MVs
+
                         before_count = len(promising_mvs)
                         promising_mvs.update(all_mvs)
                         new_mvs = len(promising_mvs) - before_count
-                        
+
                         logger.info(
                             f"{progress} Processing node: timesteps {result['timestep_indices']}, depth={node.depth}"
                         )
@@ -408,33 +425,27 @@ class CFPruner:
                             f"+{new_mvs} new, total: {len(promising_mvs)})"
                         )
 
-                        
-                        # Prepare children for next level
                         if node.left_child:
-                            next_level.append((
-                                node.left_child,
-                                result['min_mvs'],
-                                result['median_mvs'],
-                                True,   # is_left_child
-                                False,  # is_right_child
-                            ))
-                        
+                            next_level.append((node.left_child, result['min_mvs'], result['median_mvs'], True, False))
                         if node.right_child:
-                            next_level.append((
-                                node.right_child,
-                                result['median_mvs'],
-                                result['max_mvs'],
-                                False,  # is_left_child
-                                True,   # is_right_child
-                            ))
-                    
+                            next_level.append((node.right_child, result['median_mvs'], result['max_mvs'], False, True))
+
                     except Exception as e:
                         logger.error(f"Error processing node: {e}")
                         import traceback
                         traceback.print_exc()
-            
-            current_level = next_level
-        
+
+                current_level = next_level
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)   # workers finish/exit before unlink
+            for shm in shms:
+                try:
+                    shm.close()
+                    shm.unlink()
+                except Exception:
+                    pass
+
         return promising_mvs
     
     def _aggregate_frequencies(self, node: TreeNode) -> Dict[str, List[float]]:
@@ -648,10 +659,47 @@ class CFPruner:
 
 
 # ==============================================================================
-# Module-level function for parallel processing
+# Module-level functions / state for parallel processing
 # ==============================================================================
-# This must be at module level (not a method) to be pickle-able for 
-# ProcessPoolExecutor
+# These must be at module level (not methods) to be pickle-able for
+# ProcessPoolExecutor.
+
+# Per-worker context (populated once by the initializer; read-only thereafter).
+# Holds the shared-memory-backed u_ij/X and the small shared config, so tasks
+# carry only (node, parent boundaries) instead of the huge matrices.
+_PP_CTX: dict = {}
+
+
+def _pp_init(specs, I, J, node_list, b_j, B_max, timesteps,
+             migration_cost, freq, cand_j, gurobi_output, inherit) -> None:
+    """Worker initializer: attach shared-memory CSR arrays once per worker."""
+    s_uip, s_ucol, s_udat, s_xip, s_xidx = specs
+    shms = []
+    sh, u_indptr = attach_array_from_shm(s_uip); shms.append(sh)
+    sh, u_col = attach_array_from_shm(s_ucol); shms.append(sh)
+    sh, u_data = attach_array_from_shm(s_udat); shms.append(sh)
+    sh, x_indptr = attach_array_from_shm(s_xip); shms.append(sh)
+    sh, x_idx = attach_array_from_shm(s_xidx); shms.append(sh)
+    _PP_CTX.clear()
+    _PP_CTX.update(dict(
+        u_ij=SharedSparseMatrix(u_indptr, u_col, u_data, I, J),
+        X=SharedSparseX(x_indptr, x_idx, J),
+        node_list=node_list, b_j=b_j, B_max=B_max, timesteps=timesteps,
+        migration_cost=migration_cost, freq=freq, cand_j=cand_j,
+        gurobi_output=gurobi_output, inherit=inherit, _shms=shms,
+    ))
+
+
+def _pp_solve(node, parent_min, parent_max, is_left, is_right) -> dict:
+    """Worker task: solve one tree node using the shared-memory context."""
+    c = _PP_CTX
+    return _solve_node_static(
+        node, parent_min, parent_max, is_left, is_right,
+        c["node_list"], c["u_ij"], c["X"], c["b_j"], c["B_max"],
+        c["timesteps"], c["migration_cost"], c["freq"], c["cand_j"],
+        c["gurobi_output"], c["inherit"],
+    )
+
 
 def _solve_node_static(
     node: TreeNode,
@@ -796,7 +844,7 @@ def _solve_node_static(
         candidate_indices=cand_j,
         gurobi_output=gurobi_output,
     )
-    
+
     result = local_optimizer.optimize()
     
     # Extract selected MVs from optimal solution (for parent-child constraints)

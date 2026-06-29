@@ -15,7 +15,7 @@ from typing import Dict, List, Set, Tuple, Optional
 
 import gurobipy as gp
 
-from core.sparse_structures import SparseMatrix
+from core.sparse_structures import SparseMatrix, SparseMatrixBase
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +147,10 @@ class LocalILPOptimizer:
         
         Returns only nodes that have positive utility for at least one query.
         """
-        if isinstance(self.u_ij, SparseMatrix):
+        if isinstance(self.u_ij, SparseMatrixBase):
             cset = set()
-            for row in self.u_ij.rows.values():
-                for j, v in row.items():
+            for _i, items in self.u_ij.iter_rows():
+                for j, v in items:
                     if v > 0:
                         cset.add(j)
             return sorted(cset)
@@ -166,10 +166,10 @@ class LocalILPOptimizer:
         self.pos_is_by_j = {j: [] for j in self.cand_j}
         self.pos_js_by_i = {i: [] for i in range(self.I)}
 
-        if isinstance(self.u_ij, SparseMatrix):
+        if isinstance(self.u_ij, SparseMatrixBase):
             cand_set = set(self.cand_j)
-            for i, row in self.u_ij.rows.items():
-                for j, v in row.items():
+            for i, items in self.u_ij.iter_rows():
+                for j, v in items:
                     if v > 0 and j in cand_set:
                         self.pos_js_by_i[i].append(j)
                         self.pos_is_by_j[j].append(i)

@@ -26,7 +26,7 @@ PY="${PY:-.venv/bin/python}"      # PY 環境変数で上書き可
 SCRIPT_DIR="scripts"
 FREQ_SUFFIX="_24_mono"            # 既存頻度パターンを流用
 B_MAX=500                         # ストレージ予算 (MB)
-QUERY_COUNTS=(10000 20000 40000 60000 80000 100000)  # 検証するクエリ数
+QUERY_COUNTS=(60000 80000 100000)  # 検証するクエリ数
 FORCE="${FORCE:-0}"               # FORCE=1 で結果済みも再実行
 
 OUT_DIR="progress/scaling_pruning"
@@ -62,9 +62,10 @@ for N in "${QUERY_COUNTS[@]}"; do
     PYTHONUNBUFFERED=1 ${PY} ${SCRIPT_DIR}/run_experiment_normal.py \
         --phase 6 \
         --query-set "${SET}" \
-        --optimization-mode static \
-        --static-timestep average \
-        --static-algorithm utility \
+        --optimization-mode dynamic \
+        --use-pruning \
+        --pruning-parallel \
+        --pruning-workers 16 \
         --exp-suffix "${FREQ_SUFFIX}" \
         --b-max "${B_MAX}" \
         --recalc \
