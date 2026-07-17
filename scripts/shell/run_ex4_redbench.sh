@@ -12,7 +12,7 @@
 set -e
 
 SCRIPT_DIR="scripts"
-SUFFIX="_2h_x2_10x"
+SUFFIX="_2h_x2_50x"
 BASE_DIR="time_dependent_output/Redbench_synthetic"
 
 echo "========================================================================"
@@ -32,8 +32,8 @@ restart_container() {
     echo ">>> PostgreSQL起動完了"
 }
 
-for BMAX in 100 1000 1500 2000; do
-    RESULT_DIR="time_dependent_output/ex4/b${BMAX}"
+for BMAX in 100 500 1000 1500 2000; do
+    RESULT_DIR="time_dependent_output/ex4/result_b${BMAX}"
     mkdir -p ${RESULT_DIR}
 
     echo ""
@@ -121,7 +121,7 @@ echo ""
 echo "========================================================================"
 echo "全実験完了: $(date)"
 echo "結果:"
-for BMAX in 100 1000 1500 2000; do
-    echo "  time_dependent_output/ex4/b${BMAX}/"
+for BMAX in 100 500 1000 1500 2000; do
+    echo "  time_dependent_output/ex4/result_b${BMAX}/"
 done
 echo "========================================================================"

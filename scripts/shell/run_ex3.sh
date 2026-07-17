@@ -13,7 +13,7 @@ set -e
 SCRIPT_DIR="scripts"
 OUTPUT_DIR="time_dependent_output/ex3/log"
 RESULT_DIR="time_dependent_output/ex3"
-BASE_DIR="time_dependent_output/job"
+BASE_DIR="time_dependent_output/job-ceb-2"
 
 echo "========================================================================"
 echo "実験開始: $(date)"
@@ -56,36 +56,16 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _16_2_10 \
+  --exp-suffix _24_2_10 \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_2_10_wo.txt
-rename_to_wo _16_2_10
+  --ease
+rename_to_wo _24_2_10
 echo "完了時刻: $(date)"
-
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "[_16_2_10] Dynamic (pruning あり)"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _16_2_10 \
-  --use-pruning \
-  --noise-ratio 0.0 \
-  --b-max 100 \
-  --recalc \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_2_10.txt
-echo "完了時刻: $(date)"
-
 
 
 # ======================================================================
@@ -100,36 +80,16 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _16_mono \
+  --exp-suffix _24_mono \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_mono_wo.txt
-rename_to_wo _16_mono
+  --ease
+rename_to_wo _24_mono
 echo "完了時刻: $(date)"
-
-restart_container
-echo ""
-echo "------------------------------------------------------------------------"
-echo "[_16_mono] Dynamic (pruning あり)"
-echo "開始時刻: $(date)"
-echo "------------------------------------------------------------------------"
-python ${SCRIPT_DIR}/run_experiment_normal.py \
-  --phase post-opt \
-  --query-set job \
-  --optimization-mode dynamic \
-  --exp-suffix _16_mono \
-  --use-pruning \
-  --noise-ratio 0.0 \
-  --b-max 100 \
-  --recalc \
-  --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_mono.txt
-echo "完了時刻: $(date)"
-
 
 # ======================================================================
 # _16_peak
@@ -143,52 +103,42 @@ echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set job-ceb-2 \
   --optimization-mode dynamic \
-  --exp-suffix _16_peak \
+  --exp-suffix _24_peak \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_peak_wo.txt
-rename_to_wo _16_peak
+  --ease
+rename_to_wo _24_peak
 echo "完了時刻: $(date)"
+
+
+# ======================================================================
+# Redbench_synthetic
+# ======================================================================
+
 
 restart_container
 echo ""
 echo "------------------------------------------------------------------------"
-echo "[_16_peak] Dynamic (pruning あり)"
+echo "[Redbench_synthetic] Dynamic (pruning なし) → _wo にリネーム"
 echo "開始時刻: $(date)"
 echo "------------------------------------------------------------------------"
 python ${SCRIPT_DIR}/run_experiment_normal.py \
   --phase post-opt \
-  --query-set job \
+  --query-set Redbench_synthetic \
   --optimization-mode dynamic \
-  --exp-suffix _16_peak \
-  --use-pruning \
+  --exp-suffix _2h_x2_50x \
   --noise-ratio 0.0 \
-  --b-max 100 \
+  --b-max 500 \
   --recalc \
   --use-docker \
-  2>&1 | tee ${OUTPUT_DIR}/log_dynamic_16_peak.txt
+  --ease
 echo "完了時刻: $(date)"
 
 
-# ======================================================================
-# 結果を result_100M_edbt/ に集約
-# ======================================================================
-
-echo ""
-echo "========================================================================"
-echo "結果を ${RESULT_DIR} に移動中..."
-echo "========================================================================"
-
-mv -f ${BASE_DIR}/td_mv_optimization_result_16_*.json        ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/static_mv_optimization_result_16_*.json    ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/adaptive_mv_optimization_result_w4_16_*.json ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_dynamic_16_*.json         ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_static_16_*.json          ${RESULT_DIR}/ 2>/dev/null || true
-mv -f ${BASE_DIR}/benchmark_results_adaptive_w4_16_*.json     ${RESULT_DIR}/ 2>/dev/null || true
 
 echo ""
 echo "========================================================================"

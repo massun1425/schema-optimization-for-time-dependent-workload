@@ -2652,7 +2652,7 @@ class NormalModeExperiment:
                 - 'baseline': ベースライン（MVなし）
             static_algorithm: 静的最適化アルゴリズム ('normal', 'bigsubs', 'both')
             ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
-            noise_ratio: ノイズ注入率（0.0〜1.0）。ease_mode=Trueの場合は無視される
+            noise_ratio: ノイズ注入率（0.0〜1.0）。ease_mode時は元クエリを1回追加実行し頻度を分割して推定
             noise_query_dir: ノイズ用クエリが格納されているディレクトリ（Noneの場合はデフォルトのjobフォルダ）
         """
         mode_names = {
@@ -2824,17 +2824,19 @@ class NormalModeExperiment:
         self.print_info("ベンチマーク実行の準備中...")
         executor = TimeDependentQueryExecutor(self.settings)
         
-        # ノイズ注入の設定（ease_modeでは無効）
-        if noise_ratio > 0.0 and not ease_mode:
+        # ノイズ注入の設定（ease_modeでも有効）
+        # ease_mode時は元クエリを1回だけ追加実行し、頻度を分割して推定する（executor側で処理）
+        if noise_ratio > 0.0:
             executor.noise_ratio = noise_ratio
-            
+
             # ノイズ用クエリフォルダの決定（デフォルト: 01_queries/job）
             if noise_query_dir is not None:
                 resolved_noise_dir = Path(noise_query_dir)
             else:
                 resolved_noise_dir = self.queries_dir  # 01_queries/{query_set} の元クエリ
-            
-            self.print_info(f"ノイズ注入設定: ratio={noise_ratio:.2f}, dir={resolved_noise_dir}")
+
+            mode_label = "ease" if ease_mode else "通常"
+            self.print_info(f"ノイズ注入設定 ({mode_label}モード): ratio={noise_ratio:.2f}, dir={resolved_noise_dir}")
             loaded_count = executor.load_noise_pool(resolved_noise_dir)
             if loaded_count == 0:
                 self.print_error(f"ノイズ用クエリが見つかりません: {resolved_noise_dir}")
@@ -2842,9 +2844,6 @@ class NormalModeExperiment:
                 executor.noise_ratio = 0.0
             else:
                 self.print_success(f"  ノイズプール: {loaded_count}個のクエリを事前ロード完了")
-        else:
-            if noise_ratio > 0.0 and ease_mode:
-                self.print_info("ease_modeではノイズ注入は無効です")
         
         try:
             # モードに応じてベンチマークを実行
@@ -3222,7 +3221,7 @@ def main():
         '--noise-ratio',
         type=float,
         default=0.0,
-        help='ノイズ注入率 (0.0〜1.0)。指定した確率で各クエリ実行をノイズクエリに差し替える。ease_modeでは無効。例: 0.2 = 20%%のクエリがノイズに置換'
+        help='ノイズ注入率 (0.0〜1.0)。通常モードでは指定確率で各クエリ実行を元クエリに差し替える。ease_modeでは元クエリを1回実行し頻度を noise/rewritten に分割して推定（高速）。例: 0.2 = 20%%が元クエリ'
     )
     parser.add_argument(
         '--noise-query-dir',

@@ -12,9 +12,9 @@
 set -e
 
 SCRIPT_DIR="scripts"
-SUFFIX="_16_2_10"
+SUFFIX="_24_2_10"
 OUTPUT_DIR="time_dependent_output/ex4/log"
-BASE_DIR="time_dependent_output/job"
+BASE_DIR="time_dependent_output/job-ceb-2"
 
 echo "========================================================================"
 echo "実験開始: $(date)"
@@ -35,7 +35,7 @@ restart_container() {
     echo ">>> PostgreSQL起動完了"
 }
 
-for BMAX in 50 100 500 1000 1500; do
+for BMAX in 1000 1500 2000; do
     RESULT_DIR="time_dependent_output/ex4/b${BMAX}"
     mkdir -p ${RESULT_DIR}
 
@@ -53,15 +53,16 @@ for BMAX in 50 100 500 1000 1500; do
     echo "------------------------------------------------------------------------"
     python ${SCRIPT_DIR}/run_experiment_normal.py \
       --phase post-opt \
-      --query-set job \
+      --query-set job-ceb-2 \
       --optimization-mode dynamic \
       --exp-suffix ${SUFFIX} \
       --use-pruning \
+      --pruning-parallel \
       --noise-ratio 0.0 \
       --b-max ${BMAX} \
       --recalc \
       --use-docker \
-      2>&1 | tee ${OUTPUT_DIR}/log_dynamic_b${BMAX}.txt
+      --ease
     echo "完了時刻: $(date)"
 
     # ------------------------------------------------------------------
@@ -73,7 +74,7 @@ for BMAX in 50 100 500 1000 1500; do
     echo "------------------------------------------------------------------------"
     python ${SCRIPT_DIR}/run_experiment_normal.py \
       --phase post-opt \
-      --query-set job \
+      --query-set job-ceb-2 \
       --optimization-mode static \
       --static-timestep average \
       --static-algorithm utility \
@@ -82,7 +83,7 @@ for BMAX in 50 100 500 1000 1500; do
       --b-max ${BMAX} \
       --recalc \
       --use-docker \
-      2>&1 | tee ${OUTPUT_DIR}/log_static_b${BMAX}.txt
+      --ease
     echo "完了時刻: $(date)"
 
     # ------------------------------------------------------------------
@@ -94,7 +95,7 @@ for BMAX in 50 100 500 1000 1500; do
     echo "------------------------------------------------------------------------"
     python ${SCRIPT_DIR}/run_experiment_normal.py \
       --phase post-opt \
-      --query-set job \
+      --query-set job-ceb-2 \
       --optimization-mode adaptive \
       --window-size 4 \
       --exp-suffix ${SUFFIX} \
@@ -102,7 +103,7 @@ for BMAX in 50 100 500 1000 1500; do
       --b-max ${BMAX} \
       --recalc \
       --use-docker \
-      2>&1 | tee ${OUTPUT_DIR}/log_adaptive_w4_b${BMAX}.txt
+      --ease
     echo "完了時刻: $(date)"
 
     # ------------------------------------------------------------------
@@ -122,7 +123,7 @@ echo ""
 echo "========================================================================"
 echo "全実験完了: $(date)"
 echo "結果:"
-for BMAX in 50 100 500 1000 1500; do
+for BMAX in 1000 1500 2000; do
     echo "  time_dependent_output/ex4/b${BMAX}/"
 done
 echo "========================================================================"

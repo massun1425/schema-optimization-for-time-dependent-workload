@@ -285,14 +285,17 @@ class TimeDependentQueryExecutor:
             frequencies: 各クエリの実行頻度（実行回数）
             timeout_minutes: タイムアウト時間（分）
             verbose: 詳細ログを出力するか
-            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
-            
+            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける。
+                       noise有効時は元クエリも1回実行し頻度を noise/rewritten に分割して推定）
+
         Returns:
             実行結果の辞書
         """
         # ノイズ注入が有効かどうかを判定
-        # ease_modeでは実行回数の定義が変わるため、ノイズ注入は無効とする
-        use_noise = (not ease_mode) and (self.noise_ratio > 0.0) and (len(self.noise_pool) > 0)
+        # ease_mode でも noise を扱えるようにする:
+        #   通常モード → frequency 回のループ内で確率的に元クエリへ差し替える
+        #   ease_mode  → 元クエリを1回だけ追加実行し、頻度を noise/rewritten に分割して推定
+        use_noise = (self.noise_ratio > 0.0) and (len(self.noise_pool) > 0)
         
         results = []
         total_time = 0.0
@@ -329,49 +332,95 @@ class TimeDependentQueryExecutor:
             query_failed = 0
             
             if ease_mode:
-                # 簡易モード: 1回だけ実行し、時間に頻度を掛ける
+                # 簡易モード: 書き換え後クエリを1回だけ実行し、時間に頻度を掛けて推定する。
+                # noise 有効時は元（書き換え前）クエリも1回だけ追加実行し、頻度を分割して推定:
+                #   estimated = t_original * noise_count + t_rewritten * rewritten_count
+                #   noise_count = round(frequency * noise_ratio)  ← 四捨五入(round half up)
+                #   rewritten_count = frequency - noise_count      ← 残り（合計は frequency を維持）
                 if verbose:
                     logger.info(f"  [EASE] Executing {query_file.name} (single run, freq={frequency})...")
-                
+
                 success, elapsed, error = self._execute_query(
-                    query_sql, 
-                    query_file.name, 
+                    query_sql,
+                    query_file.name,
                     timeout_minutes
                 )
-                
-                # 実測時間と推定時間
-                actual_time = elapsed
-                estimated_total = elapsed * frequency
-                
-                execution_times.append(actual_time)
-                total_time += estimated_total  # 推定時間を合計に加算
-                total_executions += 1  # 実際の実行は1回
-                
+                rewritten_time = elapsed
+                execution_times.append(rewritten_time)
+                total_executions += 1
                 if success:
-                    query_successful = 1
+                    query_successful += 1
                     successful_executions += 1
-                    if verbose:
-                        logger.info(f"    ✓ Success (actual: {actual_time:.2f}s, estimated: {estimated_total:.2f}s)")
                 else:
-                    query_failed = 1
+                    query_failed += 1
                     failed_executions += 1
+
+                # noise 分: 元クエリを1回実行（有効かつプールに元クエリが存在する場合のみ）
+                noise_sql = self.noise_pool.get(query_file.stem) if use_noise else None
+                noise_time = None
+                if noise_sql is not None:
                     if verbose:
-                        logger.warning(f"    ✗ Failed ({actual_time:.2f}s): {error}")
-                
+                        logger.info(f"  [EASE][NOISE] Executing {query_file.stem} (original, single run)...")
+                    n_success, noise_time, n_error = self._execute_query(
+                        noise_sql,
+                        f"[NOISE] {query_file.stem} (original)",
+                        timeout_minutes
+                    )
+                    execution_times.append(noise_time)
+                    total_executions += 1
+                    noise_executions += 1
+                    if n_success:
+                        query_successful += 1
+                        successful_executions += 1
+                    else:
+                        query_failed += 1
+                        failed_executions += 1
+                        success = False
+                        if error is None:
+                            error = n_error
+
+                    # 頻度を noise / rewritten に分割（合計 = frequency を維持）
+                    noise_count = int(frequency * self.noise_ratio + 0.5)  # 四捨五入(round half up)
+                    rewritten_count = frequency - noise_count
+                    estimated_total = noise_time * noise_count + rewritten_time * rewritten_count
+                else:
+                    noise_count = 0
+                    rewritten_count = frequency
+                    estimated_total = rewritten_time * frequency
+
+                total_time += estimated_total  # 推定時間を合計に加算
+
+                if verbose:
+                    if noise_sql is not None:
+                        logger.info(
+                            f"    {'✓' if success else '✗'} EASE+NOISE "
+                            f"(rewritten: {rewritten_time:.2f}s x{rewritten_count}, "
+                            f"original: {noise_time:.2f}s x{noise_count}, "
+                            f"estimated: {estimated_total:.2f}s)"
+                        )
+                    elif success:
+                        logger.info(f"    ✓ Success (actual: {rewritten_time:.2f}s, estimated: {estimated_total:.2f}s)")
+                    else:
+                        logger.warning(f"    ✗ Failed ({rewritten_time:.2f}s): {error}")
+
                 # 結果記録
                 results.append({
                     'query_id': query_file.stem,
                     'frequency': frequency,
-                    'executions': 1,  # 実際の実行回数
+                    'executions': len(execution_times),  # 実際の実行回数 (noiseありなら2)
                     'estimated_executions': execution_count,  # 頻度として期待される回数
                     'successful': query_successful,
                     'failed': query_failed,
-                    'actual_time': round(actual_time, 5),
+                    'actual_time': round(rewritten_time, 5),  # 書き換え後クエリの実測時間
+                    'noise_time': round(noise_time, 5) if noise_time is not None else None,
+                    'noise_count': noise_count,
+                    'rewritten_count': rewritten_count,
                     'total_time': round(estimated_total, 5),  # 推定合計時間
-                    'avg_time': round(actual_time, 5),
-                    'min_time': round(actual_time, 5),
-                    'max_time': round(actual_time, 5),
-                    'ease_mode': True
+                    'avg_time': round(sum(execution_times) / len(execution_times), 5),
+                    'min_time': round(min(execution_times), 5),
+                    'max_time': round(max(execution_times), 5),
+                    'ease_mode': True,
+                    'noise_applied': noise_sql is not None,
                 })
             else:
                 # 通常モード: 頻度分だけクエリを実行
