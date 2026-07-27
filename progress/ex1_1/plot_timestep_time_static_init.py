@@ -22,6 +22,12 @@ import matplotlib.ticker as ticker
 D = "time_dependent_output/job-ceb-2/result_500M_ok"
 OUT = "progress/ex1_1"
 FREQS = ["24_2_10", "24_mono", "24_peak"]
+# freq -> workload pattern name (title)
+TITLES = {
+    "24_2_10": "Cycles",
+    "24_mono": "Evolution and Stagnation",
+    "24_peak": "Growth and Spikes",
+}
 
 colors = {
     "Adapt":    "#4272A8",
@@ -44,7 +50,7 @@ METHODS = [
 def per_timestep_total(path, add_initial_mv=False):
     d = json.load(open(path))
     tr = d["timestep_results"]
-    xs = [r.get("timestep_index", i) for i, r in enumerate(tr)]
+    xs = [r.get("timestep_index", i) + 1 for i, r in enumerate(tr)]  # 1-based timestep
     ys = [r["total_time"] for r in tr]
     if add_initial_mv:
         init = d.get("initial_mv_creation_time", 0.0) or 0.0
@@ -74,7 +80,8 @@ for fq in FREQS:
 
     ax.set_xlabel("Timestep", fontsize=18)
     ax.set_ylabel("Execution Time (s)", fontsize=18)
-    ax.set_xticks(range(0, 24, 2))
+    ax.set_title(TITLES[fq], fontsize=20)
+    ax.set_xticks(range(1, 25, 2))
     ax.tick_params(labelsize=13)
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
     ax.set_axisbelow(True)

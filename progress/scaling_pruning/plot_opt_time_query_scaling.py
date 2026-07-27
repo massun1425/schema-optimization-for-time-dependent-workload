@@ -26,9 +26,9 @@ HOUR = 3600.0
 Y_MAX = 24  # hours
 
 colors = {
-    "Static":       "#54A24B",  # green
-    "With Pruning": "#4C78A8",  # blue
-    "No Pruning":   "#A84040",  # red
+    "Static":       "#7E9E8E",  # green  (same as ex1_1 Static)
+    "With Pruning": "#A84040",  # red    (same as ex1_1 Proposed)
+    "No Pruning":   "#DD8452",  # orange (unused elsewhere)
 }
 
 
@@ -78,7 +78,7 @@ for name, ys, off in series:
     for i, y in enumerate(ys):
         xi = x[i] + off
         if y is None:
-            # DNF: hatched bar to the ceiling + label
+            # DNF: hatched bar to the ceiling + label (not shown in legend)
             ax.bar(xi, Y_MAX, w, color=colors[name], alpha=0.30,
                    hatch="///", edgecolor=colors[name], linewidth=1.0)
             ax.text(xi, Y_MAX * 0.55, "DNF", ha="center", va="center",
@@ -86,30 +86,22 @@ for name, ys, off in series:
                     color=colors[name])
         else:
             ax.bar(xi, y, w, color=colors[name])
-            ax.text(xi, y + Y_MAX * 0.012, f"{y:.2f}", ha="center",
-                    va="bottom", fontsize=8, color=colors[name])
 
 ax.set_xticks(x)
 ax.set_xticklabels(labels, fontsize=13)
 ax.set_xlabel("Number of queries", fontsize=16)
 ax.set_ylabel("Optimization time (hours)", fontsize=16)
-ax.set_title("Optimization Time vs. Number of Queries (24 timesteps)",
-             fontsize=17)
 ax.set_ylim(0, Y_MAX)
 ax.set_yticks(range(0, Y_MAX + 1, 4))
 ax.axhline(Y_MAX, color="gray", linestyle=":", linewidth=1.0)
-ax.text(len(NS) - 0.5, Y_MAX - 0.4, "24h timeout", ha="right", va="top",
-        fontsize=9, color="gray")
 ax.set_axisbelow(True)
 ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.4)
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 
-# legend (proxy handles)
+# legend (proxy handles) — DNF is not explained in the legend
 handles = [mpatches.Patch(color=colors[n], label=n)
            for n, _, _ in series]
-handles.append(mpatches.Patch(facecolor="white", edgecolor="gray",
-                              hatch="///", label="DNF (>24h)"))
 ax.legend(handles=handles, fontsize=12, loc="upper left")
 
 fig.tight_layout()

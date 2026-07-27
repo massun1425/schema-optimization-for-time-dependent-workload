@@ -12,7 +12,7 @@
 set -e
 
 SCRIPT_DIR="scripts"
-SUFFIX="_24_2_10"
+SUFFIX="_24_mono"
 OUTPUT_DIR="time_dependent_output/ex4/log"
 BASE_DIR="time_dependent_output/job-ceb-2"
 
@@ -35,7 +35,7 @@ restart_container() {
     echo ">>> PostgreSQL起動完了"
 }
 
-for BMAX in 1000 1500 2000; do
+for BMAX in 1000 1500 2000 2500 3000; do
     RESULT_DIR="time_dependent_output/ex4/b${BMAX}"
     mkdir -p ${RESULT_DIR}
 
@@ -98,6 +98,7 @@ for BMAX in 1000 1500 2000; do
       --query-set job-ceb-2 \
       --optimization-mode adaptive \
       --window-size 4 \
+      --freq-weight linear \
       --exp-suffix ${SUFFIX} \
       --noise-ratio 0.0 \
       --b-max ${BMAX} \
@@ -123,7 +124,7 @@ echo ""
 echo "========================================================================"
 echo "全実験完了: $(date)"
 echo "結果:"
-for BMAX in 1000 1500 2000; do
+for BMAX in 1000 1500 2000 2500 3000 ; do
     echo "  time_dependent_output/ex4/b${BMAX}/"
 done
 echo "========================================================================"

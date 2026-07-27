@@ -21,7 +21,7 @@ from pathlib import Path
 
 DIR = Path(__file__).parent
 SRC = Path("time_dependent_output/job-ceb-2/result_scaling_time_ok")
-TS = [12, 18, 24, 30, 36, 42, 48]
+TS = [12, 18, 24, 30, 36, 42]
 METHODS = ["With Pruning", "No Pruning"]  # order = bar order
 
 
@@ -53,10 +53,12 @@ n = len(methods)
 width = 0.32
 offsets = np.linspace(-(n - 1) / 2, (n - 1) / 2, n) * width
 
-# colors from the reference palette: blue = with pruning, red = no pruning
-colors = ["#4C72B0", "#C44E52"]
+# colors matched to the pruning-comparison figures:
+#   With Pruning = red (ex1_1 Proposed), No Pruning = orange (unused elsewhere)
+colors = ["#A84040", "#DD8452"]
 
-fig, ax = plt.subplots(figsize=(14, 6))
+# height matched to the ex1_1 aspect ratio (9:5.2): 14 * 5.2/9 ≈ 8.09
+fig, ax = plt.subplots(figsize=(14, 8.09))
 
 # y軸は全バーが収まるように自動で引き伸ばす
 ylim = values.max() * 1.10
@@ -66,7 +68,6 @@ for i, (label, color) in enumerate(zip(labels, colors)):
 
 ax.set_xlabel("Number of Timesteps", fontsize=22)
 ax.set_ylabel("Optimization Time (s)", fontsize=22)
-ax.set_title("Optimization Time by Number of Timesteps", fontsize=24)
 ax.set_xticks(x)
 ax.set_xticklabels(timesteps, fontsize=20)
 ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:,.0f}"))
