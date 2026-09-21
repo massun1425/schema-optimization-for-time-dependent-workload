@@ -12,7 +12,7 @@
 set -e
 
 SCRIPT_DIR="scripts"
-SUFFIX="_24_mono"
+SUFFIX="_24_peak"
 OUTPUT_DIR="time_dependent_output/ex4/log"
 BASE_DIR="time_dependent_output/job-ceb-2"
 
@@ -43,6 +43,13 @@ for BMAX in 1000 1500 2000 2500 3000; do
     echo "========================================================================"
     echo "B_max = ${BMAX} MB"
     echo "========================================================================"
+
+    # 続きから実行: 3手法のbenchmark結果が既に揃っている容量はスキップ
+    DONE_COUNT=$(ls ${RESULT_DIR}/benchmark_results_*${SUFFIX}.json 2>/dev/null | wc -l)
+    if [ "${DONE_COUNT}" -ge 3 ]; then
+        echo ">>> B_max=${BMAX} は完了済み (${RESULT_DIR} に ${DONE_COUNT} 結果)。スキップします。"
+        continue
+    fi
 
     # ------------------------------------------------------------------
     restart_container

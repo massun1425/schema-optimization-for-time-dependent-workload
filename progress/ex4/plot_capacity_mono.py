@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Total execution time (query workload + migration) by storage capacity.
+"""Total execution time by storage capacity — monotonic (_24_mono) workload.
 
-Reads time_dependent_output/ex4_ok/b{500,1000,1500,2000}/ and plots a grouped
-bar chart: x = capacity (MB), y = total execution time (s) = total_benchmark_time
+Same figure as plot_capacity.py but for the monotonic workload pattern in
+time_dependent_output/ex4_ok_mono/b{500,1000,1500,2000}/.
+x = capacity (MB), y = total execution time (s) = total_benchmark_time
 (query workload time + migration time; Static includes the one-time initial MV
-build). Three methods: Adapt / Static / Proposed (dynamic).
-
-Colors are aligned with the other figures. Output PDF (+PNG) into progress/ex4/.
+build). Methods: Adapt / Static / Proposed (dynamic). Output PDF into progress/ex4/.
 """
 import json
 import matplotlib
@@ -16,14 +15,12 @@ import matplotlib.ticker as ticker
 import numpy as np
 from pathlib import Path
 
-BASE = Path("time_dependent_output/ex4_ok_cycle")
+BASE = Path("time_dependent_output/ex4_ok_mono")
 OUT = Path("progress/ex4")
-SUFFIX = "_24_2_10"
+SUFFIX = "_24_mono"
 
-# capacity folder -> display label (MB)
 CAPS = [("b500", "500"), ("b1000", "1000"), ("b1500", "1500"), ("b2000", "2000")]
 
-# method -> benchmark filename
 FILES = {
     "Adapt":    f"benchmark_results_adaptive_w4{SUFFIX}.json",
     "Static":   f"benchmark_results_static{SUFFIX}.json",
@@ -43,7 +40,6 @@ def total_time(cap_dir, fn):
     return d["summary"]["total_benchmark_time"]
 
 
-# data[capacity_label][method]
 data = {}
 for cap_dir, label in CAPS:
     data[label] = {m: total_time(cap_dir, FILES[m]) for m in methods}
@@ -63,7 +59,7 @@ for i, method in enumerate(methods):
 
 ax.set_xlabel("Capacity (MB)", fontsize=18)
 ax.set_ylabel("Total Execution Time (s)", fontsize=18)
-ax.set_title("Cycles", fontsize=20)
+ax.set_title("Evolution and Stagnation", fontsize=20)
 ax.set_xticks(x)
 ax.set_xticklabels(capacities, fontsize=18)
 ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{int(v):,}"))
@@ -85,11 +81,9 @@ ax.spines["right"].set_visible(False)
 
 plt.tight_layout()
 OUT.mkdir(parents=True, exist_ok=True)
-fig.savefig(OUT / "capacity_bar.pdf")
-fig.savefig(OUT / "capacity_bar.png", dpi=150)
-print("Saved: capacity_bar.pdf and capacity_bar.png")
+fig.savefig(OUT / "capacity_bar_mono.pdf")
+print("Saved: capacity_bar_mono.pdf")
 
-# summary
-print(f"\n{'Capacity':>8} {'Adapt':>10} {'Static':>10} {'Proposed':>10}")
+print(f"\n{'Capacity':>8} {'Adapt':>12} {'Static':>12} {'Proposed':>12}")
 for cap in capacities:
-    print(f"{cap:>8} {data[cap]['Adapt']:>10,.0f} {data[cap]['Static']:>10,.0f} {data[cap]['Proposed']:>10,.0f}")
+    print(f"{cap:>8} {data[cap]['Adapt']:>12,.0f} {data[cap]['Static']:>12,.0f} {data[cap]['Proposed']:>12,.0f}")

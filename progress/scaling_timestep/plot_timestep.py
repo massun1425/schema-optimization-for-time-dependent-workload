@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optimization time vs. number of timesteps: With Pruning vs No Pruning.
+"""Optimization time vs. number of timesteps: Proposed (w/ pruning) vs Proposed (w/o pruning).
 
 Data: time_dependent_output/job-ceb-2/result_scaling_time_ok/
       td_mv_optimization_result_{TS}_mono_{wp,wo}.json
@@ -22,7 +22,7 @@ from pathlib import Path
 DIR = Path(__file__).parent
 SRC = Path("time_dependent_output/job-ceb-2/result_scaling_time_ok")
 TS = [12, 18, 24, 30, 36, 42]
-METHODS = ["With Pruning", "No Pruning"]  # order = bar order
+METHODS = ["Proposed (w/ pruning)", "Proposed (w/o pruning)"]  # order = bar order
 
 
 def phase_time(ts, tag):
@@ -34,8 +34,8 @@ def phase_time(ts, tag):
 data = {}
 for ts in TS:
     data[str(ts)] = {
-        "With Pruning": phase_time(ts, "wp"),
-        "No Pruning": phase_time(ts, "wo"),
+        "Proposed (w/ pruning)": phase_time(ts, "wp"),
+        "Proposed (w/o pruning)": phase_time(ts, "wo"),
     }
 
 # save summary json (mirrors reference's timestep.json)
@@ -54,7 +54,7 @@ width = 0.32
 offsets = np.linspace(-(n - 1) / 2, (n - 1) / 2, n) * width
 
 # colors matched to the pruning-comparison figures:
-#   With Pruning = red (ex1_1 Proposed), No Pruning = orange (unused elsewhere)
+#   Proposed (w/ pruning) = red (ex1_1 Proposed), Proposed (w/o pruning) = orange (unused elsewhere)
 colors = ["#A84040", "#DD8452"]
 
 # height matched to the ex1_1 aspect ratio (9:5.2): 14 * 5.2/9 ≈ 8.09
@@ -86,4 +86,4 @@ print("Saved: timestep_bar.pdf and timestep_bar.png")
 # stdout summary
 print(f"\n{'TS':>4} {'WithPruning(s)':>15} {'NoPruning(s)':>13}")
 for ts in TS:
-    print(f"{ts:>4} {data[str(ts)]['With Pruning']:>15,.1f} {data[str(ts)]['No Pruning']:>13,.1f}")
+    print(f"{ts:>4} {data[str(ts)]['Proposed (w/ pruning)']:>15,.1f} {data[str(ts)]['Proposed (w/o pruning)']:>13,.1f}")

@@ -3,8 +3,8 @@
 
 Compares three methods:
   - Static        : static_mv_optimization_result_24_mono.json   (execution_time)
-  - With Pruning  : td_mv_optimization_result_24_mono_wp.json     (phase_time_sec)
-  - No Pruning    : td_mv_optimization_result_24_mono.json        (phase_time_sec)
+  - Proposed (w/ pruning)  : td_mv_optimization_result_24_mono_wp.json     (phase_time_sec)
+  - Proposed (w/o pruning)    : td_mv_optimization_result_24_mono.json        (phase_time_sec)
 
 No-Pruning runs were capped at 24h; sizes without a result file timed out (DNF)
 and are drawn as a hatched bar reaching the 24h ceiling with a "DNF" label.
@@ -27,8 +27,8 @@ Y_MAX = 24  # hours
 
 colors = {
     "Static":       "#7E9E8E",  # green  (same as ex1_1 Static)
-    "With Pruning": "#A84040",  # red    (same as ex1_1 Proposed)
-    "No Pruning":   "#DD8452",  # orange (unused elsewhere)
+    "Proposed (w/ pruning)": "#A84040",  # red    (same as ex1_1 Proposed)
+    "Proposed (w/o pruning)":   "#DD8452",  # orange (unused elsewhere)
 }
 
 
@@ -70,8 +70,8 @@ fig, ax = plt.subplots(figsize=(9, 5.5))
 
 series = [
     ("Static", static_h, -w),
-    ("With Pruning", wp_h, 0.0),
-    ("No Pruning", np_h, w),
+    ("Proposed (w/ pruning)", wp_h, 0.0),
+    ("Proposed (w/o pruning)", np_h, w),
 ]
 
 for name, ys, off in series:
