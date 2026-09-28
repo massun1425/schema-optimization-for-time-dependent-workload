@@ -41,11 +41,12 @@ environment to generating the figures and tables.
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pip install matplotlib numpy          # needed to generate the figures
 ```
 
-`torch` in `requirements.txt` is only needed for the optional NeuroCard cost estimation,
-which is not used in the paper.
+`requirements.txt` pins the package versions used for the experiments of the paper
+(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, Matplotlib for the figures, and
+FastAPI/Uvicorn for the dashboard). With [uv](https://docs.astral.sh/uv/), `uv sync`
+installs the same versions from `uv.lock` (`uv sync --extra dev` adds pytest and the linters).
 
 ### 2.2 Gurobi license
 
