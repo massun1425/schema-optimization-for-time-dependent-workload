@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Fig.11: ストレージ制約と総実行時間（3 パターンを横に並べた 1 枚の図）.
+"""Fig. 11 (RQ4): storage constraint vs. total execution time (one figure with the 3 patterns side by side).
 
-入力: time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
+Input:  time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
         benchmark_results_{adaptive_w4,static,dynamic}_{suffix}.json
-縦軸: summary.total_benchmark_time（Static は初期 MV 構築を含む）。k 表記、各パネルで下限を調整。
-出力: rq4_capacity.pdf
+y-axis: summary.total_benchmark_time (Static includes the initial MV build), in thousands (k);
+        the lower bound is adjusted per panel.
+Output: rq4_capacity.pdf
 """
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker

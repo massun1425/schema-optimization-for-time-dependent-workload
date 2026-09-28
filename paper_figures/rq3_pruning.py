@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Table 2: 候補プルーニングの有無による比較（LaTeX と Markdown）.
+"""Table 2 (RQ3): with vs. without candidate pruning (LaTeX and Markdown).
 
-入力: time_dependent_output/rq3/
+Input:  time_dependent_output/rq3/
         td_mv_optimization_result_{fq}{,_wo}.json, benchmark_results_dynamic_{fq}{,_wo}.json
-        （'' = with pruning, '_wo' = without pruning）
-列:
-  候補数          : without = pruning_info.total_candidates（with 側の値）/ with = promising_candidates
-  最適化時間 (s)  : pruning_time_sec + solve_time_sec（without は solve_time_sec のみ）
-  総実行時間 (s)  : summary.total_benchmark_time（各パターンで小さい方を太字）
-  目的関数値      : -objective / 1000
-出力: rq3_pruning.tex, rq3_pruning.md
+        ('' = with pruning, '_wo' = without pruning)
+Columns:
+  #candidates          : without = pruning_info.total_candidates (taken from the with-pruning file) / with = promising_candidates
+  optimization time (s): pruning_time_sec + solve_time_sec (without pruning: solve_time_sec only)
+  total exec. time (s) : summary.total_benchmark_time (the smaller one per pattern in bold)
+  objective value      : -objective / 1000
+Output: rq3_pruning.tex, rq3_pruning.md
 """
 from common import PATTERNS, load_json, parse_args, require, total_benchmark_time
 
-# (行ラベル, ファイルのタグ)
+# (row label, file tag)
 VARIANTS = [("Without pruning", "_wo"), ("With pruning", "")]
 
 
@@ -47,7 +47,7 @@ def main():
         b = rows[(pname, "With pruning")]["total_exec"]
         best[pname] = "Without pruning" if a <= b else "With pruning"
 
-    # ---------------- LaTeX（桁区切りなし）----------------
+    # ---------------- LaTeX (no thousands separators) ----------------
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
@@ -82,7 +82,7 @@ def main():
     tex_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"saved: {tex_path}")
 
-    # ---------------- Markdown（表のみ, 桁区切りあり）----------------
+    # ---------------- Markdown (table only, with thousands separators) ----------------
     md = [
         "| Workload pattern | Candidate pruning | # candidates before whole-time-step opt. "
         "| Optimization time (s) | Total execution time (s) | Objective value (×10³) |",

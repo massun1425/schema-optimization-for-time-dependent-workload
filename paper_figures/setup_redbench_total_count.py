@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fig.6: Redbench synthetic の各時刻の総実行回数.
+"""Fig. 6: total execution count per time step of Redbench synthetic.
 
-入力: 01_queries/Redbench_synthetic/frequency_time_dependent_2h_x2_50x.json
-出力: setup_redbench_total_count.pdf
+Input:  01_queries/Redbench_synthetic/frequency_time_dependent_2h_x2_50x.json
+Output: setup_redbench_total_count.pdf
 """
 import matplotlib.pyplot as plt
 

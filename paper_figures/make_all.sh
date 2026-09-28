@@ -1,11 +1,11 @@
 #!/bin/bash
 # ======================================================================
-# 論文の図表をすべて生成する（入力: paper/*.sh の出力 time_dependent_output/rq*/）。
-# 出力: paper_figures/output/
+# Generates all figures and tables of the paper (input: time_dependent_output/rq*/ from paper/*.sh).
+# Output: paper_figures/output/
 #
-# 使い方: bash paper_figures/make_all.sh
-#         bash paper_figures/make_all.sh --td-dir <dir> --out-dir <dir>   # 各スクリプトへそのまま渡す
-# 入力が揃っていない図表はスキップせずエラーにする（不足ファイルを一覧表示）。
+# Usage: bash paper_figures/make_all.sh
+#        bash paper_figures/make_all.sh --td-dir <dir> --out-dir <dir>   # passed to every script
+# Figures whose inputs are incomplete are not skipped but reported as errors (missing files are listed).
 # ======================================================================
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -30,7 +30,7 @@ for S in "${SCRIPTS[@]}"; do
 done
 
 if [ ${#FAILED[@]} -gt 0 ]; then
-    echo "失敗: ${FAILED[*]}"
+    echo "Failed: ${FAILED[*]}"
     exit 1
 fi
-echo "完了"
+echo "Done"

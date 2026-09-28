@@ -1,19 +1,22 @@
 #!/bin/bash
 # ======================================================================
-# 論文実験スクリプト共通の設定・関数（各 paper/*.sh から source する）
+# Shared settings and helpers for the paper experiment scripts
+# (sourced by every paper/*.sh).
 #
-# run_experiment_normal.py は結果を time_dependent_output/<query_set>/ 直下に
-# 固定ファイル名で書き出す（= staging）。本スクリプト群は各実行の直後に
-# 結果を time_dependent_output/rq*/... へ移動して整理する。staging にある既存の
-# 同名ファイルは実行中だけ一時退避し、終了後に元の場所へ戻す（protect_file / restore_file）。
+# run_experiment_normal.py writes its results with fixed file names directly
+# under time_dependent_output/<query_set>/ ("staging"). After every run these
+# scripts move the results into time_dependent_output/rq*/... . Existing files
+# in staging with the same name are moved aside only while a run is in
+# progress and are put back afterwards (protect_file / restore_file).
 #
-# 環境変数:
-#   DRY_RUN=1   実行せずコマンドを表示するだけ（ファイル操作も一切しない）
-#   FORCE=1     出力先に結果があっても再実行する（既定: 結果があればスキップ＝再開可能）
-#   REUSE=0     同一条件の結果を別RQからコピーせず、改めて実行する（既定: 1=再利用）
-#   PY          python 実行体（既定: .venv/bin/python）
-#   CONTAINER   PostgreSQL コンテナ名（既定: mv_postgres）
-#   TIMEOUT     プルーニングなし最適化の打ち切り時間（既定: 24h）
+# Environment variables:
+#   DRY_RUN=1   print the commands without running anything (no file operations at all)
+#   FORCE=1     re-run even if the result already exists (default: skip -> resumable)
+#   REUSE=0     do not copy results of identical runs from another RQ; run them again
+#               (default: 1 = reuse)
+#   PY          python executable (default: .venv/bin/python)
+#   CONTAINER   PostgreSQL container name (default: mv_postgres)
+#   TIMEOUT     time limit for optimization without pruning (default: 24h)
 # ======================================================================
 
 set -u -o pipefail
@@ -31,12 +34,12 @@ TIMEOUT="${TIMEOUT:-24h}"
 
 TD="time_dependent_output"
 MAIN="scripts/run_experiment_normal.py"
-B_MAX=500   # 論文の既定ストレージ制約 (MB)
+B_MAX=500   # default storage constraint in the paper (MB)
 
 log() { echo "[$(date '+%F %T')] $*"; }
 die() { log "ERROR: $*"; exit 1; }
 
-# ファイルを変更する操作は必ず run 経由で行う（DRY_RUN=1 なら表示のみ）
+# Every operation that modifies files goes through run (only printed when DRY_RUN=1)
 run() {
     if [ "${DRY_RUN}" = "1" ]; then
         echo "  [dry-run] $*"
@@ -46,8 +49,8 @@ run() {
 }
 
 # run_main <logfile> <timeout|-> <args...>
-#   run_experiment_normal.py を実行し、出力をログにも保存する。
-#   戻り値は python（timeout 指定時は timeout）の終了コード（124 = タイムアウト）。
+#   Runs run_experiment_normal.py and also saves its output to the log file.
+#   Returns the exit code of python (of timeout if a limit is given; 124 = timed out).
 run_main() {
     local logfile=$1 to=$2
     shift 2
@@ -68,14 +71,14 @@ run_main() {
     return "${PIPESTATUS[0]}"
 }
 
-# ベンチマーク前に PostgreSQL を再起動してキャッシュをクリアする
+# Restart PostgreSQL before each benchmark to clear the caches
 restart_container() {
     if [ "${DRY_RUN}" = "1" ]; then
         echo "  [dry-run] docker restart ${CONTAINER}"
         return 0
     fi
-    log "PostgreSQL コンテナを再起動: ${CONTAINER}"
-    docker restart "${CONTAINER}" > /dev/null || die "docker restart に失敗"
+    log "Restarting PostgreSQL container: ${CONTAINER}"
+    docker restart "${CONTAINER}" > /dev/null || die "docker restart failed"
     sleep 15
     until docker exec "${CONTAINER}" pg_isready -U postgres > /dev/null 2>&1; do
         sleep 2
@@ -83,15 +86,19 @@ restart_container() {
 }
 
 # ----------------------------------------------------------------------
-# staging（time_dependent_output/<set>/ 直下）にある既存ファイルの保護
+# Protection of existing files in staging (time_dependent_output/<set>/)
 #
-# 1) 結果 JSON: 実行の直前に「これから書き込まれる名前」と衝突する既存ファイルだけを
-#    <set>/_stash/in_use/ へ一時退避し、結果を rq*/ へ回収したら元の場所へ戻す。
-#    異常終了・中断時も EXIT trap で戻す（元の場所が空いている場合のみ）。
-#    → 既存の結果（例: job-ceb-2-q{N}/ にある Fig.9 の元データ）は元の場所に残る。
-# 2) 中間生成物（timestep_*.sql, static_*initial_mvs.sql, jobs/）: Phase 7/8 が削除して
-#    作り直すため、post-opt 系スクリプトの初回だけ <set>/_stash/intermediates_<日時>/ へ退避する
-#    （以降は本スクリプト群が生成したものなので上書きしてよい。目印は .paper_staging）。
+# 1) Result JSONs: right before a run, only the existing files whose names
+#    collide with the files about to be written are moved to
+#    <set>/_stash/in_use/; they are put back once the results have been
+#    collected into rq*/. On errors or interruption the EXIT trap puts them
+#    back as well (only if the original location is free).
+#    -> Existing results (e.g. the Fig. 9 source data in job-ceb-2-q{N}/)
+#       stay where they are.
+# 2) Intermediates (timestep_*.sql, static_*initial_mvs.sql, jobs/): Phases 7/8
+#    delete and regenerate them, so the post-opt scripts move them once to
+#    <set>/_stash/intermediates_<timestamp>/ on their first run (afterwards they
+#    were produced by these scripts and may be overwritten; marker: .paper_staging).
 # ----------------------------------------------------------------------
 
 # protect_file <query_set> <file_name>
@@ -100,9 +107,9 @@ protect_file() {
     local stash="${TD}/$1/_stash/in_use"
     [ -e "${src}" ] || return 0
     if [ -e "${stash}/$2" ]; then
-        die "退避先に同名ファイルがあります（前回の中断の残り）: ${stash}/$2 — 手動で確認してください"
+        die "A file with the same name is already stashed (left over from an interrupted run): ${stash}/$2 — please check it manually"
     fi
-    log "一時退避: ${src} -> ${stash}/"
+    log "Stashing: ${src} -> ${stash}/"
     run mkdir -p "${stash}"
     run mv "${src}" "${stash}/$2"
 }
@@ -113,14 +120,14 @@ restore_file() {
     local stashed="${TD}/$1/_stash/in_use/$2"
     [ -e "${stashed}" ] || return 0
     if [ -e "${dst}" ]; then
-        log "WARNING: ${dst} が存在するため ${stashed} を戻せません（手動で確認してください）"
+        log "WARNING: cannot restore ${stashed} because ${dst} exists (please check it manually)"
         return 0
     fi
-    log "復元: ${stashed} -> ${dst}"
+    log "Restoring: ${stashed} -> ${dst}"
     run mv "${stashed}" "${dst}"
 }
 
-# EXIT 時に、一時退避したまま残っているファイルを元の場所へ戻す
+# On EXIT, put back any files that are still stashed
 restore_all() {
     local f set name
     shopt -s nullglob
@@ -133,7 +140,8 @@ restore_all() {
 }
 [ "${DRY_RUN}" = "1" ] || trap restore_all EXIT
 
-# backup_intermediates <query_set> : 中間生成物の初回退避（post-opt 系スクリプトの冒頭で呼ぶ）
+# backup_intermediates <query_set> : one-time backup of intermediates
+# (called at the beginning of the post-opt scripts)
 backup_intermediates() {
     local dir="${TD}/$1"
     [ -f "${dir}/.paper_staging" ] && return 0
@@ -146,7 +154,7 @@ backup_intermediates() {
     shopt -u nullglob
     [ -d "${dir}/jobs" ] && files+=("${dir}/jobs")
     if [ ${#files[@]} -gt 0 ]; then
-        log "中間生成物を退避: ${dir} 直下の ${#files[@]} 件 -> ${stash}/"
+        log "Backing up intermediates: ${#files[@]} items under ${dir} -> ${stash}/"
         run mkdir -p "${stash}"
         run mv "${files[@]}" "${stash}/"
     fi
@@ -154,7 +162,7 @@ backup_intermediates() {
     run touch "${dir}/.paper_staging"
 }
 
-# is_done <file>... : すべて存在すれば 0（FORCE=1 のときは常に 1）
+# is_done <file>... : returns 0 if all files exist (always 1 when FORCE=1)
 is_done() {
     [ "${FORCE}" = "1" ] && return 1
     local f
@@ -164,7 +172,7 @@ is_done() {
     return 0
 }
 
-# collect <query_set> <dest_dir> <staging側ファイル名> [出力先ファイル名]
+# collect <query_set> <dest_dir> <file name in staging> [destination file name]
 collect() {
     local src="${TD}/$1/$3"
     local dst="$2/${4:-$3}"
@@ -172,15 +180,16 @@ collect() {
         echo "  [dry-run] mv ${src} ${dst}"
         return 0
     fi
-    [ -f "${src}" ] || die "結果ファイルが見つかりません: ${src}"
+    [ -f "${src}" ] || die "Result file not found: ${src}"
     mkdir -p "$2"
     mv -f "${src}" "${dst}"
     log "  -> ${dst}"
 }
 
 # reuse_copy <src_dir> <dest_dir> <file>...
-#   同一条件の実行結果を別 RQ からコピーする（論文データも同一ファイルを共有している）。
-#   REUSE=0 または src に揃っていなければ 1 を返す（呼び出し側で実行にフォールバック）。
+#   Copies the results of an identical run from another RQ (the paper data also
+#   shares the same files). Returns 1 if REUSE=0 or the files are not all present
+#   in src (the caller then falls back to running the experiment).
 reuse_copy() {
     local src=$1 dest=$2
     shift 2
@@ -189,7 +198,7 @@ reuse_copy() {
     for f in "$@"; do
         [ -f "${src}/${f}" ] || return 1
     done
-    log "再利用: ${src} -> ${dest} ($*)"
+    log "Reusing: ${src} -> ${dest} ($*)"
     run mkdir -p "${dest}"
     for f in "$@"; do
         if [ -f "${dest}/${f}" ] && [ "${FORCE}" != "1" ]; then
@@ -200,7 +209,7 @@ reuse_copy() {
     return 0
 }
 
-# write_note <file> <text> : DNF などの記録ファイルを書く
+# write_note <file> <text> : writes a marker file such as a DNF note
 write_note() {
     if [ "${DRY_RUN}" = "1" ]; then
         echo "  [dry-run] write '$2' > $1"
@@ -211,13 +220,13 @@ write_note() {
 }
 
 # ----------------------------------------------------------------------
-# 手法の定義（引数は論文結果の JSON と照合済み）
-#   dynamic_seq   : Proposed（逐次プルーニング）            … Fig.7 / Table 2 / Fig.11 b500
-#   dynamic_par   : Proposed（並列プルーニング）            … Fig.8 / Fig.11 b1000〜2000
-#   dynamic_par16 : Proposed（並列プルーニング, 16 workers） … Fig.9
-#   dynamic_nopr  : Proposed（プルーニングなし）            … Table 2 / Fig.8 / Fig.9
-#   static        : Static（UtilityOptimizerV2, 全時刻平均） … static_utility / average
-#   adaptive      : Adapt（窓幅4, 線形 recency 重み）
+# Method definitions (arguments checked against the result JSONs of the paper)
+#   dynamic_seq   : Proposed (sequential pruning)                ... RQ1 Exp1-1 / RQ3 / RQ4 b500
+#   dynamic_par   : Proposed (parallel pruning)                  ... RQ1 Exp1-2 / RQ4 b1000-2000
+#   dynamic_par16 : Proposed (parallel pruning, 16 workers)      ... RQ1 Exp1-3
+#   dynamic_nopr  : Proposed (without pruning)                   ... RQ3 / RQ1 Exp1-2 / RQ1 Exp1-3
+#   static        : Static (UtilityOptimizerV2, average over all time steps)
+#   adaptive      : Adapt (window size 4, linear recency weights)
 # ----------------------------------------------------------------------
 method_args() {
     case $1 in
@@ -227,23 +236,24 @@ method_args() {
         dynamic_nopr)  echo "--optimization-mode dynamic" ;;
         static)        echo "--optimization-mode static --static-timestep average --static-algorithm utility" ;;
         adaptive)      echo "--optimization-mode adaptive --window-size 4 --freq-weight linear" ;;
-        *) die "未知の手法: $1" ;;
+        *) die "Unknown method: $1" ;;
     esac
 }
 
-# result_files <method> <suffix> : staging 側の「最適化結果 ベンチマーク結果」ファイル名
+# result_files <method> <suffix> : "optimization-result benchmark-result" file names in staging
 result_files() {
     case $1 in
         dynamic*) echo "td_mv_optimization_result$2.json benchmark_results_dynamic$2.json" ;;
         static)   echo "static_mv_optimization_result$2.json benchmark_results_static$2.json" ;;
         adaptive) echo "adaptive_mv_optimization_result_w4$2.json benchmark_results_adaptive_w4$2.json" ;;
-        *) die "未知の手法: $1" ;;
+        *) die "Unknown method: $1" ;;
     esac
 }
 
 # run_postopt <query_set> <suffix> <method> <b_max> <dest_dir> [tag]
-#   Phase 6〜9（最適化 → MV SQL → 書き換え → ベンチマーク(--ease)）を実行し、
-#   最適化結果とベンチマーク結果を dest_dir へ移動する。tag はファイル名末尾に付与（例: _wo）。
+#   Runs Phases 6-9 (optimization -> MV SQL -> query rewriting -> benchmark (--ease))
+#   and moves the optimization and benchmark results into dest_dir.
+#   tag is appended to the file names (e.g. _wo).
 run_postopt() {
     local set=$1 sfx=$2 method=$3 bmax=$4 dest=$5 tag=${6:-}
     local opt bench
@@ -252,7 +262,7 @@ run_postopt() {
     local bench_dst="${bench%.json}${tag}.json"
 
     if is_done "${dest}/${opt_dst}" "${dest}/${bench_dst}"; then
-        log "SKIP（結果あり）: ${dest}/${bench_dst}"
+        log "SKIP (result exists): ${dest}/${bench_dst}"
         return 0
     fi
 
@@ -272,7 +282,7 @@ run_postopt() {
         --recalc \
         --use-docker \
         --ease \
-        || die "post-opt 失敗: set=${set} suffix=${sfx} method=${method}"
+        || die "post-opt failed: set=${set} suffix=${sfx} method=${method}"
     collect "${set}" "${dest}" "${opt}" "${opt_dst}"
     collect "${set}" "${dest}" "${bench}" "${bench_dst}"
     restore_file "${set}" "${opt}"
@@ -280,8 +290,9 @@ run_postopt() {
 }
 
 # run_phase6 <query_set> <suffix> <method> <b_max> <dest_dir> <tag> [timeout|-]
-#   最適化（Phase 6）のみ実行（DB 不要）。最適化結果を dest_dir へ移動する。
-#   戻り値: 0 = 成功またはスキップ、124 = タイムアウト、その他 = 失敗
+#   Runs only the optimization (Phase 6; no DB needed) and moves the
+#   optimization result into dest_dir.
+#   Returns: 0 = success or skipped, 124 = timed out, other = failure
 run_phase6() {
     local set=$1 sfx=$2 method=$3 bmax=$4 dest=$5 tag=$6 to=${7:--}
     local opt _bench
@@ -289,7 +300,7 @@ run_phase6() {
     local opt_dst="${opt%.json}${tag}.json"
 
     if is_done "${dest}/${opt_dst}"; then
-        log "SKIP（結果あり）: ${dest}/${opt_dst}"
+        log "SKIP (result exists): ${dest}/${opt_dst}"
         return 0
     fi
 
@@ -306,7 +317,8 @@ run_phase6() {
         --recalc
     local status=$?
     if [ ${status} -ne 0 ]; then
-        # タイムアウト等で途中の出力が無ければ元ファイルを戻す（あれば EXIT 時に警告）
+        # If no partial output was written (e.g. timeout), put the original back
+        # (otherwise the EXIT trap prints a warning)
         restore_file "${set}" "${opt}"
         return ${status}
     fi

@@ -1,19 +1,20 @@
 #!/bin/bash
 # ======================================================================
-# RQ4 / Experiment 4（Fig.11）: ストレージ制約と総実行時間
+# RQ4 / Experiment 4 (Fig. 11): storage constraint vs. total execution time
 #
 #   job-ceb-2, Cycles / Evolution and Stagnation / Growth and Spikes
-#   B_max = 500, 1000, 1500, 2000 MB, 手法 = Proposed / Static / Adapt
-#     b500      : RQ1 Exp1-1 と同一条件 → その結果をコピー（論文でも同一ファイル）
-#                 （RQ1 の結果が無い、または REUSE=0 なら実行）
-#     b1000以上 : Proposed は並列プルーニング（論文の実行条件どおり）
-#   縦軸は summary.total_benchmark_time（Static は初期 MV 構築を含む）。
+#   B_max = 500, 1000, 1500, 2000 MB, methods = Proposed / Static / Adapt
+#     b500        : same setting as RQ1 Exp1-1 -> its results are copied
+#                   (the paper also uses the same files; if the RQ1 results are
+#                   missing or REUSE=0, it is run)
+#     b1000 and up: Proposed uses parallel pruning (as in the original runs)
+#   The y-axis is summary.total_benchmark_time (Static includes the initial MV build).
 #
-# 出力: time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
-# 論文の元データ: time_dependent_output/ex4_ok_{cycle,mono,peak}/b*/
+# Output: time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
+# Original paper data: time_dependent_output/ex4_ok_{cycle,mono,peak}/b*/
 #
-# 使い方: bash paper/rq4_capacity.sh
-#         SUFFIXES="_24_peak" CAPS="1000 2000" bash paper/rq4_capacity.sh
+# Usage: bash paper/rq4_capacity.sh
+#        SUFFIXES="_24_peak" CAPS="1000 2000" bash paper/rq4_capacity.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 
@@ -21,7 +22,7 @@ read -r -a SUFFIXES <<< "${SUFFIXES:-_24_2_10 _24_mono _24_peak}"
 read -r -a CAPS <<< "${CAPS:-500 1000 1500 2000}"
 SRC_RQ1="${TD}/rq1/exp1_1/job-ceb-2"
 
-log "==== RQ4: 容量 ${CAPS[*]} MB × (${SUFFIXES[*]}) ===="
+log "==== RQ4: capacity ${CAPS[*]} MB x (${SUFFIXES[*]}) ===="
 backup_intermediates job-ceb-2
 
 for SFX in "${SUFFIXES[@]}"; do
@@ -30,7 +31,7 @@ for SFX in "${SUFFIXES[@]}"; do
         log "---- ${SFX} / B_max=${CAP}MB ----"
 
         if [ "${CAP}" = "${B_MAX}" ]; then
-            # RQ1 と同一条件（逐次プルーニング）
+            # Same setting as RQ1 (sequential pruning)
             METHODS=(dynamic_seq static adaptive)
         else
             METHODS=(dynamic_par static adaptive)
@@ -39,7 +40,7 @@ for SFX in "${SUFFIXES[@]}"; do
         for M in "${METHODS[@]}"; do
             read -r OPT BENCH <<< "$(result_files "${M}" "${SFX}")"
             if is_done "${DEST}/${OPT}" "${DEST}/${BENCH}"; then
-                log "SKIP（結果あり）: ${DEST}/${BENCH}"
+                log "SKIP (result exists): ${DEST}/${BENCH}"
                 continue
             fi
             if [ "${CAP}" = "${B_MAX}" ] && reuse_copy "${SRC_RQ1}" "${DEST}" "${OPT}" "${BENCH}"; then
@@ -50,4 +51,4 @@ for SFX in "${SUFFIXES[@]}"; do
     done
 done
 
-log "==== RQ4 完了: ${TD}/rq4/ ===="
+log "==== RQ4 done: ${TD}/rq4/ ===="

@@ -1,99 +1,117 @@
-# 論文実験スクリプト（EDBT2026 "Schema Optimization for Time-Dependent Workloads"）
+# Experiment scripts for the paper
 
-論文に載せている結果を得るためのシェルスクリプト群。実験本体は `scripts/run_experiment_normal.py`。
-結果は `time_dependent_output/rq*/` にまとめる。既存の結果（`*_ok` など）には手を触れない。
+Shell scripts that produce the results reported in the paper
+("Schema Optimization for Time-Dependent Workloads", EDBT 2026).
+The experiment driver itself is `scripts/run_experiment_normal.py`.
+All results are collected under `time_dependent_output/rq*/`; existing results
+(e.g. the `*_ok` directories) are never modified.
 
-## 構成
+## Scripts
 
-| スクリプト | 論文 | 内容 | 出力先 |
+| Script | Paper | Content | Output |
 |---|---|---|---|
-| `00_prepare.sh` | — | Phase 1〜5 + コスト再計算（job-ceb-2, Redbench_synthetic） | `02_json/`, `03_parsed/`, `04_migration/`（既存ならスキップ） |
-| `rq1_exp1_1_timestep_time.sh` | Fig.7 | 各時刻の実行時間（3パターン + Redbench, 3手法） | `time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/` |
-| `rq1_exp1_2_timestep_scaling.sh` | Fig.8 | 最適化時間 vs タイムステップ数（T=12〜42, プルーニング有無） | `time_dependent_output/rq1/exp1_2/` |
-| `rq1_exp1_3_query_scaling.sh` | Fig.9 | 最適化時間 vs クエリ数（20k〜100k, Static / 有 / 無） | `time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/` |
-| `rq2_prediction_recall.sh` | Fig.10 | recall（= 100 − noise）に対する頑健性 | `time_dependent_output/rq2/` |
-| `rq3_pruning.sh` | Table 2 | プルーニング有無の比較 | `time_dependent_output/rq3/` |
-| `rq4_capacity.sh` | Fig.11 | 容量制約 500〜2000MB | `time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500..2000}/` |
-| `run_all.sh` | — | 上記を依存順に実行 | |
-| `common.sh` | — | 共通の設定・関数（source 専用） | |
+| `00_prepare.sh` | — | Phases 1–5 + cost recalculation (job-ceb-2, Redbench_synthetic) | `02_json/`, `03_parsed/`, `04_migration/` (skipped if present) |
+| `rq1_exp1_1_timestep_time.sh` | Fig. 7 | Execution time per time step (3 patterns + Redbench, 3 methods) | `time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/` |
+| `rq1_exp1_2_timestep_scaling.sh` | Fig. 8 | Optimization time vs. number of time steps (T = 12–42, with/without pruning) | `time_dependent_output/rq1/exp1_2/` |
+| `rq1_exp1_3_query_scaling.sh` | Fig. 9 | Optimization time vs. number of queries (20k–100k; Static / with / without pruning) | `time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/` |
+| `rq2_prediction_recall.sh` | Fig. 10 | Robustness against prediction recall (= 100 − noise) | `time_dependent_output/rq2/` |
+| `rq3_pruning.sh` | Table 2 | With vs. without candidate pruning | `time_dependent_output/rq3/` |
+| `rq4_capacity.sh` | Fig. 11 | Storage constraint 500–2000 MB | `time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500..2000}/` |
+| `run_all.sh` | — | Runs all of the above in dependency order | |
+| `common.sh` | — | Shared settings and helpers (sourced only) | |
 
-各出力先には結果 JSON と `log/`（実行ログ）が置かれる。
+Each output directory contains the result JSONs and `log/` (execution logs).
 
-## 実行条件（論文の結果 JSON と照合済み）
+## Experimental settings (checked against the result JSONs of the paper)
 
-- 共通: `--recalc`、B_max = 500MB（RQ4 以外）、T = 24、ベンチマークは `--ease`（各クエリを1回実行し頻度倍）
-- 頻度ファイル: job-ceb-2 は `_24_2_10` / `_24_mono` / `_24_peak`（**`_rand` 版ではない**）、Redbench は `_2h_x2_50x`
+- Common: `--recalc`, B_max = 500 MB (except RQ4), T = 24, benchmarks use `--ease`
+  (each query is executed once and its time is multiplied by its frequency).
+- Frequency files: `_24_2_10` / `_24_mono` / `_24_peak` for job-ceb-2 (**not** the `_rand` variants),
+  `_2h_x2_50x` for Redbench.
 - Proposed: `--optimization-mode dynamic --use-pruning`
-  - Fig.7 / Table 2 / Fig.11 の b500 は逐次プルーニング
-  - Fig.8 / Fig.11 の b1000 以上は `--pruning-parallel`、Fig.9 は `--pruning-parallel --pruning-workers 16`
-  - （元の実行どおり。有望 MV 集合は逐次と並列で同一だが、プルーニング時間は異なる）
+  - Sequential pruning for RQ1 Exp1-1, RQ3 and RQ4 b500.
+  - `--pruning-parallel` for RQ1 Exp1-2 and RQ4 b1000 and above;
+    `--pruning-parallel --pruning-workers 16` for RQ1 Exp1-3.
+  - (As in the original runs. The promising MV set is identical for sequential and
+    parallel pruning, but the pruning time differs.)
 - Static: `--optimization-mode static --static-timestep average --static-algorithm utility`
 - Adapt: `--optimization-mode adaptive --window-size 4 --freq-weight linear`
-- プルーニングなし: 1実行あたり 24h で打ち切る。超えたら DNF とし、それより大きい規模は実行しない
+- Without pruning: each run is stopped after 24 h. A run that exceeds it is marked as
+  DNF and larger problem sizes are not run.
 
-## 結果の再利用（論文データと同じ扱い）
+## Reuse of results (same as in the paper data)
 
-同一条件の実行は1回だけ行い、コピーして共有する（`REUSE=1` が既定）:
+Runs with identical settings are executed only once and copied (`REUSE=1` by default):
 
-- RQ2 の recall 100% ← RQ1 Exp1-1 の Redbench 結果
-- RQ3 の With pruning ← RQ1 Exp1-1 の Proposed
-- RQ4 の b500 ← RQ1 Exp1-1 の3手法
+- RQ2 recall 100% ← Redbench results of RQ1 Exp1-1
+- RQ3 with pruning ← Proposed of RQ1 Exp1-1
+- RQ4 b500 ← all three methods of RQ1 Exp1-1
 
-そのため `run_all.sh` は Exp1-1 を最初に実行する。
-RQ2 のノイズ実験は最適化をやり直さない。recall 100% の最適化結果から Phase 7/8 を再生成し、Phase 9 だけを実行する。
+This is why `run_all.sh` runs Exp1-1 first.
+The noise experiments of RQ2 do not repeat the optimization: Phases 7/8 are regenerated
+from the recall-100% optimization result and only Phase 9 is run.
 
-## staging と既存ファイルの扱い
+## Staging and existing files
 
-`run_experiment_normal.py` は結果を `time_dependent_output/<query_set>/` 直下（staging）に固定名で書き出す。
-staging には既存の結果（例: `job-ceb-2-q{N}/` にある Fig.9 の元データ）も置かれているため、各スクリプトは次のように動く:
+`run_experiment_normal.py` writes its results with fixed names directly under
+`time_dependent_output/<query_set>/` (staging). Staging also contains existing results
+(e.g. the Fig. 9 source data in `job-ceb-2-q{N}/`), so the scripts work as follows:
 
-1. **結果 JSON**: 実行の直前に、これから書き込まれる名前と衝突する既存ファイルだけを `<set>/_stash/in_use/` へ一時退避する。
-   結果を `rq*/` へ移動したら、元の場所へ戻す。異常終了や中断のときも EXIT 時に戻す（元の場所が空いている場合のみ）。
-   → **既存の結果は実行後も元のパスに残る。**
-2. **中間生成物**（`timestep_*.sql`, `static_*initial_mvs.sql`, `jobs/`）: Phase 7/8 が削除して作り直すため、
-   post-opt 系スクリプトの初回だけ `<set>/_stash/intermediates_<日時>/` へ退避する（`.paper_staging` が目印）。
-   現在残っているものは論文の結果とは対応していない（最後の実行のもの）が、念のため残す。
-3. 1回実行するごとに、結果を `rq*/` へ移動する（プルーニングなしの実行は `_wo`、ありは `_wp` を付ける）。
-4. 出力先に結果が既にある実行はスキップする。途中で止まっても再実行すれば再開できる。
+1. **Result JSONs**: right before a run, only the existing files whose names collide
+   with the files about to be written are moved to `<set>/_stash/in_use/`. They are put
+   back after the results have been moved to `rq*/`, and also on errors or interruption
+   (EXIT trap; only if the original location is free).
+   → **Existing results stay at their original paths after the run.**
+2. **Intermediates** (`timestep_*.sql`, `static_*initial_mvs.sql`, `jobs/`): Phases 7/8
+   delete and regenerate them, so the post-opt scripts move them once to
+   `<set>/_stash/intermediates_<timestamp>/` on their first run (marker: `.paper_staging`).
+   The current ones belong to the last run and do not correspond to the paper results,
+   but they are kept just in case.
+3. After every run, the results are moved to `rq*/` (runs without pruning get `_wo`,
+   runs with pruning in the scaling experiments get `_wp`).
+4. Runs whose results already exist in the output directory are skipped, so an
+   interrupted run can be resumed by running the script again.
 
-中断後に `_stash/in_use/` にファイルが残っている場合は、元の場所に中断時の途中出力があることを意味する。
-手動で確認してから片付けること（その場合、次の実行は安全のため停止する）。
+If files remain in `_stash/in_use/` after an interruption, the original location
+contains partial output of the interrupted run. Check it manually and clean up
+(in that case the next run stops for safety).
 
-## 環境変数
+## Environment variables
 
-| 変数 | 既定 | 意味 |
+| Variable | Default | Meaning |
 |---|---|---|
-| `DRY_RUN` | 0 | 1 なら実行せずコマンドを表示する（ファイル操作もしない） |
-| `FORCE` | 0 | 1 なら結果があっても再実行・再コピーする |
-| `REUSE` | 1 | 0 なら RQ1 の結果を再利用せず、各 RQ で実行する |
-| `PY` | `.venv/bin/python` | Python 3.12 環境 |
-| `CONTAINER` | `mv_postgres` | PostgreSQL コンテナ名（ベンチマーク前に再起動する） |
-| `TIMEOUT` | `24h` | プルーニングなし最適化の打ち切り時間 |
-| `SUFFIXES` / `CAPS` / `TIMESTEPS` / `QUERY_COUNTS` / `NOISE_PCTS` / `SETS` | 論文の値 | 一部だけ実行したいときに上書きする（例: `SUFFIXES="_24_mono"`） |
-| `SKIP_REDBENCH` | 0 | Exp1-1 で Redbench を飛ばす |
-| `FORCE_PREP` | 0 | 1 なら前処理を再生成する（既存は `<dir>/<set>__backup_<日時>` へ退避） |
+| `DRY_RUN` | 0 | 1: print the commands without running anything (no file operations) |
+| `FORCE` | 0 | 1: re-run / re-copy even if results exist |
+| `REUSE` | 1 | 0: do not reuse RQ1 results; run in each RQ |
+| `PY` | `.venv/bin/python` | Python 3.12 environment |
+| `CONTAINER` | `mv_postgres` | PostgreSQL container name (restarted before each benchmark) |
+| `TIMEOUT` | `24h` | Time limit for optimization without pruning |
+| `SUFFIXES` / `CAPS` / `TIMESTEPS` / `QUERY_COUNTS` / `NOISE_PCTS` / `SETS` | paper values | Override to run a subset (e.g. `SUFFIXES="_24_mono"`) |
+| `SKIP_REDBENCH` | 0 | Skip Redbench in Exp1-1 |
+| `FORCE_PREP` | 0 | 1: regenerate the preprocessing outputs (existing ones are moved to `<dir>/<set>__backup_<timestamp>`) |
 
-## 使い方
+## Usage
 
 ```bash
-# 実行されるコマンドの確認（何も実行・変更しない）
+# Check the commands that would be executed (runs and changes nothing)
 DRY_RUN=1 bash paper/run_all.sh
 
-# 全実験
+# All experiments
 nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &
 
-# 個別に実行
+# Individual experiments
 bash paper/rq3_pruning.sh
 SUFFIXES="_24_peak" CAPS="1000" bash paper/rq4_capacity.sh
 ```
 
-## 前提・既知の問題
+## Prerequisites and notes
 
-- PostgreSQL コンテナ（`mv_postgres`）が起動していること。Phase 6 だけの実験（Exp1-2, Exp1-3）は DB 不要。
-- **`Dockerfile` の `COPY ./data/...` はリンク切れ**（実体は `archive/data/`）。コンテナを新しく作るときは修正が必要。
-- Gurobi ライセンス（`gurobi.lic` / `.env` の `GRB_LICENSE_FILE`）が必要。
-- 論文結果の JSON には記録されておらず、元のシェルスクリプトの記述に合わせた条件:
-  - Adapt の `--freq-weight linear`
-  - 前処理のサンプリング率（job-ceb-2 = high、Redbench = low）
-- 図の生成スクリプト（`progress/*/plot_*.py` など）は、まだ旧パス（`*_ok`）を読む。`rq*/` 構成向けの版は別途用意する。
-- 論文図表と旧データの対応は `progress/2026-09-28_paper_experiment_inventory.md` を参照。
+- The PostgreSQL container (`mv_postgres`) must be running. Experiments that only run
+  Phase 6 (Exp1-2, Exp1-3) do not need the DB.
+- To create the container use `bash docker/create_container.sh`; to check it use
+  `bash docker/verify_env.sh` (see `docker/README.md`).
+- A Gurobi license is required (see the root `README.md`).
+- Settings not recorded in the result JSONs, taken from the original shell scripts:
+  - `--freq-weight linear` for Adapt
+  - the sampling rate of the preprocessing (job-ceb-2 = high, Redbench = low)
+- Figures and tables are generated from `rq*/` by `paper_figures/`.

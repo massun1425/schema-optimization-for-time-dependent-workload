@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fig.8: 最適化時間 vs タイムステップ数（プルーニング有無）.
+"""Fig. 8 (RQ1 Exp1-2): optimization time vs. number of time steps (with/without pruning).
 
-入力: time_dependent_output/rq1/exp1_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
-縦軸: phase_time_sec（Phase 6 全体の実時間。wp = プルーニング + ILP 求解, wo = ILP 求解）
-出力: rq1_exp1_2_timestep_scaling.pdf
+Input:  time_dependent_output/rq1/exp1_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
+y-axis: phase_time_sec (wall time of the whole Phase 6; wp = pruning + ILP solve, wo = ILP solve)
+Output: rq1_exp1_2_timestep_scaling.pdf
 """
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -12,7 +12,7 @@ import numpy as np
 from common import COLORS, load_json, parse_args, require, save_pdf
 
 TIMESTEPS = [12, 18, 24, 30, 36, 42]
-# (凡例, ファイル名のタグ) — 並び順 = 棒の順
+# (legend label, file name tag) — order = bar order
 SERIES = [("Proposed (w/ pruning)", "wp"), ("Proposed (w/o pruning)", "wo")]
 
 

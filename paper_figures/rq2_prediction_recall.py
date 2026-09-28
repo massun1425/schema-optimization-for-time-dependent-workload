@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Fig.10: ワークロード予測の recall と総実行時間（Redbench synthetic）.
+"""Fig. 10 (RQ2): workload prediction recall vs. total execution time (Redbench synthetic).
 
-入力: time_dependent_output/rq2/
+Input:  time_dependent_output/rq2/
         benchmark_results_{dynamic,static}_2h_x2_50x{,_noise5,...,_noise50}.json
-        benchmark_results_adaptive_w4_2h_x2_50x.json（Adapt は予測を使わないため一定）
-recall = 100 - noise(%)。縦軸は summary.total_benchmark_time。
-出力: rq2_prediction_recall.pdf
+        benchmark_results_adaptive_w4_2h_x2_50x.json(constant: Adapt does not use predictions)
+recall = 100 - noise (%). y-axis: summary.total_benchmark_time.
+Output: rq2_prediction_recall.pdf
 """
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 from common import COLORS, MARKERS, REDBENCH_SUFFIX, parse_args, require, save_pdf, total_benchmark_time
 
-# 左から recall が増える順（noise 0 = 接尾辞なしのファイル）
+# recall increases from left to right (noise 0 = file without a noise suffix)
 NOISES = [50, 45, 40, 35, 30, 25, 20, 15, 10, 5, 0]
 METHODS = ["Adapt", "Static", "Proposed"]
 

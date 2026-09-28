@@ -4,7 +4,7 @@
 - **対象**: `src/optimization/bigsubs.py`, `core/two_step_optimizer.py`, `scripts/run_experiment_normal.py`
 - **目的**: 静的手法（BigSubs）を論文に忠実化し、動的比較手法（Adaptive）を既存のオンライン物理設計手法の代表として整合的に再構成する
 
-> 関連: 動的手法の模倣妥当性の調査は [`adaptive_method_survey.md`](../adaptive_method_survey.md) を参照。
+> 関連: 動的手法の模倣妥当性の調査は [`adaptive_method_survey.md`](adaptive_method_survey.md) を参照。
 
 ---
 

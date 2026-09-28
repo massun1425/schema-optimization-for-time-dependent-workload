@@ -1,23 +1,23 @@
 #!/bin/bash
 # ======================================================================
-# RQ1 / Experiment 1-1（Fig.7）: 各時刻の実行時間（Proposed / Adapt / Static）
+# RQ1 / Experiment 1-1 (Fig. 7): execution time per time step (Proposed / Adapt / Static)
 #
-#   job-ceb-2         : Cycles(_24_2_10) / Evolution and Stagnation(_24_mono) / Growth and Spikes(_24_peak)
+#   job-ceb-2         : Cycles (_24_2_10) / Evolution and Stagnation (_24_mono) / Growth and Spikes (_24_peak)
 #   Redbench_synthetic: _2h_x2_50x
 #   B_max = 500MB, T = 24, --recalc --ease
 #
-# 出力:
+# Output:
 #   time_dependent_output/rq1/exp1_1/job-ceb-2/
 #   time_dependent_output/rq1/exp1_1/Redbench_synthetic/
 #     {td_mv,static_mv,adaptive_mv}_optimization_result*.json
 #     benchmark_results_{dynamic,static,adaptive_w4}*.json
 #     log/
 #
-# ここでの結果は RQ2（recall 100%）、RQ3（プルーニングあり）、RQ4（b500）で再利用される。
-# 論文の元データ: time_dependent_output/job-ceb-2/result_500M_ok/, ex2_500M_ok/
+# These results are reused by RQ2 (recall 100%), RQ3 (with pruning) and RQ4 (b500).
+# Original paper data: time_dependent_output/job-ceb-2/result_500M_ok/, ex2_500M_ok/
 #
-# 使い方: bash paper/rq1_exp1_1_timestep_time.sh
-#         SUFFIXES="_24_mono" SKIP_REDBENCH=1 bash paper/rq1_exp1_1_timestep_time.sh
+# Usage: bash paper/rq1_exp1_1_timestep_time.sh
+#        SUFFIXES="_24_mono" SKIP_REDBENCH=1 bash paper/rq1_exp1_1_timestep_time.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 
@@ -45,4 +45,4 @@ if [ "${SKIP_REDBENCH}" != "1" ]; then
     done
 fi
 
-log "==== RQ1 Exp1-1 完了: ${TD}/rq1/exp1_1/ ===="
+log "==== RQ1 Exp1-1 done: ${TD}/rq1/exp1_1/ ===="

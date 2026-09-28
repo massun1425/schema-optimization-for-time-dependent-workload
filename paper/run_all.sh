@@ -1,23 +1,24 @@
 #!/bin/bash
 # ======================================================================
-# 論文の全実験を順に実行する。
-#   RQ2 / RQ3 / RQ4 は RQ1 Exp1-1 の結果を再利用するため、Exp1-1 を最初に実行する。
-#   各スクリプトは結果があればスキップするので、途中で止まっても再実行で再開できる。
+# Runs all experiments of the paper in order.
+#   RQ2 / RQ3 / RQ4 reuse the results of RQ1 Exp1-1, so Exp1-1 runs first.
+#   Every script skips runs whose results already exist, so re-running this
+#   script resumes after an interruption.
 #
-# 使い方: nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &
-#         DRY_RUN=1 bash paper/run_all.sh     # 実行されるコマンドの確認のみ
+# Usage: nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &
+#        DRY_RUN=1 bash paper/run_all.sh     # only print the commands
 # ======================================================================
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 STEPS=(
-    00_prepare.sh                    # 前処理（既存の入力があればスキップ）
-    rq1_exp1_1_timestep_time.sh      # Fig.7
+    00_prepare.sh                    # preprocessing (skipped if the inputs exist)
+    rq1_exp1_1_timestep_time.sh      # Fig. 7
     rq3_pruning.sh                   # Table 2
-    rq4_capacity.sh                  # Fig.11
-    rq2_prediction_recall.sh         # Fig.10
-    rq1_exp1_2_timestep_scaling.sh   # Fig.8  （Phase 6 のみ）
-    rq1_exp1_3_query_scaling.sh      # Fig.9  （Phase 6 のみ・長時間）
+    rq4_capacity.sh                  # Fig. 11
+    rq2_prediction_recall.sh         # Fig. 10
+    rq1_exp1_2_timestep_scaling.sh   # Fig. 8  (Phase 6 only)
+    rq1_exp1_3_query_scaling.sh      # Fig. 9  (Phase 6 only, long-running)
 )
 
 for S in "${STEPS[@]}"; do

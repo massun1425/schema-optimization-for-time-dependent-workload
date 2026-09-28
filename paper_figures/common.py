@@ -1,7 +1,8 @@
-"""論文図表スクリプトの共通設定・関数.
+"""Shared settings and helpers for the paper figure/table scripts.
 
-入力は paper/*.sh の実行結果（time_dependent_output/rq*/）と、
-頻度パターン図のみ 01_queries/ の頻度ファイル。出力は PDF（表は .tex と .md）。
+Inputs are the results of paper/*.sh (time_dependent_output/rq*/) and, for the
+frequency-pattern figures only, the frequency files in 01_queries/. Outputs are PDFs
+(the table is written as .tex and .md).
 """
 import argparse
 import json
@@ -14,7 +15,7 @@ matplotlib.use("Agg")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# 手法ごとの配色・マーカー（全図で統一）
+# Colors and markers per method (shared by all figures)
 COLORS = {
     "Adapt": "#4272A8",
     "Static": "#7E9E8E",
@@ -28,7 +29,7 @@ MARKERS = {
     "Proposed": "^",
 }
 
-# job-ceb-2 の頻度パターン: (頻度サフィックス, 論文での名称)
+# Frequency patterns of job-ceb-2: (frequency suffix, name in the paper)
 PATTERNS = [
     ("_24_2_10", "Cycles"),
     ("_24_mono", "Evolution and Stagnation"),
@@ -40,21 +41,21 @@ REDBENCH_SUFFIX = "_2h_x2_50x"
 def parse_args(description):
     ap = argparse.ArgumentParser(description=description)
     ap.add_argument("--td-dir", type=Path, default=REPO_ROOT / "time_dependent_output",
-                    help="paper/*.sh の出力先（rq1/ rq2/ ... を含むディレクトリ）")
+                    help="output directory of paper/*.sh (contains rq1/ rq2/ ...)")
     ap.add_argument("--queries-dir", type=Path, default=REPO_ROOT / "01_queries",
-                    help="頻度ファイルのあるディレクトリ（Fig.5 / Fig.6 のみ使用）")
+                    help="directory with the frequency files (used only for Fig. 5 / Fig. 6)")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "paper_figures" / "output",
-                    help="図表の出力先")
+                    help="output directory for the figures and tables")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     return args
 
 
 def require(paths):
-    """入力ファイルがすべて揃っているか確認し、足りなければ一覧を出して終了する."""
+    """Check that all input files exist; otherwise list the missing ones and exit."""
     missing = [p for p in paths if not Path(p).exists()]
     if missing:
-        print("入力ファイルが見つかりません（paper/ の該当スクリプトを先に実行してください）:",
+        print("Input files not found (run the corresponding script in paper/ first):",
               file=sys.stderr)
         for p in missing:
             print(f"  {p}", file=sys.stderr)
@@ -67,11 +68,11 @@ def load_json(path):
 
 
 def total_benchmark_time(path):
-    """総実行時間 = クエリ実行 + マイグレーション（Static は初期 MV 構築を含む）."""
+    """Total execution time = query execution + migration (Static includes the initial MV build)."""
     return load_json(path)["summary"]["total_benchmark_time"]
 
 
 def save_pdf(fig, path, **kwargs):
-    # CreationDate を埋め込まない（同じ入力から同じ PDF を得るため）
+    # Do not embed CreationDate (so that the same input always yields the same PDF)
     fig.savefig(path, metadata={"CreationDate": None}, **kwargs)
     print(f"saved: {path}")

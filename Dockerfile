@@ -1,29 +1,31 @@
-FROM postgres:latest
+# The experimental environment (the container that produced the paper results) runs PostgreSQL 18.4 (Debian trixie, 18.4-1.pgdg13+1).
+# The version is pinned because 'latest' would resolve to a different version at build time.
+# See docker/create_container.sh and docker/verify_env.sh for creating and verifying the container.
+FROM postgres:18.4-trixie
 
-# PostgreSQLの環境変数設定
+# PostgreSQL environment variables
 ENV POSTGRES_PASSWORD=pass
 ENV POSTGRES_DB=imdbload
 
-# 必要なツールとPostgreSQL拡張機能インストール
+# Install required tools and PostgreSQL extensions
 RUN apt-get update && apt-get install -y \
     postgresql-contrib \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# 作業ディレクトリ作成
+# Create the working directory
 RUN mkdir -p /tmp/imdb_data
 
-# IMDBデータをダウンロードして展開
+# Download and extract the IMDB data
 WORKDIR /tmp/imdb_data
 RUN wget -q https://event.cwi.nl/da/job/imdb.tgz && \
     tar -xzf imdb.tgz && \
     rm imdb.tgz
 
-# スキーマファイルとセットアップスクリプトをコピー
-COPY ./data/schema.sql /tmp/imdb_data/
-COPY ./data/setup.sql /tmp/imdb_data/
+# Copy the schema file (executed with \i by the init script)
+COPY ./docker/schema.sql /tmp/imdb_data/
 
-# 初期化スクリプトを作成（スキーマ作成→データロード→インデックス作成）
+# Create the init script (schema -> data load -> index creation)
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
@@ -86,13 +88,13 @@ EOSQL\n\
 
 WORKDIR /
 
-# PostgreSQL設定
-# 【変更点】
-#   effective_cache_size: 6GB → 8GB（メモリ16GB制限に対して適切な値に調整）
-#   max_parallel_workers: 追加（実用環境を想定、方針B）
-#   max_parallel_workers_per_gather: 追加（実用環境を想定、方針B）
-#   max_parallel_maintenance_workers: 追加（MV作成時の並列度を明示）
-#   jit: off 追加（初回実行ノイズの排除、再現性確保）
+# PostgreSQL server parameters
+# [Changes]
+#   effective_cache_size: 6GB -> 8GB (adjusted to the 16GB memory limit)
+#   max_parallel_workers: added (assumes a practical environment)
+#   max_parallel_workers_per_gather: added (assumes a practical environment)
+#   max_parallel_maintenance_workers: added (explicit parallelism for MV creation)
+#   jit: off added (removes first-run noise, for reproducibility)
 CMD ["postgres", \
      "-c", "shared_buffers=2GB", \
      "-c", "effective_cache_size=8GB", \

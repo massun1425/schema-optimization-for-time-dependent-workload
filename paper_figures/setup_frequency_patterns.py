@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fig.5: 頻度パターン（Cycles / Evolution and Stagnation / Growth and Spikes）.
+"""Fig. 5: frequency patterns (Cycles / Evolution and Stagnation / Growth and Spikes).
 
-入力: 01_queries/job-ceb-2/frequency_time_dependent_{24_2_10,24_mono,24_peak}.json
-      Group A = 最初の奇数番クエリ（例: 1a.sql）、Group B = 最初の偶数番クエリ（例: 2a.sql）
-出力: setup_frequency_pattern_{Cycles,Evolution_and_Stagnation,Growth_and_Spikes}.pdf
+Input:  01_queries/job-ceb-2/frequency_time_dependent_{24_2_10,24_mono,24_peak}.json
+        Group A = first odd-numbered query (e.g. 1a.sql), Group B = first even-numbered query (e.g. 2a.sql)
+Output: setup_frequency_pattern_{Cycles,Evolution_and_Stagnation,Growth_and_Spikes}.pdf
 """
 import re
 

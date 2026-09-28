@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Fig.9: 最適化時間 vs クエリ数（Static / プルーニング有無）.
+"""Fig. 9 (RQ1 Exp1-3): optimization time vs. number of queries (Static / with / without pruning).
 
-入力: time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/
+Input:  time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/
         static_mv_optimization_result_24_mono.json     （Static: execution_time）
         td_mv_optimization_result_24_mono_wp.json      （w/ pruning: phase_time_sec）
         td_mv_optimization_result_24_mono_wo.json      （w/o pruning: phase_time_sec）
-        DNF_24_mono_wo.txt                              （w/o pruning が 24h で終わらなかった印）
-      w/o pruning は結果が無く DNF の印がある規模を、24h まで届く斜線の棒と "DNF" で描く。
-縦軸: 時間（hours, 0〜24）
-出力: rq1_exp1_3_query_scaling.pdf
+        DNF_24_mono_wo.txt                              (marker: w/o pruning did not finish within 24h)
+      A size without a w/o-pruning result but with a DNF marker is drawn as a hatched bar up to 24h labeled "DNF".
+y-axis: time (hours, 0-24)
+Output: rq1_exp1_3_query_scaling.pdf
 """
 import sys
 
@@ -36,7 +36,7 @@ def main():
     static_h = [load_json(p)["execution_time"] / HOUR for p in static_paths]
     wp_h = [load_json(p)["phase_time_sec"] / HOUR for p in wp_paths]
 
-    # w/o pruning: 結果 → 値、DNF の印 → None（DNF）、どちらも無ければ未実行としてエラー
+    # w/o pruning: result -> value, DNF marker -> None (DNF), neither -> error (not run)
     wo_h, not_run = [], []
     for n in NS:
         d = base / f"job-ceb-2-q{n}"
@@ -48,7 +48,7 @@ def main():
         else:
             not_run.append(res)
     if not_run:
-        print("w/o pruning の結果も DNF の印もありません（未実行）:", file=sys.stderr)
+        print("Neither a w/o-pruning result nor a DNF marker exists (not run):", file=sys.stderr)
         for p in not_run:
             print(f"  {p}", file=sys.stderr)
         sys.exit(1)

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Fig.7: 各時刻の実行時間（Proposed / Adapt / Static）.
+"""Fig. 7 (RQ1 Exp1-1): execution time per time step (Proposed / Adapt / Static).
 
-入力: time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/
-      benchmark_results_{dynamic,adaptive_w4,static}{suffix}.json
-縦軸: timestep_results[t].total_time（= マイグレーション + クエリ実行）。
-      Static は一度だけの初期 MV 構築時間（initial_mv_creation_time）を t=1 に加算する。
-出力: rq1_exp1_1_timestep_time_{cycles,evolution_and_stagnation,growth_and_spikes,redbench_synthetic}.pdf
+Input:  time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/
+        benchmark_results_{dynamic,adaptive_w4,static}{suffix}.json
+y-axis: timestep_results[t].total_time (= migration + query execution).
+        For Static, the one-time initial MV build (initial_mv_creation_time) is added to t=1.
+Output: rq1_exp1_1_timestep_time_{cycles,evolution_and_stagnation,growth_and_spikes,redbench_synthetic}.pdf
 """
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -13,7 +13,7 @@ import matplotlib.ticker as ticker
 from common import (COLORS, MARKERS, PATTERNS, REDBENCH_SUFFIX, load_json, parse_args,
                     require, save_pdf)
 
-# (凡例, ファイル名の手法トークン, 初期 MV 構築を t=1 に加算するか)
+# (legend label, method token in the file name, add the initial MV build to t=1?)
 METHODS = [
     ("Proposed", "dynamic", False),
     ("Adapt", "adaptive_w4", False),
@@ -24,7 +24,7 @@ METHODS = [
 def per_timestep_total(path, add_initial_mv):
     d = load_json(path)
     tr = d["timestep_results"]
-    xs = [r.get("timestep_index", i) + 1 for i, r in enumerate(tr)]  # 1 始まり
+    xs = [r.get("timestep_index", i) + 1 for i, r in enumerate(tr)]  # 1-based
     ys = [r["total_time"] for r in tr]
     if add_initial_mv and ys:
         ys[0] += d.get("initial_mv_creation_time", 0.0) or 0.0
@@ -59,7 +59,7 @@ def main():
     args = parse_args(__doc__)
     base = args.td_dir / "rq1" / "exp1_1"
 
-    # (タイトル, クエリセット, 頻度サフィックス)
+    # (title, query set, frequency suffix)
     panels = [(title, "job-ceb-2", sfx) for sfx, title in PATTERNS]
     panels.append(("Redbench synthetic", "Redbench_synthetic", REDBENCH_SUFFIX))
 
