@@ -28,6 +28,7 @@ The docstring of each script lists the files and fields it uses.
 
 ```bash
 bash paper_figures/make_all.sh                                # generate everything
+bash paper_figures/make_all.sh --td-dir paper_results         # from the results reported in the paper
 .venv/bin/python paper_figures/rq1_exp1_1_timestep_time.py    # generate a single figure
 
 # Change the input/output directories (arguments shared by all scripts)

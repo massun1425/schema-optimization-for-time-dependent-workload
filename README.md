@@ -9,6 +9,25 @@ prunes MV candidates with a *workload summary tree*.
 This README explains how to reproduce all experiments of the paper, from setting up the
 environment to generating the figures and tables.
 
+## Results and figures of the paper
+
+**[`paper_results/`](paper_results/README.md) contains the results reported in the paper and
+its figures and tables:**
+
+- `paper_results/rq1/` … `paper_results/rq4/`: the result files (JSON) behind every figure and
+  table, organized by research question (RQ1: Figs. 7–9, RQ2: Fig. 10, RQ3: Table 2, RQ4: Fig. 11).
+- `paper_results/figures/`: the figures (PDF) of the paper (Figs. 5–11) and Table 2 (LaTeX and
+  Markdown), generated from these files.
+
+The figures and tables can be regenerated from the included results without running any
+experiment (no database or Gurobi license needed):
+
+```bash
+bash paper_figures/make_all.sh --td-dir paper_results --out-dir paper_results/figures
+```
+
+To reproduce the results themselves, follow the steps below.
+
 ## Contents
 
 | Path | Content |
@@ -17,6 +36,7 @@ environment to generating the figures and tables.
 | `core/`, `src/`, `migration/`, `mv_generation/`, `benchmark/`, `config/`, `utils/` | Implementation (optimizer, candidate pruning, cost estimation, query rewriting, benchmark) |
 | `paper/` | Shell scripts that run every experiment of the paper ([paper/README.md](paper/README.md)) |
 | `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([paper_figures/README.md](paper_figures/README.md)) |
+| `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([paper_results/README.md](paper_results/README.md)) |
 | `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([docker/README.md](docker/README.md)) |
 | `01_queries/` | Query sets and time-dependent query frequencies |
 | `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) |
@@ -124,10 +144,13 @@ are documented in [paper/README.md](paper/README.md).
 ### 4.3 Figures and tables
 
 ```bash
-bash paper_figures/make_all.sh
+bash paper_figures/make_all.sh                            # from your own runs (time_dependent_output/rq*/)
+bash paper_figures/make_all.sh --td-dir paper_results     # from the results reported in the paper
 ```
 
-This writes the figures (PDF) and Table 2 (LaTeX and Markdown) to `paper_figures/output/`:
+The second command regenerates the figures and tables of the paper from the included result
+files in `paper_results/` without running any experiment (no database or Gurobi license needed).
+Both write the figures (PDF) and Table 2 (LaTeX and Markdown) to `paper_figures/output/`:
 
 | Paper | Output |
 |---|---|
