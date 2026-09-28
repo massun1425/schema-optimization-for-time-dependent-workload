@@ -93,12 +93,12 @@ def latex_cell_exec(pname, vlabel, val):
 
 
 lines = []
-lines.append(r"\begin{table}[t]")
+lines.append(r"\begin{table*}[t]")
 lines.append(r"\centering")
 lines.append(r"\caption{Comparison of optimization time, total execution time, "
              r"and objective value for each workload pattern, with and without "
              r"candidate pruning.}")
-lines.append(r"\label{tab:pruning-comparison}")
+lines.append(r"\label{table:ex3_1}")
 lines.append(r"\begin{tabular}{llrrrr}")
 lines.append(r"\toprule")
 lines.append(r"Workload pattern & Candidate pruning & "
@@ -125,7 +125,7 @@ for pi, (pname, fq) in enumerate(PATTERNS):
 
 lines.append(r"\bottomrule")
 lines.append(r"\end{tabular}")
-lines.append(r"\end{table}")
+lines.append(r"\end{table*}")
 
 tex = "\n".join(lines) + "\n"
 (OUT / "table3.tex").write_text(tex, encoding="utf-8")
