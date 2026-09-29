@@ -20,9 +20,9 @@
 # more accurate cardinality estimates than the low-rate hash-based sampler.
 # (The original runs of the paper used the low-rate sampler for Redbench_synthetic.)
 #
-# Usage: bash paper/00_prepare.sh
-#        SETS="job-ceb-2" bash paper/00_prepare.sh
-#        DRY_RUN=1 bash paper/00_prepare.sh
+# Usage: bash paper_scripts/00_prepare.sh
+#        SETS="job-ceb-2" bash paper_scripts/00_prepare.sh
+#        DRY_RUN=1 bash paper_scripts/00_prepare.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

@@ -95,14 +95,14 @@ contains partial output of the interrupted run. Check it manually and clean up
 
 ```bash
 # Check the commands that would be executed (runs and changes nothing)
-DRY_RUN=1 bash paper/run_all.sh
+DRY_RUN=1 bash paper_scripts/run_all.sh
 
 # All experiments
-nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &
+nohup bash paper_scripts/run_all.sh > paper_run_all.log 2>&1 &
 
 # Individual experiments
-bash paper/rq3_pruning.sh
-SUFFIXES="_24_peak" CAPS="1000" bash paper/rq4_capacity.sh
+bash paper_scripts/rq3_pruning.sh
+SUFFIXES="_24_peak" CAPS="1000" bash paper_scripts/rq4_capacity.sh
 ```
 
 ## Prerequisites and notes

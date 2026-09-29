@@ -1,7 +1,7 @@
 #!/bin/bash
 # ======================================================================
 # Collects the results reported in the paper into paper_results/ (tracked by git),
-# using the same layout as the output of the paper/ scripts (time_dependent_output/rq*/),
+# using the same layout as the output of the paper_scripts/ scripts (time_dependent_output/rq*/),
 # so that paper_figures/ can regenerate the figures and tables with
 #     bash paper_figures/make_all.sh --td-dir paper_results
 #
@@ -95,7 +95,7 @@ done
 # ---------------------------------------------------------------------
 # RQ1 Exp1-3 (Fig. 9): number of queries
 #   The original run stored the result without pruning as td_mv_optimization_result_24_mono.json;
-#   it is renamed to *_wo.json as written by paper/rq1_exp1_3_query_scaling.sh.
+#   it is renamed to *_wo.json as written by paper_scripts/rq1_exp1_3_query_scaling.sh.
 # ---------------------------------------------------------------------
 for N in 20000 40000 60000 80000 100000; do
     S="${SRC}/job-ceb-2-q${N}"

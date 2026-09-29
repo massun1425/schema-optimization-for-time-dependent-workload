@@ -16,8 +16,8 @@
 #   td_mv_optimization_result_{fq}{,_wo}.json, benchmark_results_dynamic_{fq}{,_wo}.json, log/
 # Original paper data: time_dependent_output/ex3_500M_ok/
 #
-# Usage: bash paper/rq3_pruning.sh
-#        SUFFIXES="_24_mono" bash paper/rq3_pruning.sh
+# Usage: bash paper_scripts/rq3_pruning.sh
+#        SUFFIXES="_24_mono" bash paper_scripts/rq3_pruning.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

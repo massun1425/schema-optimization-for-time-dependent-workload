@@ -18,8 +18,8 @@
 # Original paper data: time_dependent_output/job-ceb-2-q{N}/
 #   (old name for w/o pruning: td_mv_optimization_result_24_mono.json; the new layout adds _wo)
 #
-# Usage: bash paper/rq1_exp1_3_query_scaling.sh
-#        QUERY_COUNTS="20000 40000" bash paper/rq1_exp1_3_query_scaling.sh
+# Usage: bash paper_scripts/rq1_exp1_3_query_scaling.sh
+#        QUERY_COUNTS="20000 40000" bash paper_scripts/rq1_exp1_3_query_scaling.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

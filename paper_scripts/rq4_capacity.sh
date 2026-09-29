@@ -13,8 +13,8 @@
 # Output: time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
 # Original paper data: time_dependent_output/ex4_ok_{cycle,mono,peak}/b*/
 #
-# Usage: bash paper/rq4_capacity.sh
-#        SUFFIXES="_24_peak" CAPS="1000 2000" bash paper/rq4_capacity.sh
+# Usage: bash paper_scripts/rq4_capacity.sh
+#        SUFFIXES="_24_peak" CAPS="1000 2000" bash paper_scripts/rq4_capacity.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

@@ -23,8 +23,8 @@
 #   benchmark_results_adaptive_w4_2h_x2_50x.json, the optimization results, log/
 # Original paper data: time_dependent_output/ex2_500M_ok/
 #
-# Usage: bash paper/rq2_prediction_recall.sh
-#        NOISE_PCTS="5 10" bash paper/rq2_prediction_recall.sh
+# Usage: bash paper_scripts/rq2_prediction_recall.sh
+#        NOISE_PCTS="5 10" bash paper_scripts/rq2_prediction_recall.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

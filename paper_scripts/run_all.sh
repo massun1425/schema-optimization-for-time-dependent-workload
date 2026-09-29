@@ -5,8 +5,8 @@
 #   Every script skips runs whose results already exist, so re-running this
 #   script resumes after an interruption.
 #
-# Usage: nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &
-#        DRY_RUN=1 bash paper/run_all.sh     # only print the commands
+# Usage: nohup bash paper_scripts/run_all.sh > paper_run_all.log 2>&1 &
+#        DRY_RUN=1 bash paper_scripts/run_all.sh     # only print the commands
 # ======================================================================
 set -u -o pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -66,13 +66,14 @@
 - **完了条件**: 新しい仮想環境で `pip install -r requirements.txt` だけを実行し、import チェックと図表生成が通る。
 
 ### 3. 論文本文の修正（論文側の作業）
+（2026-09-29: 1 つめ以外は論文側で修正済み）
 - [ ] Abstract / Intro の「最大 24.6%（Static 比）」「最大 45.6%（Adapt 比）」: 一致する結果がない。現在のデータに基づく値に直す
-- [ ] 5.2.1 節の「Static 比 62.8%」→ **63.3%** に直す（Adapt 比 87.4% はそのまま）
+- [x] 5.2.1 節の「Static 比 62.8%」→ **63.3%** に直す（Adapt 比 87.4% はそのまま）
   - 2026-09-28 再確認: `ex2_500M_ok` から計算すると、初期 MV 構築を除くと 62.77%、含めると 63.31%
   - Static の `total_benchmark_time`（141,991.6 s）＝ 各時刻の合計（139,951.7 s）＋ 初期 MV 構築（2,039.9 s）
   - 論文 5.1.4 節の定義（Static は初期 MV 構築を最初の時刻に含める）と、Fig. 7 の Static 系列の合計、Fig. 10 の recall 100% の値（どちらも 141,991.6 s）は、構築時間を含めている
   - 62.8% は `progress/gen_data_summary.py` が構築時間を含めずに合計した値だった
-- [ ] 5.1.2 節の「2,294 クエリ」→ **2,284** に直す
+- [x] 5.1.2 節の「2,294 クエリ」→ **2,284** に直す
   - 2026-09-28 再確認: 次の 6 つがすべて 2,284
     - SQL ファイル数
     - EXPLAIN JSON 数
@@ -82,15 +83,15 @@
     - ベンチマークで実際に実行されたクエリ数
   - git の履歴でも最初（2026-06-04）から 2,284 で、2,294 の出どころは見つからない（誤記と思われる）
   - 中身が同じ SQL が 2 組あるため、内容で数えると 2,282。論文の「クエリ数」としてはファイル数・頻度ファイルと一致する 2,284 が妥当
-- [ ] 5.1.1 節の「PostgreSQL 18.3」→ 実際は 18.4
-- [ ] （任意）Fig. 8 のキャプションの「2500 queries」→ 正確には **2,515**（JOB 113 + CEB 2,402）
+- [x] 5.1.1 節の「PostgreSQL 18.3」→ 実際は 18.4
+- [x] （任意）Fig. 8 のキャプションの「2500 queries」→ 正確には **2,515**（JOB 113 + CEB 2,402）
   - 2026-09-28 確認: SQL ファイル数、EXPLAIN JSON 数、`parse_summary.json`、使った頻度ファイル 8 種のキー数、ベンチマークで実行されたクエリ数（3 パターン）がすべて 2,515
   - Redbench を 2,284 と正確に書くなら、こちらもそろえるとよい
   - Fig. 9 の合成セットは 20,000〜100,000 クエリちょうどで、論文の表記どおり
 
 根拠となる数値は棚卸し md の §6 と `progress/2026-08-09_experiment_data_summary.md` にある。
 
-- [ ] 4.3 節のサンプリングの記述を確認する
+- [x] 4.3 節のサンプリングの記述を確認する
   - 2026-09-28 に `paper/00_prepare.sh` を変更し、Redbench_synthetic も高サンプル率版（`TABLESAMPLE BERNOULLI`、大きいテーブルの 10〜30%）を使うようにした
   - ただし、論文の Redbench の結果（Fig. 7 の Redbench パネル、Fig. 10、`paper_results/`）は、元の低サンプル率版（ハッシュによる相関サンプリング、1〜10%）のコストで出ている
   - EXPLAIN の結果も実行のたびに変わりうるため、再実行で結果が多少変わるのは前提どおりとして、Redbench のやり直しは行わない（2026-09-28 判断）
@@ -197,7 +198,7 @@
 ## 優先度: 低（来歴・公開前の整理）
 
 ### 10. 入力データの作り方を記録する
-- [ ] `job-ceb-2`（JOB + CEB の 2,515 クエリ）の作り方と、頻度ファイル（`_24_2_10` / `_24_mono` / `_24_peak`、`_{12..42}_mono`）の生成方法をスクリプトか文書に残す
+- [x] `job-ceb-2`（JOB + CEB の 2,515 クエリ）の作り方と頻度ファイルの生成方法の記録 → 不要と判断した（2026-09-29）。クエリセットと頻度ファイルはリポジトリに含まれている
 - [x] Redbench synthetic の作り方を記録した（2026-09-29）。スクリプトを `scripts/redbench_synthesizer/` に、経緯を `progress/2026-09-29_redbench_synthetic_provenance.md` にまとめた
   - 経路: Redbench の matching 結果（cluster 53: 2024-05-03 12:00〜05-05、cluster 55: 2024-05-25〜05-26）→ `generate_queryset_from_workload_csv.py`（2 時間刻み、`--sanitize-ceb --queries-json-path`）→ 頻度 2 倍 → `merge_query_folders_sum.py` で合成（793 クエリ）→ LLM で同じ番号の JOB/CEB クエリを 1,491 本追加（手作業、スクリプトなし）→ 2 倍 → 10 倍 → 50 倍 → `Redbench_synthetic` にリネーム
   - `build_cluster_53_55_combined.sh` で合成までを再現できる。cluster_53_join / cluster_55_join はバイト単位で一致、合成後は SQL と頻度が一致（頻度ファイルのキーの順序だけ違う）。2 倍・10 倍・50 倍の頻度ファイルは `scale_frequency.py` でバイト単位で一致
@@ -212,30 +213,37 @@
 - [x] `01_queries/job_like/` の削除は、コミット `986c03dd` ですでにコミットされていた
 
 ### 12. 公開に含めるものを決める
-- [ ] `progress/`（日本語の作業メモ。このファイルも含む）
-- [ ] `small_docs/`（他の論文の PDF や発表資料を含む）
-- [ ] `dashboard/`
+- [ ] `progress/`（日本語の作業メモ。このファイルも含む）: 今は残し、いずれ `.gitignore` の対象にする（2026-09-29 判断）
+- [x] `small_docs/`（他の論文の PDF や発表資料を含む）→ git の管理から外して `legacy/small_docs/` へ移した（2026-09-29）
+- [x] `dashboard/` → 公開に含める。`dashboard/README.md` に起動方法と読むデータを書き、ルートの README の目次に追加した（2026-09-29）
 - [x] `Redbench/`（第三者のツール）: 同梱したまま、出典と変更点を明記した（2026-09-29）
   - 上流の最新コミット `a129890`（2025-11-19）と比べて特定した変更点（`only_select` の 4 ファイル、`include_ceb` の `imdb.py`、`.gitignore`）を `Redbench/README.md` の冒頭に記載し、変更した 5 ファイルの先頭に注記した（Apache 2.0 の第 4 条 (b)）
   - 日本語メモ `SOLUTION_SELECT_ONLY.md` は `progress/2026-05-15_redbench_select_only.md` に移した
   - ルートの README に「Third-party code and data」の節を追加（Redbench、Redset、JOB、CEB、IMDB の出典）
-- [ ] このリポジトリ自体のライセンス（LICENSE ファイル）を決める
+- [x] このリポジトリ自体のライセンス → 論文投稿用なので付けない（2026-09-29 判断）
 
 ### 14. IMDB データのチェックサムを記録する（任意）
-- [ ] Dockerfile が外部 URL から取得する IMDB データの SHA-256 を記録し、ビルド時に照合する
+- [x] （行わない、2026-09-29 判断）Dockerfile が外部 URL から取得する IMDB データの SHA-256 を記録し、ビルド時に照合する
   - 優先度を下げた理由（2026-09-28）: データの同一性は `docker/verify_env.sh` の行数チェック（21 テーブル）とインデックスのチェックで確認できる。JOB の標準データで、EDBT の要件でもない
   - 実施するなら、アーカイブの再ダウンロード（約 1.2GB）が必要。イメージの中の CSV 21 個のチェックサムを記録する方法もある
 
 ### 13. 文書を最新の状態に更新する
-- [ ] 棚卸し md（`progress/2026-09-28_paper_experiment_inventory.md`）の「git 管理外」という記述を、入力データのコミット後の状態に合わせて直す
+- [x] （行わない、2026-09-29 判断）棚卸し md（`progress/2026-09-28_paper_experiment_inventory.md`）の「git 管理外」という記述を、入力データのコミット後の状態に合わせて直す
 
 ---
 
 ## 実験を動かすときにやること（今回は実施しない）
 
-- [ ] **短い実走で動作確認する**: DB 不要で短く終わる RQ1 Exp1-2 の T=12 だけを実行し（`TIMESTEPS=12 bash paper/rq1_exp1_2_timestep_scaling.sh`。プルーニングありとなしで計 15 分程度）、次を確かめる
+- [x] （行わない、2026-09-29 判断）**短い実走で動作確認する**: DB 不要で短く終わる RQ1 Exp1-2 の T=12 だけを実行し（`TIMESTEPS=12 bash paper/rq1_exp1_2_timestep_scaling.sh`。プルーニングありとなしで計 15 分程度）、次を確かめる
   - 結果が `rq1/exp1_2/` に回収されること
   - staging の既存ファイルが元の場所に戻ること
   - 有望 MV 集合と目的関数値が論文の結果（`result_scaling_time_ok`）と一致すること
-- [ ] リファクタリング（5〜8）のあとにも、同じ実走で結果が変わっていないことを確認する
+- [x] （行わない、2026-09-29 判断）リファクタリング（5〜8）のあとにも、同じ実走で結果が変わっていないことを確認する
 - [ ] 全実験を再実行する場合は `nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &`（約 3 週間）。実行時間の目安は README の 4.2 節を参照
+
+## 2026-09-29 の追加作業
+- [x] `paper/` を `paper_scripts/` に改名した（`git mv`）。README・CI・`paper_figures/`・`paper_results/`・スクリプトの使い方コメントの参照を直した（`progress/` の記述は当時のまま）。`DRY_RUN=1 bash paper_scripts/run_all.sh` のコマンド列は改名前と同じ
+- [x] ルートの README を書き直した: clone から実験までの手順（環境構築 → DB 不要の確認 → Gurobi → コンテナ → 前処理 → 短い実験 → 全実験 → 図表）と、フォルダ構成（リポジトリにあるもの／実験で生成されるもの）
+- [x] `paper_figures/output/` を `.gitignore` に追加した
+- [ ] （時間があれば）ダッシュボードが `time_dependent_output/rq*/` を閲覧できない（`result_*` のサブフォルダしか辿らない）
+

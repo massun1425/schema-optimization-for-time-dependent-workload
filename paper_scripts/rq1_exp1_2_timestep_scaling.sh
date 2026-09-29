@@ -15,8 +15,8 @@
 # Output: time_dependent_output/rq1/exp1_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
 # Original paper data: time_dependent_output/job-ceb-2/result_scaling_time_ok/
 #
-# Usage: bash paper/rq1_exp1_2_timestep_scaling.sh
-#        TIMESTEPS="12 18" bash paper/rq1_exp1_2_timestep_scaling.sh
+# Usage: bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
+#        TIMESTEPS="12 18" bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 

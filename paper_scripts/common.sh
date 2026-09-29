@@ -1,7 +1,7 @@
 #!/bin/bash
 # ======================================================================
 # Shared settings and helpers for the paper experiment scripts
-# (sourced by every paper/*.sh).
+# (sourced by every paper_scripts/*.sh).
 #
 # run_experiment_normal.py writes its results with fixed file names directly
 # under time_dependent_output/<query_set>/ ("staging"). After every run these

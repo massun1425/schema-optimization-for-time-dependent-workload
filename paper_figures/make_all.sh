@@ -1,6 +1,6 @@
 #!/bin/bash
 # ======================================================================
-# Generates all figures and tables of the paper (input: time_dependent_output/rq*/ from paper/*.sh).
+# Generates all figures and tables of the paper (input: time_dependent_output/rq*/ from paper_scripts/*.sh).
 # Output: paper_figures/output/
 #
 # Usage: bash paper_figures/make_all.sh

@@ -2,7 +2,7 @@
 
 This directory contains the result files behind every figure and table of the paper
 ("Schema Optimization for Time-Dependent Workloads", EDBT). It has the same layout as the
-output of the experiment scripts in `paper/` (`time_dependent_output/rq*/`), so the figures
+output of the experiment scripts in `paper_scripts/` (`time_dependent_output/rq*/`), so the figures
 and tables can be regenerated without re-running the experiments:
 
 ```bash
@@ -41,7 +41,7 @@ and never touches this directory.
 ## Notes
 
 - **Settings.** B_max = 500 MB (except RQ4), 24 time steps (except RQ1 Exp1-2), `--recalc`,
-  benchmarks with `--ease`. See `paper/README.md` for the exact options of every method.
+  benchmarks with `--ease`. See `paper_scripts/README.md` for the exact options of every method.
 - **Total execution time** (`summary.total_benchmark_time`) is the sum of query execution and
   migration over all time steps. For Static it includes the one-time initial MV build, which
   Fig. 7 adds to the first time step.

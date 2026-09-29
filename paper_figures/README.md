@@ -1,9 +1,9 @@
 # Figure and table scripts for the paper
 
-Generates exactly the figures and tables of the paper from the results of `paper/*.sh`
+Generates exactly the figures and tables of the paper from the results of `paper_scripts/*.sh`
 (`time_dependent_output/rq*/`). The plotting code is ported from the scripts that produced
 the figures in the paper; only the input paths and the output location were changed.
-Script and output names follow the RQ/experiment numbering of `paper/`
+Script and output names follow the RQ/experiment numbering of `paper_scripts/`
 (`setup_` = figures of the experimental setup, Section 5.1).
 
 ## Figures, tables, inputs and outputs
@@ -37,6 +37,6 @@ bash paper_figures/make_all.sh --td-dir <directory containing rq*> --out-dir <ou
 
 If inputs are missing, the script lists the missing files and exits with an error.
 For RQ1 Exp1-3 without pruning, either the result JSON or `DNF_24_mono_wo.txt`
-(written by `paper/rq1_exp1_3_query_scaling.sh`) is required.
+(written by `paper_scripts/rq1_exp1_3_query_scaling.sh`) is required.
 
 The PDFs contain no creation date, so the same input always yields the same PDF.

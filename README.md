@@ -6,8 +6,8 @@ The method selects a time series of materialized views (MVs) with an integer lin
 that maximizes the total utility of the MVs minus the migration cost between time steps, and
 prunes MV candidates with a *workload summary tree*.
 
-This README explains how to reproduce all experiments of the paper, from setting up the
-environment to generating the figures and tables.
+This README explains how to get from a fresh clone to running the experiments, and how the
+repository is organized.
 
 ## Results and figures of the paper
 
@@ -19,46 +19,28 @@ its figures and tables:**
 - `paper_results/figures/`: the figures (PDF) of the paper (Figs. 5–11) and Table 2 (LaTeX and
   Markdown), generated from these files.
 
-The figures and tables can be regenerated from the included results without running any
-experiment (no database or Gurobi license needed):
+They can be regenerated without running any experiment (step 2 below).
 
-```bash
-bash paper_figures/make_all.sh --td-dir paper_results --out-dir paper_results/figures
-```
+## Getting started
 
-To reproduce the results themselves, follow the steps below.
+All commands are run from the repository root.
 
-## Contents
+### Requirements
 
-| Path | Content |
-|---|---|
-| `scripts/run_experiment_normal.py` | Experiment driver (Phases 1–9, see [Reference](#reference-experiment-pipeline)) |
-| `core/`, `src/`, `migration/`, `mv_generation/`, `benchmark/`, `config/`, `utils/` | Implementation (optimizer, candidate pruning, cost estimation, query rewriting, benchmark) |
-| `paper/` | Shell scripts that run every experiment of the paper ([paper/README.md](paper/README.md)) |
-| `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([paper_figures/README.md](paper_figures/README.md)) |
-| `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([paper_results/README.md](paper_results/README.md)) |
-| `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([docker/README.md](docker/README.md)) |
-| `01_queries/` | Query sets and time-dependent query frequencies |
-| `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) |
-| `time_dependent_output/` | Experiment results (`rq*/` for the paper experiments) |
-| `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
-| `scripts/redbench_synthesizer/` | Conversion of Redbench workloads into query sets ([README](scripts/redbench_synthesizer/README.md)) |
-
-## 1. Requirements
-
+- **Software.** Linux, Docker, Python 3.12, Gurobi 12.0 (an academic license is sufficient;
+  the license bundled with `gurobipy` is too small for the experiments).
 - **Hardware.** The paper used an HPE ProLiant DL385 Gen10 Plus with two AMD EPYC 7542
   (32 cores each) and 2 TB of memory. The PostgreSQL container is limited to 8 cores and 16 GB.
   The optimizer runs outside the container; the largest query-scaling experiment (100k queries)
   loads a 13 GB parse result.
-- **Software.** Linux, Docker, Python 3.12, Gurobi 12.0 (an academic license is sufficient).
-- **Disk.** About 5 GB for the container image, about 6 GB for the preprocessing outputs of the two
-  query sets, and about 36 GB for the synthetic query sets of the query-scaling experiment.
+- **Disk.** About 5 GB for the container image, about 6 GB for the preprocessing outputs of the
+  two query sets, and about 36 GB for the synthetic query sets of the query-scaling experiment.
 
-## 2. Setup
-
-### 2.1 Python environment
+### 1. Clone and install the Python environment
 
 ```bash
+git clone <repository URL> mv-query-optimization
+cd mv-query-optimization
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -69,7 +51,18 @@ pip install -r requirements.txt
 FastAPI/Uvicorn for the dashboard). With [uv](https://docs.astral.sh/uv/), `uv sync`
 installs the same versions from `uv.lock` (`uv sync --extra dev` adds pytest and the linters).
 
-### 2.2 Gurobi license
+### 2. Check the installation (no database or Gurobi license needed)
+
+```bash
+python -m pytest tests/        # unit and regression tests; the ILP tests are skipped without a Gurobi license
+bash paper_figures/make_all.sh --td-dir paper_results --out-dir /tmp/figures
+diff -r paper_results/figures /tmp/figures && echo "identical to the paper"
+```
+
+The second command regenerates all figures and tables of the paper from the included results;
+the output is byte-identical to `paper_results/figures/` (this is also checked by the CI).
+
+### 3. Gurobi license
 
 Obtain a license from [gurobi.com](https://www.gurobi.com/) and make it visible to `gurobipy`:
 
@@ -77,7 +70,7 @@ Obtain a license from [gurobi.com](https://www.gurobi.com/) and make it visible 
 export GRB_LICENSE_FILE=/path/to/gurobi.lic
 ```
 
-### 2.3 PostgreSQL container
+### 4. PostgreSQL container
 
 ```bash
 bash docker/create_container.sh     # build -> start -> load IMDB (tens of minutes) -> verify
@@ -90,44 +83,46 @@ work_mem = 128 MB, jit = off, ...), limited to 8 cores, 16 GB of memory and 4 GB
 The build downloads the IMDB data of the Join Order Benchmark (about 1.2 GB).
 See [docker/README.md](docker/README.md) for details.
 
-## 3. Input data
-
-| Query set | Content | Used by |
-|---|---|---|
-| `01_queries/job-ceb-2/` | 2,515 JOB and CEB queries and their frequencies: `frequency_time_dependent_24_2_10.json` (Cycles), `_24_mono.json` (Evolution and Stagnation), `_24_peak.json` (Growth and Spikes), `_{12,18,24,30,36,42}_mono.json` (time-step scaling) | RQ1, RQ3, RQ4 |
-| `01_queries/Redbench_synthetic/` | 2,284 queries and `frequency_time_dependent_2h_x2_50x.json`, generated with Redbench from anonymized cloud traces | RQ1, RQ2 |
-| `01_queries/job-ceb-2-q{20000,...,100000}/` | Synthetic query sets obtained by block-replicating job-ceb-2 (generated automatically by `paper/rq1_exp1_3_query_scaling.sh` if missing) | RQ1 (query scaling) |
-
-## 4. Reproducing the experiments
-
-All commands are run from the repository root.
-
-### 4.1 Preprocessing
+### 5. Preprocessing (needs the database)
 
 ```bash
-bash paper/00_prepare.sh
+bash paper_scripts/00_prepare.sh
 ```
 
-For each query set this runs EXPLAIN (Phase 1), plan parsing and MV candidate enumeration
-(Phases 2–3), migration plan enumeration (Phase 4), sampling-based cost estimation (Phase 5),
-and the cost recalculation. Query sets whose outputs already exist are skipped.
+For each query set (`job-ceb-2`, `Redbench_synthetic`) this runs EXPLAIN (Phase 1), plan parsing
+and MV candidate enumeration (Phases 2–3), migration plan enumeration (Phase 4), sampling-based
+cost estimation (Phase 5), and the cost recalculation (Phase 5.5). It writes `02_json/`,
+`03_parsed/` and `04_migration/`. Query sets whose outputs already exist are skipped.
 
-### 4.2 Experiments
+### 6. A first, short experiment
+
+```bash
+TIMESTEPS=12 bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
+```
+
+This runs only the optimization (no database) for one point of Fig. 8 (job-ceb-2, T = 12, with
+and without pruning), which took about 15 minutes in the paper. The results are written to
+`time_dependent_output/rq1/exp1_2/` and can be compared with `paper_results/rq1/exp1_2/`.
+Because step 5 re-estimates the migration costs by sampling (and EXPLAIN estimates can change
+between runs), the selected MVs and the objective value may differ slightly from the paper;
+the run times depend on the machine.
+
+### 7. All experiments
 
 | RQ | Script | Paper | Output (`time_dependent_output/`) | Approx. run time |
 |---|---|---|---|---|
-| RQ1 | `paper/rq1_exp1_1_timestep_time.sh` | Fig. 7 | `rq1/exp1_1/` | ~4.5 days |
-| RQ1 | `paper/rq1_exp1_2_timestep_scaling.sh` | Fig. 8 | `rq1/exp1_2/` | ~5 hours |
-| RQ1 | `paper/rq1_exp1_3_query_scaling.sh` | Fig. 9 | `rq1/exp1_3/` | ~3 days |
-| RQ2 | `paper/rq2_prediction_recall.sh` | Fig. 10 | `rq2/` | ~2 days |
-| RQ3 | `paper/rq3_pruning.sh` | Table 2 | `rq3/` | ~1.5 days |
-| RQ4 | `paper/rq4_capacity.sh` | Fig. 11 | `rq4/` | ~12 days |
+| RQ1 | `paper_scripts/rq1_exp1_1_timestep_time.sh` | Fig. 7 | `rq1/exp1_1/` | ~4.5 days |
+| RQ1 | `paper_scripts/rq1_exp1_2_timestep_scaling.sh` | Fig. 8 | `rq1/exp1_2/` | ~5 hours |
+| RQ1 | `paper_scripts/rq1_exp1_3_query_scaling.sh` | Fig. 9 | `rq1/exp1_3/` | ~3 days |
+| RQ2 | `paper_scripts/rq2_prediction_recall.sh` | Fig. 10 | `rq2/` | ~2 days |
+| RQ3 | `paper_scripts/rq3_pruning.sh` | Table 2 | `rq3/` | ~1.5 days |
+| RQ4 | `paper_scripts/rq4_capacity.sh` | Fig. 11 | `rq4/` | ~12 days |
 
 Run all of them in dependency order with:
 
 ```bash
-DRY_RUN=1 bash paper/run_all.sh                          # print the commands only
-nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &   # run everything
+DRY_RUN=1 bash paper_scripts/run_all.sh                          # print the commands only
+nohup bash paper_scripts/run_all.sh > paper_run_all.log 2>&1 &   # run everything
 ```
 
 - Run times are estimates from the original runs (about 11 hours per benchmark run on
@@ -137,20 +132,18 @@ nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &   # run everything
   `run_all.sh` runs it first.
 - Runs whose results exist are skipped; re-running a script resumes it.
 - Subsets can be run with environment variables, e.g.
-  `SUFFIXES="_24_mono" CAPS="1000" bash paper/rq4_capacity.sh`.
+  `SUFFIXES="_24_mono" CAPS="1000" bash paper_scripts/rq4_capacity.sh`.
 
 The exact settings of every experiment (methods, flags, storage constraints, output layout)
-are documented in [paper/README.md](paper/README.md).
+are documented in [paper_scripts/README.md](paper_scripts/README.md).
 
-### 4.3 Figures and tables
+### 8. Figures and tables
 
 ```bash
 bash paper_figures/make_all.sh                            # from your own runs (time_dependent_output/rq*/)
 bash paper_figures/make_all.sh --td-dir paper_results     # from the results reported in the paper
 ```
 
-The second command regenerates the figures and tables of the paper from the included result
-files in `paper_results/` without running any experiment (no database or Gurobi license needed).
 Both write the figures (PDF) and Table 2 (LaTeX and Markdown) to `paper_figures/output/`:
 
 | Paper | Output |
@@ -164,14 +157,71 @@ Both write the figures (PDF) and Table 2 (LaTeX and Markdown) to `paper_figures/
 | Table 2 | `rq3_pruning.tex`, `rq3_pruning.md` |
 | Fig. 11 | `rq4_capacity.pdf` |
 
-Execution times measured on a different machine will differ from the paper. The MVs selected by
-the optimizer (promising candidates, objective value and schedule) are deterministic for a given
-input and Gurobi configuration.
+Execution times measured on a different machine will differ from the paper. For given
+preprocessing outputs (`03_parsed/`, `04_migration/`) and Gurobi configuration, the MVs selected
+by the optimizer (promising candidates, objective value and schedule) are deterministic.
+
+## Repository layout
+
+### In the repository
+
+| Path | Content |
+|---|---|
+| `scripts/run_experiment_normal.py` | Experiment driver (Phases 1–9, see [Reference](#reference-experiment-pipeline)) |
+| `scripts/recalculate_costs.py` | Cost recalculation (Phase 5.5) |
+| `scripts/extract_sparse_base.py`, `scripts/generate_synthetic_scaling.py` | Construction of the synthetic query sets of the query-scaling experiment (Fig. 9) |
+| `scripts/redbench_synthesizer/` | Conversion of Redbench workloads into query sets ([README](scripts/redbench_synthesizer/README.md)); not needed to reproduce the paper |
+| `core/` | Time-dependent ILP optimizer, candidate pruning (workload summary tree), Static and Adapt baselines |
+| `src/` | Query plan parsing and MV candidates (`core/`), static ILP optimizers (`optimization/`), query rewriting (`rewrite/`) |
+| `migration/` | Migration plans (Phase 4) and cost estimation by sampling (Phase 5) |
+| `mv_generation/` | MV definition SQL (including join conditions recovered from the original queries) |
+| `benchmark/` | Benchmark executor (Phase 9) |
+| `config/` | Settings (`default.yaml`: database connection and defaults) |
+| `utils/` | PostgreSQL access (directly or through the Docker container) |
+| `01_queries/` | Input query sets and time-dependent query frequencies (see below) |
+| `paper_scripts/` | Shell scripts that run every experiment of the paper ([README](paper_scripts/README.md)) |
+| `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([README](paper_figures/README.md)) |
+| `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([README](paper_results/README.md)) |
+| `dashboard/` | Browser dashboard for inspecting the results ([README](dashboard/README.md)) |
+| `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([README](docker/README.md)) |
+| `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
+| `tests/`, `.github/workflows/` | Unit and regression tests; CI (tests, import check, regeneration of the figures) |
+| `requirements.txt`, `pyproject.toml`, `uv.lock` | Python dependencies (versions of the experiments) |
+
+Input query sets in `01_queries/`:
+
+| Query set | Content | Used by |
+|---|---|---|
+| `job-ceb-2/` | 2,515 JOB and CEB queries and their frequencies: `frequency_time_dependent_24_2_10.json` (Cycles), `_24_mono.json` (Evolution and Stagnation), `_24_peak.json` (Growth and Spikes), `_{12,18,24,30,36,42}_mono.json` (time-step scaling) | RQ1, RQ3, RQ4 |
+| `Redbench_synthetic/` | 2,284 queries and `frequency_time_dependent_2h_x2_50x.json`, generated with Redbench from anonymized cloud traces | RQ1, RQ2 |
+| `job-ceb-2-q{20000,...,100000}/` | Frequencies of the synthetic query sets obtained by block-replicating job-ceb-2; their plans and costs are generated by `paper_scripts/rq1_exp1_3_query_scaling.sh` | RQ1 (query scaling) |
+| `job/` | The 113 JOB queries (not used by the experiments of the paper) | — |
+
+### Generated by running the experiments
+
+These directories are created by the steps above and are not in the repository (`.gitignore`).
+
+| Path | Created by | Content |
+|---|---|---|
+| `.venv/` | Step 1 | Python environment |
+| `02_json/<set>/` | Preprocessing (Phases 1, 3) | EXPLAIN plans of the queries, with node IDs |
+| `03_parsed/<set>/` | Preprocessing (Phase 2); `rq1_exp1_3_query_scaling.sh` | Parsed plans and MV candidates (`qp_class.pkl`, up to 13 GB), `parse_summary.json`; `sparse_base.pkl` and `job-ceb-2-q*/` for the query-scaling experiment |
+| `04_migration/<set>/` | Preprocessing (Phases 4–5.5); `rq1_exp1_3_query_scaling.sh` | Migration plans and costs (`simple_migration_plans.json`, `simple_migration_costs.json` and the settings used in `simple_migration_costs.meta.json`) |
+| `time_dependent_output/<set>/` | `scripts/run_experiment_normal.py` (Phases 6–9) | Working directory of the driver: the latest optimization and benchmark results, MV SQL per time step (`timestep_*.sql`) and rewritten queries (`jobs/`) |
+| `time_dependent_output/rq*/` | `paper_scripts/*.sh` | Results of the paper experiments, in the same layout as `paper_results/rq*/`, with logs in `log/` |
+| `time_dependent_output/prep/log/` | `paper_scripts/00_prepare.sh` | Logs of the preprocessing |
+| `paper_figures/output/` | `paper_figures/make_all.sh` | Figures and tables |
+
+Every result JSON written by the driver records the settings of its run (command line, options, code version and the
+preprocessing settings) under the key `run_config`. With `FORCE_PREP=1`, the preprocessing moves
+existing outputs to `<dir>/<set>__backup_<timestamp>/` instead of deleting them; the experiment
+scripts keep intermediate files of earlier runs in `time_dependent_output/<set>/_stash/`
+(see [paper_scripts/README.md](paper_scripts/README.md)).
 
 ## Reference: experiment pipeline
 
 `scripts/run_experiment_normal.py` runs the pipeline phase by phase.
-The scripts in `paper/` call it with the settings of the paper.
+The scripts in `paper_scripts/` call it with the settings of the paper.
 
 | Phase | Content | Output |
 |---|---|---|
@@ -208,18 +258,16 @@ Use `--recalc` so that the optimization uses the recalculated costs (as in the p
 - **`GurobiError: No Gurobi license found`**: set `GRB_LICENSE_FILE` to the path of the license file.
 - **PostgreSQL is not reachable**: check `docker exec mv_postgres pg_isready -U postgres` and
   `docker logs mv_postgres`. `bash docker/verify_env.sh` checks the whole environment.
-- **`qp_class.pkl` not found**: run the preprocessing (`bash paper/00_prepare.sh`).
+- **`qp_class.pkl` not found**: run the preprocessing (`bash paper_scripts/00_prepare.sh`).
 - **A script stops with "A file with the same name is already stashed"**: a previous run was
-  interrupted; see "Staging and existing files" in [paper/README.md](paper/README.md).
+  interrupted; see "Staging and existing files" in [paper_scripts/README.md](paper_scripts/README.md).
 
 ## Third-party code and data
 
-| Item | Where it is used | Source |
-|---|---|---|
-| Redbench | `Redbench/` (modified copy, Apache License 2.0; the changes are listed at the top of [Redbench/README.md](Redbench/README.md)) | [DataManagementLab/Redbench](https://github.com/DataManagementLab/Redbench), commit `a129890`; *Redbench: Workload Synthesis From Cloud Traces*, [arXiv:2511.13059](https://arxiv.org/abs/2511.13059) |
-| Redset | Query arrival times behind `01_queries/Redbench_synthetic/` (through Redbench; the dataset itself is not included) | [amazon-science/redset](https://github.com/amazon-science/redset); A. van Renen et al., *Why TPC Is Not Enough: An Analysis of the Amazon Redshift Fleet*, PVLDB 17(11), 2024 |
-| Join Order Benchmark (JOB) | Queries in `01_queries/` | V. Leis et al., *How Good Are Query Optimizers, Really?*, PVLDB 9(3), 2015 |
-| Cardinality Estimation Benchmark (CEB) | Queries in `01_queries/` | [learnedsystems/CEB](https://github.com/learnedsystems/CEB); P. Negi et al., *Flow-Loss: Learning Cardinality Estimates That Matter*, PVLDB 14(11), 2021 |
-| IMDB data (JOB version) | Loaded into the PostgreSQL container by the `Dockerfile` (downloaded during the build; not included) | https://event.cwi.nl/da/job/imdb.tgz |
-
-See the respective sources for their licenses and terms of use.
+| Item | Where it is used | Source | License / terms |
+|---|---|---|---|
+| Redbench | `Redbench/` (modified copy; the changes are listed at the top of [Redbench/README.md](Redbench/README.md)) | [DataManagementLab/Redbench](https://github.com/DataManagementLab/Redbench), commit `a129890` (2025-11-19); J. Wehrstein, R. Heinrich, M. Stoian, et al. *Redbench: Workload Synthesis From Cloud Traces*. [arXiv:2511.13059](https://arxiv.org/abs/2511.13059), 2025 | Apache License 2.0 |
+| Redset | Query arrival times behind `01_queries/Redbench_synthetic/` (through Redbench; the dataset itself is not included) | [amazon-science/redset](https://github.com/amazon-science/redset); A. van Renen, D. Horn, P. Pfeil, et al. *Why TPC Is Not Enough: An Analysis of the Amazon Redshift Fleet*. PVLDB 17(11):3694–3706, 2024 | CC BY-NC 4.0 |
+| Join Order Benchmark (JOB) | Queries in `01_queries/` | V. Leis, A. Gubichev, A. Mirchev, et al. *How Good Are Query Optimizers, Really?* PVLDB 9(3):204–215, 2015 (queries also distributed at [gregrahn/join-order-benchmark](https://github.com/gregrahn/join-order-benchmark)) | — |
+| Cardinality Estimation Benchmark (CEB) | Queries in `01_queries/` | [learnedsystems/CEB](https://github.com/learnedsystems/CEB); P. Negi, R. Marcus, A. Kipf, et al. *Flow-Loss: Learning Cardinality Estimates That Matter*. PVLDB 14(11):2019–2032, 2021 | MIT (repository) |
+| IMDB data (JOB version, CSV files of May 2013) | Loaded into the PostgreSQL container by the `Dockerfile` (downloaded during the build; not included) | https://event.cwi.nl/da/job/imdb.tgz | IMDb terms of use ([imdb.com/interfaces](https://www.imdb.com/interfaces/)) |

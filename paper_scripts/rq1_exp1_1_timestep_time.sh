@@ -16,8 +16,8 @@
 # These results are reused by RQ2 (recall 100%), RQ3 (with pruning) and RQ4 (b500).
 # Original paper data: time_dependent_output/job-ceb-2/result_500M_ok/, ex2_500M_ok/
 #
-# Usage: bash paper/rq1_exp1_1_timestep_time.sh
-#        SUFFIXES="_24_mono" SKIP_REDBENCH=1 bash paper/rq1_exp1_1_timestep_time.sh
+# Usage: bash paper_scripts/rq1_exp1_1_timestep_time.sh
+#        SUFFIXES="_24_mono" SKIP_REDBENCH=1 bash paper_scripts/rq1_exp1_1_timestep_time.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 
