@@ -1,133 +1,120 @@
-#!/usr/bin/env python3
-"""
-Simple test script for CF Pruning components.
+"""Tests of the candidate pruning components: WorkloadSummaryTree, LocalILPOptimizer, CFPruner.
 
-This script tests the individual components of the CF pruning implementation
-without requiring a full database setup.
+The ILP tests use tiny hand-made instances whose optimum is known analytically, so they
+also run with the size-limited Gurobi license that comes with the gurobipy package.
+
+Instance (all MVs have size 1 and the storage budget is 1, i.e. one MV per time step):
+    q0 runs at t0 and t1, q1 at the last time steps.
+    mv0 gives utility 12 to q0, mv1 gives 10 to q1, mv2 gives only 1 to q0 (dominated by mv0).
+    Creating any MV costs 5.
 """
 
 import sys
 from pathlib import Path
 
-# Add project root to path
-project_root = Path(__file__).parent.parent.parent.parent
+import pytest
+
+# Add project root to path (tests/ is directly under the repository root)
+project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-# Try to import, but handle missing gurobipy gracefully
-try:
-    from core.workload_summary_tree import WorkloadSummaryTree
-    WORKLOAD_TREE_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Could not import WorkloadSummaryTree: {e}")
-    WORKLOAD_TREE_AVAILABLE = False
+from core.cf_pruner import CFPruner  # noqa: E402
+from core.local_ilp_optimizer import LocalILPOptimizer  # noqa: E402
+from core.time_dependent_optimizer import TimeDependentOptimizer  # noqa: E402
+from core.workload_summary_tree import WorkloadSummaryTree  # noqa: E402
+
+NODE_LIST = ["mv0", "mv1", "mv2"]
+U_IJ = [
+    [12.0, 0.0, 1.0],   # q0
+    [0.0, 10.0, 0.0],   # q1
+]
+X = [[0] * 3 for _ in range(3)]
+B_J = [1.0, 1.0, 1.0]
+B_MAX = 1.0
+MIGRATION_COST = {0: 5.0, 1: 5.0, 2: 5.0}
+
+
+def _freq(pattern_q0, pattern_q1):
+    return {f"t{t}": [float(a), float(b)] for t, (a, b) in enumerate(zip(pattern_q0, pattern_q1))}
+
+
+def _selected(z_by_timestep):
+    return [{j for j, v in enumerate(z) if v == 1} for z in z_by_timestep]
 
 
 def test_workload_summary_tree():
-    """Test WorkloadSummaryTree construction."""
-    print("=" * 70)
-    print("Testing WorkloadSummaryTree")
-    print("=" * 70)
-    
-    if not WORKLOAD_TREE_AVAILABLE:
-        print("\nSkipping test: WorkloadSummaryTree not available (missing dependencies)")
-        return
-    
-    # Test with different timestep counts
-    test_cases = [3, 5, 8, 16, 50]
-    
-    for T in test_cases:
-        print(f"\n--- Testing with T={T} timesteps ---")
+    """The tree covers all time steps with valid (min, median, max) indices."""
+    for T in [3, 5, 8, 16, 50]:
         tree = WorkloadSummaryTree(T)
-        
-        print(f"Tree depth: {tree.get_depth()}")
-        print(f"Total nodes: {len(tree.get_all_nodes())}")
-        
-        # Print tree structure for smaller cases
-        if T <= 8:
-            print("\nTree structure:")
-            tree.print_tree()
-        
-        # Verify tree properties
-        nodes = tree.get_all_nodes()
-        
-        # Check root node
         assert tree.root is not None
         assert tree.root.min_idx == 0
         assert tree.root.max_idx == T - 1
-        
-        # Check that all nodes have valid indices
-        for node in nodes:
+        for node in tree.get_all_nodes():
             assert 0 <= node.min_idx < T
             assert 0 <= node.median_idx < T
             assert 0 <= node.max_idx < T
             assert node.min_idx <= node.median_idx <= node.max_idx
-        
-        print(f"✓ Tree structure is valid")
-    
-    print("\n" + "=" * 70)
-    print("All WorkloadSummaryTree tests passed!")
-    print("=" * 70)
 
 
+@pytest.mark.gurobi
 def test_local_ilp_optimizer():
-    """Test LocalILPOptimizer with a simple example."""
-    print("\n" + "=" * 70)
-    print("Testing LocalILPOptimizer")
-    print("=" * 70)
-    
-    print("\nNote: This test requires Gurobi to be installed and licensed.")
-    print("Skipping LocalILPOptimizer test (requires full setup).")
-    print("Run integration tests with real data to verify LocalILP.")
-    
-    print("\n" + "=" * 70)
-    print("LocalILPOptimizer test skipped")
-    print("=" * 70)
+    """LocalILPOptimizer finds the known optimum, with and without fixed MVs."""
+    timesteps = ["t0", "t1", "t2"]
+    freq = _freq([1, 1, 0], [0, 0, 1])
+
+    def solve(fixed=None):
+        return LocalILPOptimizer(
+            node_list=NODE_LIST, u_ij=U_IJ, X=X, b_j=B_J, B_max=B_MAX,
+            timestep_indices=[0, 1, 2], all_timesteps=timesteps,
+            migration_cost=MIGRATION_COST, query_frequency_by_timestep=freq,
+            fixed_mvs_by_timestep=fixed,
+        ).optimize()
+
+    # Unconstrained: mv0, mv0, mv1  ->  -12 - 12 - 10 + 5 + 5 = -24
+    res = solve()
+    assert res["selected_mvs_by_timestep"] == {0: {0}, 1: {0}, 2: {1}}
+    assert abs(res["objective"] - (-24.0)) < 1e-6
+
+    # mv1 fixed at t0: mv1, mv0, mv1  ->  5 + (-12 + 5) + (-10 + 5) = -7
+    res = solve(fixed={0: {1}})
+    assert res["selected_mvs_by_timestep"] == {0: {1}, 1: {0}, 2: {1}}
+    assert abs(res["objective"] - (-7.0)) < 1e-6
 
 
+@pytest.mark.gurobi
+def test_time_dependent_optimizer_matches_local_ilp():
+    """The full time-dependent ILP gives the same optimum as the local ILP on 3 time steps."""
+    timesteps = ["t0", "t1", "t2"]
+    res = TimeDependentOptimizer(
+        node_list=NODE_LIST, u_ij=U_IJ, X=X, b_j=B_J, B_max=B_MAX, timesteps=timesteps,
+        migration_cost=MIGRATION_COST, query_frequency_by_timestep=_freq([1, 1, 0], [0, 0, 1]),
+    ).optimize()
+    assert _selected(res["z_by_timestep"]) == [{0}, {0}, {1}]
+    assert abs(res["objective"] - (-24.0)) < 1e-6
+
+
+@pytest.mark.gurobi
 def test_cf_pruner():
-    """Test CFPruner with a simple example."""
-    print("\n" + "=" * 70)
-    print("Testing CFPruner")
-    print("=" * 70)
-    
-    print("\nNote: This test requires Gurobi and full data setup.")
-    print("Skipping CFPruner test (requires full setup).")
-    print("Run integration tests with real data to verify pruning.")
-    
-    print("\n" + "=" * 70)
-    print("CFPruner test skipped")
-    print("=" * 70)
+    """Pruning drops the dominated candidate and keeps the optimum of the full ILP."""
+    timesteps = [f"t{t}" for t in range(5)]
+    freq = _freq([1, 1, 1, 0, 0], [0, 0, 0, 1, 1])
+    common = dict(node_list=NODE_LIST, u_ij=U_IJ, X=X, b_j=B_J, B_max=B_MAX, timesteps=timesteps,
+                  migration_cost=MIGRATION_COST, query_frequency_by_timestep=freq)
 
+    promising = CFPruner(**common).prune_candidates()
+    assert promising == {0, 1}  # mv2 is dominated by mv0
 
-def main():
-    """Run all tests."""
-    print("\n" + "=" * 70)
-    print("CF Pruning Component Tests")
-    print("=" * 70)
-    
-    try:
-        test_workload_summary_tree()
-        test_local_ilp_optimizer()
-        test_cf_pruner()
-        
-        print("\n" + "=" * 70)
-        print("ALL TESTS COMPLETED")
-        print("=" * 70)
-        print("\nNext steps:")
-        print("1. Run integration test with 5 timesteps:")
-        print("   python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job")
-        print("\n2. Run with pruning enabled:")
-        print("   python experiments/small_test_ver2/scripts/run_experiment_normal.py --phase 6 --query-set job --use-pruning")
-        print("\n3. Compare results and performance")
-        
-    except Exception as e:
-        print(f"\n✗ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-    
-    return 0
+    # Parallel pruning yields the same promising set
+    assert CFPruner(**common, use_parallel=True, max_workers=2).prune_candidates() == promising
 
+    full = TimeDependentOptimizer(**common).optimize()
+    pruned_opt = TimeDependentOptimizer(**common)
+    pruned_opt.set_candidates([j for j in pruned_opt.cand_j if j in promising])
+    pruned = pruned_opt.optimize()
 
-if __name__ == "__main__":
-    sys.exit(main())
+    # mv0 at t0-t2, mv1 at t3-t4  ->  5 - 36 + 5 - 20 = -46
+    expected = [{0}, {0}, {0}, {1}, {1}]
+    assert _selected(full["z_by_timestep"]) == expected
+    assert _selected(pruned["z_by_timestep"]) == expected
+    assert abs(full["objective"] - (-46.0)) < 1e-6
+    assert abs(pruned["objective"] - full["objective"]) < 1e-6

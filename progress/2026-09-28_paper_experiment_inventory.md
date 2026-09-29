@@ -1,4 +1,4 @@
-# Inventory of the experiment files for the paper (EDBT 2026, "Schema Optimization for Time-Dependent Workloads")
+# Inventory of the experiment files for the paper (EDBT 2027, "Schema Optimization for Time-Dependent Workloads")
 
 Created: 2026-09-28. Purpose: before refactoring the repository for the submission, identify
 the result data behind every figure and table of the paper, the files needed to reproduce

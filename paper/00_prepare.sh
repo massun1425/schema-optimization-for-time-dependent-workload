@@ -15,8 +15,10 @@
 # directories are moved to <dir>/<set>__backup_<timestamp>/ (never deleted) and
 # regenerated.
 #
-# Sampling rates follow the original preprocessing scripts (scripts/shell/run_ex0_*.sh):
-#   job-ceb-2 = high, Redbench_synthetic = low
+# Phase 5 uses the high-rate sampler (migration/sampling_migration_cost_calculator_high.py,
+# TABLESAMPLE BERNOULLI with 10-30% of the large tables) for all query sets, which gives
+# more accurate cardinality estimates than the low-rate hash-based sampler.
+# (The original runs of the paper used the low-rate sampler for Redbench_synthetic.)
 #
 # Usage: bash paper/00_prepare.sh
 #        SETS="job-ceb-2" bash paper/00_prepare.sh
@@ -39,10 +41,8 @@ wait_for_postgres() {
 }
 
 sampling_args() {
-    case $1 in
-        job-ceb-2) echo "--use-sampling --sampling-rate high" ;;
-        *)         echo "--use-sampling" ;;
-    esac
+    # High-rate sampler for every query set (see the header)
+    echo "--use-sampling --sampling-rate high"
 }
 
 for SET in "${SETS[@]}"; do

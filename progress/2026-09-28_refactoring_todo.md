@@ -46,6 +46,14 @@
 - **注意**: 移動ではなくコピーで行い、元の `*_ok` は残す。
 - **完了条件**: `make_all.sh` が成功し、出力が論文の図表と一致する。
 
+### 0. 論文に Artifacts 節を追加する（EDBT の必須要件）
+- [ ] 参考文献の直前に「Artifacts」という節を置き、すべての成果物の入手方法と使い方を書く（ページ数に数えない）
+  - GitHub のリポジトリへのリンク（アクセスを監視しないページであること）
+  - 論文の結果と図表が `paper_results/` にあり、実験を動かさずに図表を再生成できること
+  - 実験の再現手順（README の手順、Docker による環境、実行時間の目安）
+- [ ] 投稿前に、GitHub へ push した状態でリンク先から README どおりに図表を再生成できるか確かめる
+- 締め切り: EDBT 2027 第 3 サイクルの投稿は 2026-10-07
+
 ### 2. 依存の定義を実態に合わせる
 - [x] `requirements.txt`: 実験で使った版に固定。matplotlib を追加し、使わない torch を削除。ダッシュボード用の fastapi・uvicorn は同じファイルにまとめた
 - [x] `pyproject.toml`: 依存を `requirements.txt` と同じ版に固定（numpy・matplotlib・fastapi・uvicorn を追加、`gurobipy==12.0.1`、`python-dotenv` を削除）、`requires-python = ">=3.12"`、Black・Ruff・mypy の対象を 3.12 に変更
@@ -82,10 +90,20 @@
 
 根拠となる数値は棚卸し md の §6 と `progress/2026-08-09_experiment_data_summary.md` にある。
 
+- [ ] 4.3 節のサンプリングの記述を確認する
+  - 2026-09-28 に `paper/00_prepare.sh` を変更し、Redbench_synthetic も高サンプル率版（`TABLESAMPLE BERNOULLI`、大きいテーブルの 10〜30%）を使うようにした
+  - ただし、論文の Redbench の結果（Fig. 7 の Redbench パネル、Fig. 10、`paper_results/`）は、元の低サンプル率版（ハッシュによる相関サンプリング、1〜10%）のコストで出ている
+  - EXPLAIN の結果も実行のたびに変わりうるため、再実行で結果が多少変わるのは前提どおりとして、Redbench のやり直しは行わない（2026-09-28 判断）
+
 ### 4. 結果データの公開方法を決める
-- [ ] `time_dependent_output/rq*/`（論文の結果）と `03_parsed/`（41.5GB）を公開するか、どこで公開するか（Zenodo など）を決める
-- [ ] 公開するなら、README にダウンロード方法と配置先を追記する
-- [ ] IMDB データ（外部 URL から取得）のチェックサムを README か `docker/` に記録する
+
+（2026-09-28 途中経過）
+- 最終結果と図表は `paper_results/` に入れて GitHub に含めることにした（1 の項目）
+- 中間結果は GitHub に含めず、前処理（`paper/00_prepare.sh`）を読者に再実行してもらう方針にした
+  - 理由: `04_migration` のノード ID は Phase 2 が EXPLAIN の結果から振るため、単体で配布しても、読者が Phase 1 をやり直すと対応が保証できない
+  - job-ceb-2 と Redbench_synthetic の `04_migration` のコピーは `04_migration_paper/` に残してあるが、`.gitignore` の対象にした（手元の来歴用）
+- [x] 公開方法を決めた: 最終結果と図表は `paper_results/` として GitHub に含める。中間結果（`03_parsed/` など）は含めず、読者に前処理を再実行してもらう
+- [x] README に `paper_results/` の説明と、図表を再生成する方法を書いた（別途のダウンロードは不要になった）
 
 - **理由**: どちらのデータも git 管理外で、今のままでは第三者が論文の結果そのものを確認できない。
 
@@ -109,6 +127,17 @@
 - **注意**: `src/optimization/{bigsubs,frequency,utility,utility_capacity}.py` は、使っていないが `factory.py` が import しているので、そのまま移すと壊れる。移すなら `factory.py` も直す。
 - **完了条件**: import チェック（CI と同じもの）と `DRY_RUN=1 bash paper/run_all.sh` のコマンド列が、移動前と変わらない。
 
+（2026-09-28 途中までの検証結果。pickle の走査は時間がかかるため中断し、後回し）
+- 実験で使う入口（`paper/` が呼ぶ 4 スクリプト、図表スクリプト、CI のテスト、ダッシュボード）から import を辿ると、Python ファイル 104 個のうち 33 個には、条件分岐の中の import を含めても到達しない
+  - 到達しないもの: 上の一覧の `* copy.py` 3 個、`core/utility_pruner*.py` 4 個、`src/core/*_distinct.py`、`src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/sql_to_neurocard_csv.py`、`src/utils/{file_utils,logging_utils,validators}.py`、`utils/{analyze_benchmark_results,csv_exporter,plot_benchmark,inspect_pickle}.py`、`scripts/{run_utility_benchmark,run_utility_optimization,setup_imdb}.py`、`scripts/scratch/`
+  - Redbench のワークロード生成ツール（`scripts/generate_queryset_from_workload_csv.py`、`normalize_queryset_table_versions.py`、`merge_query_folders*.py`）も到達しないが、README の付録で案内しているので残す
+- 到達はするが、論文の実験の条件では通らない分岐でしか import されないもの
+  - `migration/{actual_cost,neurocard,deepdb,simple}_*` と `deepdb_estimator.py`、`src/estimation/neurocard_wrapper.py`: Phase 5 で `--use-sampling` 以外を選んだとき、または `job_real` のときだけ
+  - `src/rewrite/enhanced_mv_generator.py`: `generate_sql=True` のときだけ（呼び出し元はない）
+- 注意: `run_experiment_normal.py` は `OptimizerFactory` を import しているが使っていない。この import によって `src/optimization/__init__.py` が最適化モジュール 7 つ（`bigsubs`・`frequency`・`utility`・`utility_capacity`・`normal` など）を毎回 import する。これらを移す前に、この import と `__init__.py` を整理する必要がある（`base.py` は Static が使う `UtilityOptimizerV2` の基底クラスなので必要）
+- 文字列による動的な import（`importlib` など）はない。候補名への文字列参照は、候補ファイル同士の間にしかない
+- 未確認: pickle（`qp_class.pkl`）が参照しているモジュール名。候補を移す前に確認する
+
 ### 6. 実行経路のコードを英語化する
 - [ ] 実行経路のコード 44 ファイルにある日本語のコメント・docstring・ログメッセージを英語にする（`scripts/run_experiment_normal.py`、`core/`、`src/`、`migration/` など）
 
@@ -117,10 +146,10 @@
 - **完了条件**: 5 と同じ回帰チェックが通る。
 
 ### 7. 小さな不具合を直す
-- [ ] `--phase 0` が存在しないメソッド `phase0_setup` を呼んでいる → 選択肢から外すか実装する
-- [ ] `run_experiment_normal.py` の「config.yaml を使わず settings.py のデフォルト値を使用」というコメントを直す（実際は `config/default.yaml` を自動で読んでいる）
-- [ ] `migration/enumerate_simple_migration_plan.py` の `__main__` が、移動済みの `experiments/small_test_ver2/config.yaml` を参照している
-- [ ] `tests/test_pruning.py` のプロジェクトルートの計算（`parent` が 2 つ多い）
+- [x] `--phase 0` が存在しないメソッド `phase0_setup` を呼んでいる → 選択肢から外した（DB のセットアップは `docker/create_container.sh` が担う）
+- [x] `run_experiment_normal.py` の設定に関するコメントを、実際の動作（`config/default.yaml` か `$CONFIG_PATH` を読み、`DB_*` の環境変数で上書き）に合わせて英語で書き直した
+- [x] `migration/enumerate_simple_migration_plan.py` の `__main__` を、`run_experiment_normal.py` と同じ `Settings()` を使うように直した
+- [x] `tests/test_pruning.py` のプロジェクトルートの計算を直した（別のディレクトリから素の `pytest` で実行しても import に成功することを確認）
 - [ ] `utils/csv_exporter.py` の構文エラー（5 で archive に移すなら不要）
 
 ### 8. 実行条件を結果 JSON に保存する
@@ -130,10 +159,13 @@
 - **注意**: 結果の JSON 形式が変わるので、`paper_figures/` が読むフィールドを壊さないようにする（追加だけにする）。
 
 ### 9. テストと CI を強化する
-- [ ] CI に Fig. 5 と Fig. 6 の生成テストを戻す（入力の `01_queries/job-ceb-2/` と Redbench の頻度ファイルが git に入ったため、実行できるようになった）
-- [ ] 空のテスト 2 件（`test_local_ilp_optimizer`、`test_cf_pruner`）を、小さな合成データで実際に検証する中身にする（Gurobi のサイズ制限付きライセンスの範囲で動く規模）
-- [ ] 回帰テストを追加する: 小さな入力で最適化を実行し、有望 MV 集合・目的関数値・各時刻の選択 MV が期待値と一致するかを確かめる（リファクタリングで結果が変わっていないことの確認用）
-- [ ] lint（Black で 38 ファイル、Ruff で 1,254 件）をどこまで直すか決める（今は失敗しても CI は止まらない設定）
+- [x] CI で、`paper_results/` から論文の図表（Fig. 5〜11、Table 2）をすべて再生成し、`paper_results/figures/` とバイト単位で一致するかを確かめるようにした
+- [x] 空のテスト 2 件を、最適解を手計算で求められる小さな問題で検証する中身にした（`tests/test_pruning.py`。LocalILP の固定制約、TimeDependentOptimizer との一致、プルーニングで劣った候補が除かれ最適解が変わらないこと、並列と逐次で有望集合が同じこと）
+- [x] 回帰テストを追加した（`tests/test_optimizer_regression.py` と期待値 `tests/data/optimizer_regression_expected.json`。seed 固定の 12 クエリ・15 候補・6 時刻の問題。期待値は `--update` で作り直せる）
+- [x] Gurobi のライセンスが使えないときは最適化のテストを skip するようにした（`tests/conftest.py` と `@pytest.mark.gurobi`）。pip 版 gurobipy 12.0.1 付属の無償ライセンスが 2026-11-23 に切れるため
+- [x] lint の扱いを決めた: CI から `lint` ジョブを外した（2026-09-29）。2025-10 の初期設定で入ったが、最初から失敗しても CI を止めない設定で、一度も機能していなかった
+  - Black と Ruff の設定は `pyproject.toml` に残してあるので、手元では `black` / `ruff check` を使える
+  - 参考（2026-09-28 時点）: 今回作ったコード（`paper_figures/`・`tests/`）は 11 ファイルが整形対象・指摘 7 件、既存の `src/` は 1,228 件、`core/`・`scripts/` などは 2,989 件
 
 ---
 
@@ -153,6 +185,11 @@
 - [ ] `small_docs/`（他の論文の PDF や発表資料を含む）
 - [ ] `dashboard/`
 - [ ] `Redbench/`（第三者のツール。ライセンスと出典の表記を確認する）
+
+### 14. IMDB データのチェックサムを記録する（任意）
+- [ ] Dockerfile が外部 URL から取得する IMDB データの SHA-256 を記録し、ビルド時に照合する
+  - 優先度を下げた理由（2026-09-28）: データの同一性は `docker/verify_env.sh` の行数チェック（21 テーブル）とインデックスのチェックで確認できる。JOB の標準データで、EDBT の要件でもない
+  - 実施するなら、アーカイブの再ダウンロード（約 1.2GB）が必要。イメージの中の CSV 21 個のチェックサムを記録する方法もある
 
 ### 13. 文書を最新の状態に更新する
 - [ ] 棚卸し md（`progress/2026-09-28_paper_experiment_inventory.md`）の「git 管理外」という記述を、入力データのコミット後の状態に合わせて直す

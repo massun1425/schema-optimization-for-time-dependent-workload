@@ -154,8 +154,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # Settingsを読み込んでdb_configを提供
-    settings = Settings.from_yaml("experiments/small_test_ver2/config.yaml")
+    # Same settings as scripts/run_experiment_normal.py (config/default.yaml or $CONFIG_PATH)
+    settings = Settings()
     migrator = GetSimpleMigrationPlans(settings=settings, query_set=args.query_set)
 
     migrator.get_migration_sqls()

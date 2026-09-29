@@ -1,7 +1,7 @@
 # Schema Optimization for Time-Dependent Workloads — Experiments
 
 This repository contains the implementation and the experiment scripts of the paper
-**"Schema Optimization for Time-Dependent Workloads"** (EDBT 2026).
+**"Schema Optimization for Time-Dependent Workloads"** (EDBT 2027).
 The method selects a time series of materialized views (MVs) with an integer linear program
 that maximizes the total utility of the MVs minus the migration cost between time steps, and
 prunes MV candidates with a *workload summary tree*.
@@ -39,8 +39,7 @@ To reproduce the results themselves, follow the steps below.
 | `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([paper_results/README.md](paper_results/README.md)) |
 | `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([docker/README.md](docker/README.md)) |
 | `01_queries/` | Query sets and time-dependent query frequencies |
-| `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) |
-| `time_dependent_output/` | Experiment results (`rq*/` for the paper experiments) |
+| `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) || `time_dependent_output/` | Experiment results (`rq*/` for the paper experiments) |
 | `Redbench/` | Redbench workload generator (used to build the Redbench synthetic workload) |
 
 ## 1. Requirements
@@ -179,13 +178,14 @@ The scripts in `paper/` call it with the settings of the paper.
 | 3 | Node IDs added to the plans | `02_json/<set>/*.json` |
 | 4 | Migration plan enumeration | `04_migration/<set>/simple_migration_plans.json` |
 | 5 | Migration cost estimation by sampling (needs the DB) | `04_migration/<set>/simple_migration_costs.json` |
-| 5.5 | Cost recalculation (`scripts/recalculate_costs.py --overwrite`) | same file, overwritten |
+| 5.5 | Cost recalculation with the node structure of the parsed plans (`--phase 5.5`, or `scripts/recalculate_costs.py --overwrite`) | same file, overwritten |
 | 6 | Optimization (`--optimization-mode dynamic` = proposed, `static`, `adaptive`) | `time_dependent_output/<set>/*_optimization_result<suffix>.json` |
 | 7 | MV creation/deletion SQL per time step | `time_dependent_output/<set>/timestep_*.sql` |
 | 8 | Query rewriting to use the MVs | `time_dependent_output/<set>/jobs/` |
 | 9 | Benchmark (needs the DB) | `time_dependent_output/<set>/benchmark_results_<mode><suffix>.json` |
 
-`--phase post-opt` runs Phases 6–9. Main options:
+`--phase all` runs Phases 1–9 including the cost recalculation (5.5); `--phase post-opt` runs Phases 6–9.
+Use `--recalc` so that the optimization uses the recalculated costs (as in the paper). Main options:
 
 | Option | Meaning |
 |---|---|

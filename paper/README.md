@@ -1,7 +1,7 @@
 # Experiment scripts for the paper
 
 Shell scripts that produce the results reported in the paper
-("Schema Optimization for Time-Dependent Workloads", EDBT 2026).
+("Schema Optimization for Time-Dependent Workloads", EDBT 2027).
 The experiment driver itself is `scripts/run_experiment_normal.py`.
 All results are collected under `time_dependent_output/rq*/`; existing results
 (e.g. the `*_ok` directories) are never modified.
@@ -114,5 +114,8 @@ SUFFIXES="_24_peak" CAPS="1000" bash paper/rq4_capacity.sh
 - A Gurobi license is required (see the root `README.md`).
 - Settings not recorded in the result JSONs, taken from the original shell scripts:
   - `--freq-weight linear` for Adapt
-  - the sampling rate of the preprocessing (job-ceb-2 = high, Redbench = low)
+  - the sampling rate of the preprocessing: the original runs used the high-rate sampler for
+    job-ceb-2 and the low-rate sampler for Redbench. `00_prepare.sh` now uses the more accurate
+    high-rate sampler for both query sets, so a new preprocessing run of Redbench_synthetic
+    produces different costs than those behind the Redbench results in `paper_results/`.
 - Figures and tables are generated from `rq*/` by `paper_figures/`.

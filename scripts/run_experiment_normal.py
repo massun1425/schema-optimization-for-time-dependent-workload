@@ -66,13 +66,11 @@ class NormalModeExperiment:
         # PostgreSQL Executorを初期化
         self.pg_executor = PostgresExecutor(use_docker=use_docker)
         
-        # config.yamlを使わず、settings.pyのデフォルト値を使用
-        # デフォルト値:
-        #   database.password: ""
-        #   database.timeout: 1800
-        #   optimization.storage_limit_mb: 50
-        #   optimization.storage_limit_bytes: 52428800
-        #   optimization.insert_queries: 1000
+        # Settings() loads config/default.yaml (or the file given by $CONFIG_PATH), relative to
+        # the current directory, so run this script from the repository root. The DB_HOST,
+        # DB_PORT, DB_NAME, DB_USER and DB_PASSWORD environment variables override the database
+        # settings. The storage budget of the experiments is given by --b-max, not by the
+        # optimization.storage_limit_* values of the configuration file.
         self.settings = Settings()
         
         # 各ディレクトリのパス（クエリセット別）
@@ -1022,6 +1020,42 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
         
+    def phase5_5_recalculate_costs(self):
+        """Phase 5.5: recalculate the MV costs with the node structure of the parsed plans.
+
+        Runs scripts/recalculate_costs.py on 04_migration/<set>/simple_migration_costs.json
+        (overwriting it), as done after Phase 5 for all experiments of the paper. The
+        experiments then use the recalculated costs via --recalc.
+        """
+        self.print_header("Cost recalculation (recalculate_costs.py)", 5.5)
+        phase_start = time.time()
+
+        if self.query_set == "job_real":
+            # Costs of job_real are measured values (ActualCostMigrationCalculator); keep them
+            self.print_info("job_real uses measured costs; skipping the recalculation")
+            return True
+
+        costs_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
+        if not self.pickle_path.exists():
+            self.print_error(f"{self.pickle_path} not found (run Phase 2 first)")
+            return False
+        if not costs_file.exists():
+            self.print_error(f"{costs_file} not found (run Phase 5 first)")
+            return False
+
+        try:
+            from scripts.recalculate_costs import recalculate_costs
+
+            recalculate_costs(self.pickle_path, costs_file, costs_file)
+            self.phase_times['phase5_5_cost_recalculation'] = time.time() - phase_start
+            self.print_success(f"Recalculated costs saved to {costs_file}")
+            return True
+        except Exception as e:
+            self.print_error(f"Cost recalculation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
     def phase6_optimize(self, mode='dynamic', use_pruning=False, pruning_parallel=False, pruning_workers=None, static_timestep='last', use_static_protection=False, static_algorithm='normal', b_max=None, inherit_parent_constraints=True):
         """フェーズ6: MV最適化
 
@@ -3027,6 +3061,7 @@ class NormalModeExperiment:
             (3, "JSONノードID付加", self.phase3_annotate_json),
             (4, "マイグレーションプラン列挙", self.phase4_enumerate_migration_plans),
             (5, "マイグレーションコスト計算", lambda: self.phase5_calculate_migration_costs(use_sampling=True, sampling_high=sampling_high)),
+            (5.5, "Cost recalculation", self.phase5_5_recalculate_costs),
         ]
 
         # 最適化フェーズ（モードに応じて選択）
@@ -3099,8 +3134,8 @@ def main():
         '--phase',
         type=str,
         default='all',
-        choices=['all', 'post-opt', '0', '1', '2', '3', '4', '5', '6', '6.5', '7', '8', '9'],
-        help='実行するフェーズ (all: 全実行, post-opt: 最適化以降(6-9), 0: DB setup, 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 6: Optimize, 6.5: Static Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark)'
+        choices=['all', 'post-opt', '1', '2', '3', '4', '5', '5.5', '6', '6.5', '7', '8', '9'],
+        help='実行するフェーズ (all: 全実行, post-opt: 最適化以降(6-9), 1: EXPLAIN, 2: Parse, 3: Annotate, 4: Migration plans, 5: Migration costs, 5.5: Cost recalculation, 6: Optimize, 6.5: Static Optimize, 7: MV SQL, 8: Rewrite, 9: Benchmark). The database is set up with docker/create_container.sh'
     )
     parser.add_argument(
         '--config',
@@ -3301,8 +3336,6 @@ def main():
             b_max=args.b_max,
             inherit_parent_constraints=not args.no_wst_parent_constraints,
         )
-    elif args.phase == '0':
-        success = exp.phase0_setup()
     elif args.phase == '1':
         success = exp.phase1_generate_explain_json()
     elif args.phase == '2':
@@ -3319,6 +3352,8 @@ def main():
             compare=args.compare,
             sampling_high=(args.sampling_rate == 'high')
         )
+    elif args.phase == '5.5':
+        success = exp.phase5_5_recalculate_costs()
     elif args.phase == '6':
         success = exp.phase6_optimize(
             mode=args.optimization_mode,
