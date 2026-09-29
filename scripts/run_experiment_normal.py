@@ -89,6 +89,9 @@ class NormalModeExperiment:
         
         # 各フェーズの実行時間を記録
         self.phase_times = {}
+
+        # Command-line arguments of this run (set by main()); recorded in the result files
+        self.run_args = {}
         
         # クエリセットの存在確認
         if not self.queries_dir.exists():
@@ -120,6 +123,102 @@ class NormalModeExperiment:
     def print_error(self, message: str):
         """エラーメッセージを表示"""
         print(f"  [ERROR] {message}")
+
+    # ------------------------------------------------------------------
+    # Run configuration recorded in the result files
+    #
+    # The result JSON files get one additional top-level key "run_config"; existing keys are
+    # unchanged, so the readers (Phases 7-9, paper_figures/, dashboard/) are not affected.
+    # The preprocessing settings are written to a separate file next to the cost file
+    # (04_migration/<set>/simple_migration_costs.meta.json), because the cost file itself is
+    # read as a mapping from MV names to costs.
+    # ------------------------------------------------------------------
+    _code_version_cache = None
+
+    @classmethod
+    def _code_version(cls) -> dict:
+        """Git commit of the code and whether tracked files had uncommitted changes."""
+        if cls._code_version_cache is None:
+            repo = Path(__file__).resolve().parent.parent
+            info = {"git_commit": None, "git_dirty": None}
+            try:
+                info["git_commit"] = subprocess.run(
+                    ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
+                    timeout=30, check=True).stdout.strip()
+                status = subprocess.run(
+                    ["git", "status", "--porcelain", "--untracked-files=no"], cwd=repo,
+                    capture_output=True, text=True, timeout=120, check=True).stdout
+                info["git_dirty"] = bool(status.strip())
+            except Exception:
+                pass
+            cls._code_version_cache = info
+        return cls._code_version_cache
+
+    def _preprocessing_meta_path(self) -> Path:
+        return self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.meta.json"
+
+    def _run_config(self, phase: str, **settings) -> dict:
+        """Build the "run_config" entry of a result file.
+
+        Args:
+            phase: Phase that produced the file (e.g. "6", "9")
+            settings: Settings actually used by the phase (e.g. the storage budget in bytes)
+        """
+        import datetime
+        import platform
+        from importlib import metadata
+
+        packages = {}
+        for name in ("gurobipy", "numpy", "psycopg2-binary", "PyYAML", "sqlparse"):
+            try:
+                packages[name] = metadata.version(name)
+            except metadata.PackageNotFoundError:
+                packages[name] = None
+        config = {
+            "phase": phase,
+            "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "command": list(sys.argv),
+            "args": self.run_args,
+            "settings": {k: (str(v) if isinstance(v, Path) else v) for k, v in settings.items()},
+            "query_set": self.query_set,
+            "exp_suffix": self.exp_suffix,
+            "code_version": self._code_version(),
+            "python": platform.python_version(),
+            "packages": packages,
+        }
+        meta_path = self._preprocessing_meta_path()
+        if meta_path.exists():
+            try:
+                config["preprocessing"] = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                config["preprocessing"] = None
+        return config
+
+    def _write_preprocessing_meta(self, step: str, **info) -> None:
+        """Record the settings of a preprocessing step (Phase 5 or 5.5) next to the cost file.
+
+        Phase 5 rewrites the cost file, so it also discards the record of an earlier
+        recalculation.
+        """
+        import datetime
+
+        meta_path = self._preprocessing_meta_path()
+        meta = {}
+        if meta_path.exists() and step != "cost_estimation":
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except Exception:
+                meta = {}
+        meta[step] = {
+            "timestamp": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+            "command": list(sys.argv),
+            "code_version": self._code_version(),
+            **info,
+        }
+        try:
+            meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        except Exception as e:
+            self.print_error(f"Could not write {meta_path}: {e}")
     
     def _drop_all_mvs(self):
         """既存のマテリアライズドビューを全て削除"""
@@ -1008,7 +1107,18 @@ class NormalModeExperiment:
                 # ファイルが見つからない場合でも、計算処理自体が正常終了していれば成功とみなす場合もあるが、
                 # 基本的にはファイル生成が目的
                 self.print_warning("マイグレーションコストファイルが見つかりません (保存処理がスキップされた可能性があります)")
-            
+
+            if output_file.exists():
+                self._write_preprocessing_meta(
+                    "cost_estimation",
+                    calculator=f"{CalculatorClass.__module__}.{CalculatorClass.__name__}",
+                    use_sampling=bool(use_sampling),
+                    sampling_rate=("high" if sampling_high else "low") if use_sampling else None,
+                    use_neurocard=bool(use_neurocard),
+                    use_deepdb=bool(use_deepdb),
+                    precomputed_costs=bool(self.recalc_mode and use_sampling and self.query_set != "job_real"),
+                )
+
             # フェーズ時間を記録
             self.phase_times['phase5_migration_costs'] = time.time() - phase_start
             
@@ -1047,6 +1157,8 @@ class NormalModeExperiment:
             from scripts.recalculate_costs import recalculate_costs
 
             recalculate_costs(self.pickle_path, costs_file, costs_file)
+            self._write_preprocessing_meta("cost_recalculation", method="pickle_recursive_v2",
+                                           script="scripts/recalculate_costs.py")
             self.phase_times['phase5_5_cost_recalculation'] = time.time() - phase_start
             self.print_success(f"Recalculated costs saved to {costs_file}")
             return True
@@ -1250,6 +1362,20 @@ class NormalModeExperiment:
             result_dir = self.exp_dir / "time_dependent_output" / self.query_set
             result_dir.mkdir(parents=True, exist_ok=True)
             result_file = result_dir / f"td_mv_optimization_result{self.exp_suffix}.json"
+            import multiprocessing
+            result_to_save["run_config"] = self._run_config(
+                "6",
+                optimization_mode="dynamic",
+                b_max_mb=b_max if b_max is not None else 100,
+                b_max_bytes=B_max,
+                recalc=self.recalc_mode,
+                use_pruning=use_pruning,
+                pruning_parallel=pruning_parallel if use_pruning else None,
+                pruning_workers=((pruning_workers or multiprocessing.cpu_count())
+                                 if use_pruning and pruning_parallel else None),
+                inherit_parent_constraints=inherit_parent_constraints if use_pruning else None,
+                static_protection=use_static_protection if use_pruning else None,
+            )
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result_to_save, f, indent=2, ensure_ascii=False)
             self.print_success(f"結果を {result_file} に保存")
@@ -1641,6 +1767,7 @@ class NormalModeExperiment:
                 
                 # 結果保存
                 result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
+                static_result["run_config"] = self._run_config("6", optimization_mode="static", static_algorithm="normal", static_timestep=timestep_position, b_max_mb=b_max if b_max is not None else 100, b_max_bytes=B_max, recalc=self.recalc_mode)
                 with open(result_file, 'w', encoding='utf-8') as f:
                     json.dump(static_result, f, indent=2, ensure_ascii=False)
                 self.print_success(f"NormalOptimizer結果を {result_file} に保存")
@@ -1698,6 +1825,7 @@ class NormalModeExperiment:
                 
                 # 結果保存（averageモードと同様に上書き可能にするか別名にするか、指定によりaverage形式に合わせる）
                 utility_result_file = result_dir / f"static_mv_optimization_result{self.exp_suffix}.json"
+                utility_static_result["run_config"] = self._run_config("6", optimization_mode="static", static_algorithm="utility", static_timestep=timestep_position, b_max_mb=b_max if b_max is not None else 100, b_max_bytes=B_max, recalc=self.recalc_mode)
                 with open(utility_result_file, 'w', encoding='utf-8') as f:
                     json.dump(utility_static_result, f, indent=2, ensure_ascii=False)
                 self.print_success(f"UtilityOptimizerV2結果を {utility_result_file} に保存")
@@ -1767,6 +1895,7 @@ class NormalModeExperiment:
                 
                 # 結果保存（BigSubs用のファイル名）
                 bigsubs_result_file = result_dir / f"static_bigsubs_optimization_result{self.exp_suffix}.json"
+                bigsubs_static_result["run_config"] = self._run_config("6", optimization_mode="static", static_algorithm="bigsubs", static_timestep=timestep_position, b_max_mb=b_max if b_max is not None else 100, b_max_bytes=B_max, recalc=self.recalc_mode)
                 with open(bigsubs_result_file, 'w', encoding='utf-8') as f:
                     json.dump(bigsubs_static_result, f, indent=2, ensure_ascii=False)
                 self.print_success(f"BigSubsOptimizer結果を {bigsubs_result_file} に保存")
@@ -2088,6 +2217,15 @@ class NormalModeExperiment:
             else:
                 result_file = result_dir / f"adaptive_mv_optimization_result_w{window_size}{self.exp_suffix}.json"
 
+            result["run_config"] = self._run_config(
+                "6",
+                optimization_mode="peloton" if lookahead else "adaptive",
+                window_size=None if lookahead else window_size,
+                freq_weight=None if lookahead else self.freq_weight,
+                b_max_mb=b_max if b_max is not None else 100,
+                b_max_bytes=B_max,
+                recalc=self.recalc_mode,
+            )
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, ensure_ascii=False)
 
@@ -2735,6 +2873,7 @@ class NormalModeExperiment:
         optimization_result = None
         migration_sql_dir = None
         rewritten_queries_base_dir = None # Initialize here
+        result_file = None  # optimization result executed by this benchmark (recorded in run_config)
         
         if mode == 'dynamic':
             # 最適化結果を読み込み
@@ -2933,6 +3072,20 @@ class NormalModeExperiment:
             else:
                 output_file = output_dir / f"benchmark_results_{mode}{window_suffix}{self.exp_suffix}{noise_suffix}.json"
             
+            if noise_ratio > 0.0:
+                noise_dir_used = Path(noise_query_dir) if noise_query_dir is not None else self.queries_dir
+            else:
+                noise_dir_used = None
+            benchmark_results["run_config"] = self._run_config(
+                "9",
+                benchmark_mode=mode,
+                static_algorithm=static_algorithm if mode == 'static' else None,
+                window_size=self.window_size if mode == 'adaptive' else None,
+                ease_mode=ease_mode,
+                noise_ratio=noise_ratio,
+                noise_query_dir=noise_dir_used,
+                optimization_result=result_file,
+            )
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(benchmark_results, f, indent=2, ensure_ascii=False)
             
@@ -3304,6 +3457,9 @@ def main():
         freq_weight=args.freq_weight
     )
     
+    # Record the command-line arguments in the result files (key "run_config")
+    exp.run_args = {k: (str(v) if isinstance(v, Path) else v) for k, v in vars(args).items()}
+
     # 接続モードを表示
     print(f"\n[接続モード: {exp.pg_executor.get_mode_description()}]")
     

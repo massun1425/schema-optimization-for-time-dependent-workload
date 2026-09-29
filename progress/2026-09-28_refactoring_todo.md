@@ -153,7 +153,11 @@
 - [ ] `utils/csv_exporter.py` の構文エラー（5 で archive に移すなら不要）
 
 ### 8. 実行条件を結果 JSON に保存する
-- [ ] `run_experiment_normal.py` が、実行時の引数（`--freq-weight`、`--sampling-rate`、`--pruning-parallel`、`--pruning-workers` など）と、コードのバージョン（git のコミット）を結果 JSON に書き出すようにする
+（2026-09-29 完了）
+- [x] `run_experiment_normal.py` が、実行時の引数（`--freq-weight`、`--sampling-rate`、`--pruning-parallel`、`--pruning-workers` など）と、コードのバージョン（git のコミット）を結果 JSON に書き出すようにした
+  - 最適化結果（td / static / static_bigsubs / adaptive / peloton）とベンチマーク結果の JSON に、トップレベルのキー `run_config` を追加した（既存のキーは変更なし）。中身は、コマンドライン、全引数、実際に効いた設定値（予算、プルーニングの並列数など）、git のコミットと未コミット変更の有無、Python と主要パッケージの版、前処理の条件
+  - 前処理（Phase 5 のサンプリング方式・率、Phase 5.5 の再計算）の条件は、`04_migration/<set>/simple_migration_costs.meta.json` に別ファイルで保存する。ダッシュボードが `simple_migration_costs.json` を「MV 名 → コスト」の対応として走査するため、このファイルにはキーを足していない
+  - 確認: 全 158 本の論文結果 JSON に `run_config` を足したコピーから `make_all.sh` で図表を作り、`paper_results/figures/` とバイト単位で一致した。Phase 5.5 と Phase 6（static）をスクラッチの実験ディレクトリで実行し、選ばれる MV が論文の結果と同じことを確認した
 
 - **理由**: 今は一部の条件が結果から判別できず、元のシェルスクリプトの記述を信じるしかなかった。
 - **注意**: 結果の JSON 形式が変わるので、`paper_figures/` が読むフィールドを壊さないようにする（追加だけにする）。
@@ -176,9 +180,12 @@
 - [ ] Redbench synthetic の作り方（cluster 53 と 55 の結合、10x → 50x のスケーリング）を記録する。`archive/` の `fix_combined.py`、`make_3_combined.py`、`merge_freq_files.py` が手がかり
 
 ### 11. 論文で使っていないデータを整理する
-- [ ] `01_queries/` の論文で使っていないセット（`job`、`job_real`、`explicit_join`、`job-ceb-2-q10000`、`job-ceb-2-x2`）
-- [ ] 対応する `02_json/`、`04_migration/`、`time_dependent_output/` の旧データ（`cluster_*` など）
-- [ ] `01_queries/job_like/` が作業ツリー上で削除され、未コミットになっている → 意図したものか確認してコミットする
+（2026-09-29 完了。ローカルのファイルは削除していない）
+- [x] `01_queries/` の論文で使っていないセットを git の管理から外した（`git rm --cached`。ローカルには残る）: `job_real`、`explicit_join`、`job-ceb-2-q10000`、`job-ceb-2-x2`。`.gitignore` にも追加した
+  - `job` は git の管理に残す（141 ファイル）
+  - `job-ceb-2-q{20000,...,100000}` の頻度ファイルは Fig. 9（RQ1 のクエリ数スケーリング）で使うので残す
+- [x] 対応する `02_json/`、`04_migration/`、`time_dependent_output/` の旧データ（`cluster_*` など）: ディレクトリごと `.gitignore` の対象で、git には入っていない。ローカルのデータはそのまま残した
+- [x] `01_queries/job_like/` の削除は、コミット `986c03dd` ですでにコミットされていた
 
 ### 12. 公開に含めるものを決める
 - [ ] `progress/`（日本語の作業メモ。このファイルも含む）

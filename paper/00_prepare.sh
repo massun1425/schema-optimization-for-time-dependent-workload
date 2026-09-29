@@ -72,13 +72,8 @@ for SET in "${SETS[@]}"; do
     run_main "${LOG_DIR}/${SET}_phase5.log" - --phase 5 --query-set "${SET}" "${SARGS[@]}" --use-docker || die "Phase 5 failed (${SET})"
 
     # Phase 5.5: recalculate the costs using the node structure in the pickle and
-    # overwrite the cost file (all experiments use it via --recalc)
-    if [ "${DRY_RUN}" = "1" ]; then
-        echo "  [dry-run] ${PY} scripts/recalculate_costs.py --query-set ${SET} --overwrite"
-    else
-        mkdir -p "${LOG_DIR}"
-        "${PY}" scripts/recalculate_costs.py --query-set "${SET}" --overwrite 2>&1 \
-            | tee -a "${LOG_DIR}/${SET}_recalc.log" || die "recalculate_costs failed (${SET})"
-    fi
+    # overwrite the cost file (all experiments use it via --recalc). The settings of
+    # Phases 5 and 5.5 are recorded in 04_migration/<set>/simple_migration_costs.meta.json.
+    run_main "${LOG_DIR}/${SET}_phase5_5.log" - --phase 5.5 --query-set "${SET}" || die "Phase 5.5 failed (${SET})"
     log "Done: ${SET}"
 done
