@@ -1,4 +1,4 @@
-"""マテリアライズドビュー生成SQL作成"""
+"""Generation of SQL for creating materialized views"""
 
 import os
 from pathlib import Path
@@ -9,26 +9,26 @@ from src.rewrite.sql_parser import SQLParser
 
 
 class MVGenerator:
-    """マテリアライズドビュー生成SQLの作成"""
+    """Builds SQL for creating materialized views"""
 
     def __init__(self):
-        """初期化"""
+        """Initialize"""
         self.sql_parser = SQLParser()
 
     def generate_mv_scripts(
         self, mv_nodes: list[str], query_manager: Any, output_dir: str
     ) -> list[str]:
-        """MV作成スクリプトを生成
+        """Generate MV creation scripts
 
         Args:
-            mv_nodes: MVノードIDのリスト
-            query_manager: QueryManagerインスタンス
-            output_dir: 出力ディレクトリ
+            mv_nodes: List of MV node IDs
+            query_manager: QueryManager instance
+            output_dir: Output directory
 
         Returns:
-            生成されたファイルパスのリスト
+            List of generated file paths
         """
-        # 既存のSQLファイルをクリーンアップ
+        # Clean up existing SQL files
         output_path = Path(output_dir)
         for file_path in output_path.glob("*.sql"):
             file_path.unlink()
@@ -50,14 +50,14 @@ class MVGenerator:
         return generated_files
 
     def _generate_mv_sql(self, node_id: str, qm: Any) -> str:
-        """MV作成SQLを生成
+        """Generate the MV creation SQL
 
         Args:
-            node_id: ノードID
+            node_id: Node ID
             qm: QueryManager
 
         Returns:
-            CREATE MATERIALIZED VIEW 文
+            CREATE MATERIALIZED VIEW statement
         """
         if node_id.startswith("leaf_"):
             return self._generate_leaf_mv(node_id, qm)
@@ -67,20 +67,20 @@ class MVGenerator:
             return ""
 
     def _generate_leaf_mv(self, leaf_id: str, qm: Any) -> str:
-        """リーフノード用MV生成SQL
+        """MV creation SQL for a leaf node
 
         Args:
-            leaf_id: リーフノードID
+            leaf_id: Leaf node ID
             qm: QueryManager
 
         Returns:
-            CREATE文
+            CREATE statement
         """
         if not hasattr(qm, "leaf_nodes_map_r") or leaf_id not in qm.leaf_nodes_map_r:
             print(f"Warning: {leaf_id} not found in leaf_nodes_map_r")
             return ""
 
-        # leaf_nodes_map_r から情報を取得: (operator, table_name, alias, conditions)
+        # Get the information from leaf_nodes_map_r: (operator, table_name, alias, conditions)
         operator, table_name, alias, conditions = qm.leaf_nodes_map_r[leaf_id]
 
         if not table_name:
@@ -92,16 +92,16 @@ class MVGenerator:
             print(f"Warning: Unknown table {table_name}, using *")
             columns = ["*"]
 
-        # SELECT句作成
+        # Build the SELECT clause
         if columns == ["*"]:
             select_clause = "*"
         else:
             select_clause = ", ".join([f"{alias}.{col}" for col in columns])
 
-        # WHERE句
+        # WHERE clause
         where_clause = conditions if conditions else ""
 
-        # SQL組み立て
+        # Assemble the SQL
         sql = f"CREATE MATERIALIZED VIEW {leaf_id} AS\n"
         sql += self.sql_parser.reconstruct_query(
             select_clause=select_clause,
@@ -113,42 +113,42 @@ class MVGenerator:
         return sql
 
     def _generate_non_leaf_mv(self, non_leaf_id: str, qm: Any) -> str:
-        """非リーフノード用MV生成SQL
+        """MV creation SQL for a non-leaf node
 
         Args:
-            non_leaf_id: 非リーフノードID
+            non_leaf_id: Non-leaf node ID
             qm: QueryManager
 
         Returns:
-            CREATE文
+            CREATE statement
         """
         if not hasattr(qm, "non_leaf_nodes_map") or non_leaf_id not in qm.non_leaf_nodes_map:
             return ""
 
-        # 子ノード取得
+        # Get the child nodes
         if hasattr(qm, "non_leaf_nodes_map_r") and non_leaf_id in qm.non_leaf_nodes_map_r:
             child_ids = qm.non_leaf_nodes_map_r[non_leaf_id]
         else:
             child_ids = []
 
         if not child_ids or len(child_ids) < 2:
-            # 子ノードが不足している場合は簡易版
+            # Simplified version when there are not enough child nodes
             sql = f"CREATE MATERIALIZED VIEW {non_leaf_id} AS\n"
             sql += "-- Non-leaf node (children not fully resolved)\n"
             sql += "SELECT * FROM placeholder;\n"
             return sql
 
-        # FROM句の構築（子ノードを使用）
+        # Build the FROM clause (using the child nodes)
         from_parts = []
         for child_id in child_ids:
             from_parts.append(child_id)
 
         from_clause = from_parts[0]
         for i, child in enumerate(from_parts[1:], 1):
-            # 簡易的なJOIN（実際のJOIN条件は別途必要）
+            # Simplified JOIN (the actual JOIN conditions must be provided separately)
             from_clause += f"\nJOIN {child} ON {from_parts[0]}.id = {child}.id"
 
-        # SELECT句（全カラム）
+        # SELECT clause (all columns)
         select_clause = "*"
 
         sql = f"CREATE MATERIALIZED VIEW {non_leaf_id} AS\n"
@@ -160,13 +160,13 @@ class MVGenerator:
         return sql
 
     def save_create_sqls(self, mv_data: list[dict[str, Any]], output_dir: Path) -> None:
-        """MV作成SQLをファイルに保存
+        """Save the MV creation SQL to files
 
         Args:
-            mv_data: MV情報のリスト
-            output_dir: 出力ディレクトリ
+            mv_data: List of MV information
+            output_dir: Output directory
         """
-        # 既存のSQLファイルをクリーンアップ
+        # Clean up existing SQL files
         for file_path in output_dir.glob("*.sql"):
             file_path.unlink()
         

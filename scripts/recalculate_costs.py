@@ -29,7 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # PostgreSQL Cost Constants (should match postgresql.conf)
 BLOCK_SIZE = 8192
 SEQ_PAGE_COST = 1.0
-RANDOM_PAGE_COST = 1.1  # SSD環境向け（デフォルト4.0はHDD前提）
+RANDOM_PAGE_COST = 1.1  # For SSD environments (the default 4.0 assumes HDDs)
 CPU_TUPLE_COST = 0.01
 CPU_INDEX_TUPLE_COST = 0.005
 CPU_OPERATOR_COST = 0.0025
@@ -160,10 +160,10 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
     
     Returns:
         Tuple of (exec_cost, creation_cost, utility, output_rows)
-        - exec_cost: 実行コスト（このサブクエリを実行するのにかかるコスト）
-        - creation_cost: MV作成コスト（実行コスト + 書き込みコスト）
-        - utility: 純利得（実行コスト - MV読み取りコスト）
-        - output_rows: 出力行数
+        - exec_cost: Execution cost (cost of executing this subquery)
+        - creation_cost: MV creation cost (execution cost + write cost)
+        - utility: Net benefit (execution cost - MV read cost)
+        - output_rows: Number of output rows
     """
     if penalty_stats is None:
         penalty_stats = {'leaf_penalties': set(), 'nlj_penalties': set(), 'nlj_inner_index_scans': set(), 'nlj_inner_memoize': set(), 'hash_leaf_zeros': set()}
@@ -216,8 +216,8 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
                 penalty_stats['leaf_penalties'].add(node_id)
 
             effective_random_cost = RANDOM_PAGE_COST * penalty
-            io_cost = effective_random_cost * math.sqrt(max(1, output_rows))  # ヒット数が多いほどI/Oコストは増える（平方根で緩やかに増加）
-            cpu_cost = output_rows * CPU_INDEX_TUPLE_COST  # インデックスヒット数分のCPUコスト
+            io_cost = effective_random_cost * math.sqrt(max(1, output_rows))  # More hits mean higher I/O cost (grows gently via the square root)
+            cpu_cost = output_rows * CPU_INDEX_TUPLE_COST  # CPU cost for the number of index hits
 
             exec_cost = io_cost + cpu_cost
 
@@ -287,30 +287,30 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
     # Cost calculation based on operator type
     if operator == 'Nested Loop':
         # IMPORTANT: non_leaf_nodes_info preserves JSON Plans order
-        # children[0]: Outer (駆動表) - JSON Plans[0] に相当
-        # children[1]: Inner (内部表) - JSON Plans[1] に相当
+        # children[0]: Outer (driving table) - corresponds to JSON Plans[0]
+        # children[1]: Inner (inner table) - corresponds to JSON Plans[1]
         # PostgreSQL's Nested Loop always has exactly 2 children
         if len(children_exec_costs) == 2:
-            outer_exec = children_exec_costs[0]  # 外側は children[0]
-            inner_exec = children_exec_costs[1]  # 内側は children[1]
+            outer_exec = children_exec_costs[0]  # Outer is children[0]
+            inner_exec = children_exec_costs[1]  # Inner is children[1]
             outer_rows = children_rows[0] if children_rows[0] > 0 else 1
             
-            # 内側のノードタイプを確認
-            inner_child_id = children[1]  # children[1]が内側
+            # Check the node type of the inner side
+            inner_child_id = children[1]  # children[1] is the inner side
             inner_type = get_operator(qm, inner_child_id)
             
-            # ★ Materialize戦略 ★
+            # *** Materialize strategy ***
             if 'Index' in inner_type and 'Scan' in inner_type:
-                # --- 内側テーブルのサイズ判定とペナルティ適用 ---
+                # --- Inner table size check and penalty application ---
                 penalty = 1.0
                 inner_table_name = None
                 
-                # 内側ノードがLeafならテーブル名を特定してサイズを取得
+                # If the inner node is a leaf, identify the table name and get its size
                 if inner_child_id in qm.leaf_nodes_map_r:
                     # leaf_nodes_map_r: (operator, table_name, alias, filter_cond)
                     _, inner_table_name, _, _ = qm.leaf_nodes_map_r[inner_child_id]
                 
-                # テーブル情報からサイズを取得してペナルティ判定
+                # Get the size from the table info and decide on the penalty
                 if inner_table_name and inner_table_name in TABLE_INFO:
                     inner_size = TABLE_INFO[inner_table_name]["size"]
                     if inner_size > LARGE_TABLE_THRESHOLD:
@@ -318,40 +318,40 @@ def calculate_node_cost(qm, node_id: str, migration_costs: dict, memo: dict, pen
                         penalty_stats['nlj_penalties'].add(node_id)
                 # ---------------------------------------------------
                 
-                # Index NLJ: 外側の1行ごとにインデックスアクセス
-                # Nested Loopの出力行数（サンプリング実測値）から平均ヒット数を算出
-                # 1ループあたりの平均ヒット数 = 合計ヒット数 / ループ回数
+                # Index NLJ: index access for each outer row
+                # Compute the average number of hits from the Nested Loop output rows (measured by sampling)
+                # Average hits per loop = total hits / number of loops
 
                 avg_inner_hits = output_rows / outer_rows
                 # avg_inner_hits = 1.0
 
                 
-                # キャッシュ減衰係数 (Mackert & Lohmanの近似簡易版)
-                # 外側の行数が多いほど、内側のデータはバッファに乗り切る確率が高まる
-                # logを使うことで、回数が増えるほど「新たなディスクI/O」の発生率を下げる
+                # Cache damping factor (simplified approximation of Mackert & Lohman)
+                # The more outer rows, the more likely the inner data fits entirely in the buffer
+                # Using log lowers the rate of "new disk I/O" as the number of loops grows
                 # if outer_rows >= 1000:
-                #     # 例: 1000ループ目くらいから効き始める減衰
+                #     # e.g., damping that starts to take effect around the 1000th loop
                 #     damping_factor = 1.0 / (math.log(outer_rows, 1000) + 1)
                 # else:
                 #     damping_factor = 1.0
                 
-                # 1回あたりのI/Oコスト: RANDOM_PAGE_COSTにペナルティと減衰を適用
+                # Per-loop I/O cost: apply the penalty and damping to RANDOM_PAGE_COST
                 effective_random_cost = RANDOM_PAGE_COST * penalty 
                 
-                # ヒット数が多いとページアクセスも増える（平方根で緩やかに増加）
+                # More hits also mean more page accesses (grows gently via the square root)
                 page_io_cost_per_loop = effective_random_cost * math.sqrt(max(1, avg_inner_hits))
 
-                #outer_rowsのスケール
+                #Scaling of outer_rows
                 fix = 1000000.0
-                outer_rows = fix * math.log1p(outer_rows/fix)  # 0行は1行として扱う（コストは発生しないが、計算上の分母やループ回数として扱うため）
+                outer_rows = fix * math.log1p(outer_rows/fix)  # Damp large outer row counts: about outer_rows while outer_rows << fix, logarithmic growth above it (0 stays 0)
                 
-                # 総コスト: 外側の実行 + ループコスト + タプル処理
+                # Total cost: outer execution + loop cost + tuple processing
                 loop_cost = outer_rows * page_io_cost_per_loop
-                tuple_cost = output_rows * CPU_INDEX_TUPLE_COST  # 合計ヒット数分のCPUコスト
+                tuple_cost = output_rows * CPU_INDEX_TUPLE_COST  # CPU cost for the total number of hits
                 
                 exec_cost = outer_exec + loop_cost + tuple_cost
             else:
-                # Materialized NLJ: 内側を1回構築、あとはメモリ読み出し
+                # Materialized NLJ: build the inner side once, then read from memory
                 loop_cost_per_row = CPU_TUPLE_COST
                 exec_cost = outer_exec + inner_exec + (outer_rows * loop_cost_per_row) + (output_rows * CPU_TUPLE_COST)
         else:
@@ -480,9 +480,9 @@ def recalculate_costs(pickle_path: Path, json_input_path: Path, json_output_path
         
         # Update the JSON data
         if "[]" in migration_costs[node_id]:
-            migration_costs[node_id]["[]"]["cost"] = round(creation_cost, 2)  # 作成コスト
-            migration_costs[node_id]["[]"]["utility"] = round(utility, 2)  # 利得
-            migration_costs[node_id]["[]"]["exec_cost"] = round(exec_cost, 2)  # 実行コスト（デバッグ用）
+            migration_costs[node_id]["[]"]["cost"] = round(creation_cost, 2)  # Creation cost
+            migration_costs[node_id]["[]"]["utility"] = round(utility, 2)  # Utility
+            migration_costs[node_id]["[]"]["exec_cost"] = round(exec_cost, 2)  # Execution cost (for debugging)
             migration_costs[node_id]["[]"]["recalculated"] = True
             migration_costs[node_id]["[]"]["calc_method"] = "pickle_recursive_v2"
             updated_count += 1

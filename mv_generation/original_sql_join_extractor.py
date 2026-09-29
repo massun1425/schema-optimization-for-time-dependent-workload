@@ -1,9 +1,9 @@
-"""元のSQLファイルからJOIN条件とテーブルエイリアスを抽出するユーティリティ.
+"""Utilities for extracting join conditions and table aliases from the original SQL files.
 
-PostgreSQLの定数プッシュダウン最適化により、実行プランからJOIN条件が
-消失するケースに対応するため、元のSQLクエリから正確なJOIN条件を抽出する。
+PostgreSQL constant pushdown can make join conditions disappear from the
+execution plan, so the exact join conditions are extracted from the original SQL query.
 
-使用例:
+Example:
     sql = open("01_queries/cluster_53/5a9.sql").read()
     aliases = extract_aliases_from_sql(sql)
     # => {'t': 'title', 'mi1': 'movie_info', 'it3': 'info_type', ...}
@@ -16,7 +16,7 @@ from typing import Optional
 
 
 def _normalize_identifier(token: str) -> str:
-    """識別子を正規化（ダブルクォート除去 + 小文字化）."""
+    """Normalize an identifier (strip double quotes + lowercase)."""
     token = token.strip()
     if token.startswith('"') and token.endswith('"') and len(token) >= 2:
         token = token[1:-1]
@@ -24,7 +24,7 @@ def _normalize_identifier(token: str) -> str:
 
 
 def _extract_main_clause(sql: str, clause: str) -> str:
-    """指定句の本体を抽出（次の主要句まで）."""
+    """Extract the body of the given clause (up to the next main clause)."""
     match = re.search(
         rf'\b{clause}\s+(.*?)(?:\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bLIMIT\b|\bHAVING\b|;|$)',
         sql,
@@ -36,7 +36,7 @@ def _extract_main_clause(sql: str, clause: str) -> str:
 
 
 def _extract_equijoins_from_expression(expr: str) -> list[tuple[str, str, str, str]]:
-    """式文字列から alias.column = alias.column を抽出."""
+    """Extract alias.column = alias.column from an expression string."""
     if not expr:
         return []
 
@@ -62,24 +62,24 @@ def _extract_equijoins_from_expression(expr: str) -> list[tuple[str, str, str, s
 
 
 def extract_aliases_from_sql(sql: str) -> dict[str, str]:
-    """FROM句からテーブルエイリアスマッピングを抽出.
+    """Extract the table alias mapping from the FROM clause.
 
-    サポートする形式:
+    Supported forms:
       - table AS alias
-      - table alias (ASなし)
+      - table alias (without AS)
 
     Args:
-        sql: SQLクエリ文字列
+        sql: SQL query string
 
     Returns:
-        {alias: table_name} の辞書
+        dict of {alias: table_name}
     """
-    # FROM句を抽出（WHERE/GROUP BY/ORDER BY/LIMIT/HAVING まで）
+    # Extract the FROM clause (up to WHERE/GROUP BY/ORDER BY/LIMIT/HAVING)
     from_clause = _extract_main_clause(sql, 'FROM')
     if not from_clause:
         return {}
 
-    # FROM/JOIN で参照されるテーブルとエイリアスを抽出
+    # Extract the tables and aliases referenced in FROM/JOIN
     ident = r'(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
     table_pattern = re.compile(
         rf'(?:^|,|\bJOIN\b)\s*({ident})\s+(?:AS\s+)?({ident})\b',
@@ -94,7 +94,7 @@ def extract_aliases_from_sql(sql: str) -> dict[str, str]:
             continue
         aliases[alias] = table_name
 
-    # エイリアスなし（単独テーブル）のフォールバック
+    # Fallback for no alias (single table)
     if not aliases:
         single = re.match(rf'^\s*({ident})\s*$', from_clause, re.IGNORECASE)
         if single:
@@ -105,21 +105,21 @@ def extract_aliases_from_sql(sql: str) -> dict[str, str]:
 
 
 def extract_equijoin_conditions(sql: str) -> list[tuple[str, str, str, str]]:
-    """WHERE句からalias.column = alias.column形式の等価結合条件を抽出.
+    """Extract equi-join conditions of the form alias.column = alias.column from the WHERE clause.
 
-    定数条件（alias.column = 'value' や alias.column = 123）は除外し、
-    テーブル間結合のみを返す。
+    Constant conditions (alias.column = 'value' or alias.column = 123) are excluded;
+    only joins between tables are returned.
 
     Args:
-        sql: SQLクエリ文字列
+        sql: SQL query string
 
     Returns:
-        [(left_alias, left_column, right_alias, right_column), ...] のリスト
+        List of [(left_alias, left_column, right_alias, right_column), ...]
     """
     conditions = []
     dedupe_keys = set()
 
-    # 1) WHERE句由来の等価結合
+    # 1) Equi-joins from the WHERE clause
     where_clause = _extract_main_clause(sql, 'WHERE')
     for cond in _extract_equijoins_from_expression(where_clause):
         key = tuple(sorted([(cond[0], cond[1]), (cond[2], cond[3])]))
@@ -128,7 +128,7 @@ def extract_equijoin_conditions(sql: str) -> list[tuple[str, str, str, str]]:
         dedupe_keys.add(key)
         conditions.append(cond)
 
-    # 2) JOIN ... ON 由来の等価結合
+    # 2) Equi-joins from JOIN ... ON
     on_pattern = re.compile(
         r'\bON\b\s+(.*?)(?=\b(?:INNER|LEFT|RIGHT|FULL|CROSS)\s+JOIN\b|\bJOIN\b|\bWHERE\b|\bGROUP\s+BY\b|\bORDER\s+BY\b|\bLIMIT\b|\bHAVING\b|;|$)',
         re.IGNORECASE | re.DOTALL,
@@ -149,17 +149,17 @@ def get_join_conditions_for_aliases(
     sql: str,
     target_aliases: set[str]
 ) -> list[tuple[str, str, str, str]]:
-    """指定されたエイリアスセットに関連するJOIN条件のみを返す.
+    """Return only the join conditions related to the given alias set.
 
-    サブツリー内のテーブルのみに関連するJOIN条件をフィルタリングする。
+    Filters to the join conditions that involve only tables in the subtree.
 
     Args:
-        sql: SQLクエリ文字列
-        target_aliases: 対象エイリアスのセット（小文字）
+        sql: SQL query string
+        target_aliases: Set of target aliases (lowercase)
 
     Returns:
-        [(left_alias, left_column, right_alias, right_column), ...] のリスト
-        ※両辺のエイリアスがtarget_aliasesに含まれるもののみ
+        List of [(left_alias, left_column, right_alias, right_column), ...]
+        Note: only those whose aliases on both sides are in target_aliases
     """
     all_conditions = extract_equijoin_conditions(sql)
     return [
@@ -173,17 +173,17 @@ def find_sql_file_for_query(
     json_file_path: str,
     sql_dir: Optional[str] = None
 ) -> Optional[str]:
-    """JSONファイルパスから対応するSQLファイルパスを導出.
+    """Derive the corresponding SQL file path from a JSON file path.
 
     Args:
-        json_file_path: JSONファイルの絶対パス
-            例: .../02_json/cluster_53/5a9.json
-        sql_dir: SQLファイルが格納されているディレクトリ
-            例: .../01_queries/cluster_53
-            None の場合、JSONパスから推測する
+        json_file_path: Absolute path of the JSON file
+            e.g., .../02_json/cluster_53/5a9.json
+        sql_dir: Directory containing the SQL files
+            e.g., .../01_queries/cluster_53
+            If None, inferred from the JSON path
 
     Returns:
-        SQLファイルのパス。見つからない場合はNone
+        Path of the SQL file, or None if not found
     """
     from pathlib import Path
 
@@ -194,7 +194,7 @@ def find_sql_file_for_query(
         sql_path = Path(sql_dir) / f"{stem}.sql"
         return str(sql_path) if sql_path.exists() else None
 
-    # JSONパスから推測: 02_json → 01_queries に置換
+    # Infer from the JSON path: replace 02_json with 01_queries
     json_dir = str(json_path.parent)
     possible_sql_dir = json_dir.replace("02_json", "01_queries")
     sql_path = Path(possible_sql_dir) / f"{stem}.sql"

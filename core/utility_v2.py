@@ -19,7 +19,7 @@ import time
 import sys
 from pathlib import Path
 
-# プロジェクトルートをsys.pathに追加
+# Add the project root to sys.path
 _project_root = Path(__file__).resolve().parent.parent.parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
@@ -102,7 +102,7 @@ class UtilityOptimizerV2(BaseILPOptimizer):
             if size > 0:
                 efficiency = net_utility[j] / size
             else:
-                efficiency = float('inf')  # サイズ0なら最優先
+                efficiency = float('inf')  # highest priority if size is 0
             candidates.append((j, net_utility[j], efficiency))
 
         candidates.sort(key=lambda x: x[2], reverse=True)

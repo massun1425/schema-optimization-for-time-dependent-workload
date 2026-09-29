@@ -172,8 +172,8 @@ class BigSubsOptimizer(BaseILPOptimizer):
         model.Params.OutputFlag = 0
 
         # Variables: only for candidates in k (= M_i ∩ M_i').
-        # 目的関数・制約に現れるのは k のみ。全候補(s_num)分を生成すると大規模ワークロードで
-        # 毎回数万変数を作ることになり致命的に遅くなるため、k だけ生成する。
+        # Only k appears in the objective and constraints. Generating variables for all candidates (s_num) would create
+        # tens of thousands of variables every time on large workloads and be fatally slow, so only k is generated.
         y = {j: model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}") for j in k}
 
         model.update()
@@ -183,7 +183,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
             gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
         )
 
-        # Constraints: overlapping subexpression (paper Eq. 7; 正規化は総候補数 len(b_j)=m)
+        # Constraints: overlapping subexpression (paper Eq. 7; normalized by the total number of candidates len(b_j)=m)
         for i in k:
             k_minus = [s for s in k if s != i]
             if k_minus:
@@ -193,7 +193,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         model.optimize()
 
-        # Extract solution (k 以外は常に0)
+        # Extract solution (always 0 outside k)
         y_opt = [0] * len(self.b_j)
         for j in k:
             y_opt[j] = int(y[j].X)
@@ -258,9 +258,9 @@ class BigSubsOptimizer(BaseILPOptimizer):
         # Log header
         logger.info("="*60)
         logger.info("BigSubs Optimization - Convergence Tracking")
-        logger.info(f"iter_max={iter_max}, B_max={self.B_max/1024/1024:.2f}MB, MV候補数={self.s_num}")
+        logger.info(f"iter_max={iter_max}, B_max={self.B_max/1024/1024:.2f}MB, MV candidates={self.s_num}")
         logger.info("="*60)
-        logger.info(f"{'Iter':>5} | {'Utility':>12} | {'Storage%':>10} | {'MV数':>6} | {'Best':>5}")
+        logger.info(f"{'Iter':>5} | {'Utility':>12} | {'Storage%':>10} | {'#MVs':>6} | {'Best':>5}")
         logger.info("-"*60)
 
         # Initialize random MV selection
@@ -371,7 +371,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
                 best_mark = "*" if is_best else ""
                 logger.info(f"{iter_num:>5} | {U_cur:>12.2f} | {storage_percent:>9.2f}% | {mv_count:>6} | {best_mark:>5}")
 
-            # Track best solution (容量制約を満たしている場合のみベストを更新)
+            # Track best solution (update the best only if the storage constraint is satisfied)
             if U_cur > best_u and B_cur <= self.B_max:
                 best_u = U_cur
                 best_b = B_cur
@@ -388,9 +388,9 @@ class BigSubsOptimizer(BaseILPOptimizer):
         last_best_iter = max(best_iterations) if best_iterations else 0
         
         logger.info("-"*60)
-        logger.info(f"{'Finished':>5} | 総イテレーション: {iter_num}, 最終ベスト更新: iter {last_best_iter}")
+        logger.info(f"{'Finished':>5} | Total iterations: {iter_num}, last best update: iter {last_best_iter}")
         logger.info(f"{'Result':>5} | Utility: {best_u:.2f}, Storage: {best_b/1024/1024:.2f}MB ({best_b/self.B_max*100:.2f}%)")
-        logger.info(f"{'':>5} | 選択MV数: {sum(best_z_j)}, 実行時間: {execution_time:.2f}秒")
+        logger.info(f"{'':>5} | Selected MVs: {sum(best_z_j)}, execution time: {execution_time:.2f}s")
         logger.info("="*60)
 
         # Get materialized view list

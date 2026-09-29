@@ -1,4 +1,4 @@
-# 2パターンのみのマイグレーションプランを取得 (マイグレーション無し、依存MV無しでマイグレーション)
+# Get migration plans with only two patterns (no migration, and migration without dependent MVs)
 import argparse
 import pickle
 import json
@@ -14,29 +14,32 @@ from src.core.query_parser import QueryParser
 from mv_generation.simple_mv_sql_generator import SimpleMVSQLGenerator
 
 class GetSimpleMigrationPlans:
-    """MVのマイグレーションプランを2パターンのみ取得"""
+    """Get only two patterns of migration plans for each MV"""
     def __init__(
             self,
             settings: Settings | None = None,
             query_set: str = "job_like",
+            exp_dir: str | Path | None = None,
     ):
         self.settings = settings
         self.query_set = query_set
+        # Experiment directory holding 03_parsed/ and 04_migration/ (default: the repository root)
+        self.exp_dir = Path(exp_dir) if exp_dir is not None else Path(__file__).parent.parent
 
-        # 03_parsed/{queryset}/qp_class.pklから読み込み
-        self.parser_file = Path(__file__).parent.parent / "03_parsed" / self.query_set / "qp_class.pkl"
+        # Load from 03_parsed/{queryset}/qp_class.pkl
+        self.parser_file = self.exp_dir / "03_parsed" / self.query_set / "qp_class.pkl"
 
-        # 読み込んだデータを保持
+        # Holds the loaded data
         self.qp: QueryParser | None = None
         self.sql: Dict[str, Dict[str, str]] | None = None
 
         self.mv_sql_generator: SimpleMVSQLGenerator | None = None
-        self.schema_provider = None  # 再利用するSchemaProvider
+        self.schema_provider = None  # SchemaProvider to reuse
 
         if self.parser_file and self.parser_file.exists():
             self.load_pickle()
             if self.qp:
-                # db_configをsettingsから取得してSimpleMVSQLGeneratorに渡す
+                # Get db_config from settings and pass it to SimpleMVSQLGenerator
                 db_config = None
                 if self.settings and hasattr(self.settings, 'database'):
                     db_config = {
@@ -46,7 +49,7 @@ class GetSimpleMigrationPlans:
                         'user': self.settings.database.user,
                         'password': self.settings.database.password,
                     }
-                # SchemaProviderを1回だけ作成（DB接続を再利用）
+                # Create the SchemaProvider only once (reuse the DB connection)
                 from src.rewrite.schema_provider import SchemaProvider
                 self.schema_provider = SchemaProvider(db_config)
                 self.mv_sql_generator = SimpleMVSQLGenerator(self.qp, db_config)
@@ -56,13 +59,13 @@ class GetSimpleMigrationPlans:
             with open(self.parser_file, 'rb') as f:
                 self.qp = pickle.load(f, encoding='bytes')
         except Exception as e:
-            print(f"pickle ファイルの読み込みに失敗しました: {e}")
+            print(f"Failed to load the pickle file: {e}")
             self.qp = None
 
     def generate_mv_sql_with_existing(self, node_id: str, existing_mvs: list[str]) -> str | None:
-        """既存のMVを利用して新しいMVのSQLを作成"""
+        """Create the SQL of a new MV using existing MVs"""
         if self.mv_sql_generator is None:
-            print(f"  エラー: MVSQLGeneratorが初期化されていません")
+            print(f"  Error: MVSQLGenerator is not initialized")
             return None
 
         return self.mv_sql_generator.generate_mv_sql(
@@ -72,16 +75,16 @@ class GetSimpleMigrationPlans:
 
     def enumerate_simple_migration_plans(self, target_mv: str) -> Dict[str, str]:
         """
-        2パターンのみのマイグレーションプランを生成
-        1. マイグレーション無し (自身が既に存在する)
-        2. 依存MV無しでマイグレーション (空リストから新規作成)
+        Generate migration plans with only two patterns
+        1. No migration (the MV itself already exists)
+        2. Migration without dependent MVs (created from scratch with an empty list)
         """
         mv_sqls = {}
         
-        # パターン1: マイグレーション無し
+        # Pattern 1: no migration
         mv_sqls[str([target_mv])] = "NON_MIGRATE"
         
-        # パターン2: 依存MV無しでマイグレーション
+        # Pattern 2: migration without dependent MVs
         mv_sql = self.generate_mv_sql_with_existing(target_mv, [])
         if mv_sql:
             mv_sqls["[]"] = mv_sql
@@ -93,63 +96,63 @@ class GetSimpleMigrationPlans:
             filename: str = "simple_migration_plans.json"
     ):
         if not self.sql:
-            print("エラー: マイグレーションプランが生成されていません")
+            print("Error: migration plans have not been generated")
             return
         
-        # 出力dirのパス (parent.parent で small_test_ver2 に移動)
-        output_dir = Path(__file__).parent.parent / "04_migration" / self.query_set
+        # Path of the output dir
+        output_dir = self.exp_dir / "04_migration" / self.query_set
         output_dir.mkdir(parents=True, exist_ok=True)
-        # ファイルパス
+        # File path
         output_file = output_dir / filename
 
         try:
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(self.sql, f, indent=2, ensure_ascii=False)
-            print(f"マイグレーションプランを保存しました: {output_file}")
+            print(f"Saved migration plans: {output_file}")
         except Exception as e:
-            print(f"JSONファイルの保存に失敗しました: {e}")
+            print(f"Failed to save the JSON file: {e}")
     
     def get_migration_sqls(self):
-        """全てのノードに対して2パターンのマイグレーションプランを取得"""
+        """Get the two patterns of migration plans for all nodes"""
         if not self.qp or not hasattr(self.qp, 'qm'):
-            print("  エラー: QueryParserが初期化されていません")
+            print("  Error: QueryParser is not initialized")
             return
         
         self.sql = {}
 
-        # 全てのノード（leaf + non_leaf）を取得
+        # Get all nodes (leaf + non_leaf)
         all_nodes = list(self.qp.qm.leaf_nodes_map_r.keys()) + list(self.qp.qm.non_leaf_nodes_info.keys())
 
-        print(f"\n処理対象ノード数: {len(all_nodes)}個")
-        print(f"  - leaf_nodes: {len(self.qp.qm.leaf_nodes_map_r)}個")
-        print(f"  - non_leaf_nodes: {len(self.qp.qm.non_leaf_nodes_info)}個")
-        print("\nマイグレーションプラン生成中（2パターンのみ）...")
+        print(f"\nNumber of nodes to process: {len(all_nodes)}")
+        print(f"  - leaf_nodes: {len(self.qp.qm.leaf_nodes_map_r)}")
+        print(f"  - non_leaf_nodes: {len(self.qp.qm.non_leaf_nodes_info)}")
+        print("\nGenerating migration plans (two patterns only)...")
 
-        # 進捗表示用
+        # For progress display
         processed = 0
         total = len(all_nodes)
 
-        # 各ノードのマイグレーションプランを取得
+        # Get the migration plans of each node
         for node in all_nodes:
             processed += 1
             if processed % 10 == 0 or processed == total:
-                print(f"  進捗: {processed}/{total} ({processed*100//total}%)")
+                print(f"  Progress: {processed}/{total} ({processed*100//total}%)")
             
-            # 全ノードに対して2パターンのみ生成
+            # Generate only two patterns for every node
             self.sql[node] = self.enumerate_simple_migration_plans(node)
         
-        print(f"\n✓ 全{total}ノードの処理完了")
-        # JSONファイルとして保存
+        print(f"\n✓ Finished processing all {total} nodes")
+        # Save as a JSON file
         self.save_migration_plans()
 
 if __name__ == "__main__":
     
-    parser = argparse.ArgumentParser(description="MVマイグレーションプラン列挙（2パターンのみ）")
+    parser = argparse.ArgumentParser(description="Enumerate MV migration plans (two patterns only)")
     parser.add_argument(
         "--query-set",
         type=str,
         default="job_like",
-        help="使用するクエリセットの名前 (デフォルト: job_like)"
+        help="Name of the query set to use (default: job_like)"
     )
 
     args = parser.parse_args()

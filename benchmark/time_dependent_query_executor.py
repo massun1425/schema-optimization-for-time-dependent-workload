@@ -1,10 +1,10 @@
-"""時間依存型ワークロードのクエリ実行とベンチマーク機能
+"""Query execution and benchmarking for time-dependent workloads
 
-このモジュールは、時間軸に沿って変化するワークロードのベンチマークを実行します。
-各タイムステップで:
-1. マイグレーションSQLを実行（MVの作成・削除）
-2. クエリを頻度情報に基づいて繰り返し実行
-3. 実行時間とコストを記録
+This module runs benchmarks for workloads that change over time.
+At each time step:
+1. Execute the migration SQL (create/drop MVs)
+2. Execute queries repeatedly according to their frequencies
+3. Record execution time and cost
 """
 
 import json
@@ -23,35 +23,35 @@ logger = logging.getLogger(__name__)
 
 
 class TimeDependentQueryExecutor:
-    """時間依存型ワークロード用のクエリ実行管理クラス"""
+    """Query execution manager for time-dependent workloads"""
     
     def __init__(self, settings: Settings):
-        """初期化
+        """Initialize.
         
         Args:
-            settings: 設定オブジェクト
+            settings: Settings object
         """
         self.settings = settings
         self.db_config = settings.database
         self.connection = None
         
-        # ノイズ注入設定
-        # noise_ratio: 各クエリ実行をノイズに差し替える確率 (0.0〜1.0)
-        # noise_pool: 事前ロード済みの書き換え前クエリSQL辞書 {query_stem: sql_text}
+        # Noise injection settings
+        # noise_ratio: probability of replacing each query execution with noise (0.0-1.0)
+        # noise_pool: preloaded dict of original (pre-rewrite) query SQL {query_stem: sql_text}
         self.noise_ratio: float = 0.0
         self.noise_pool: Dict[str, str] = {}
     
     def load_noise_pool(self, noise_dir: Path) -> int:
-        """ノイズ用クエリプール（書き換え前の元クエリ）をメモリに事前ロード
+        """Preload the noise query pool (original queries before rewriting) into memory.
         
-        ベンチマーク開始前に一括で読み込むことで、実行時のディスクI/Oを排除する。
-        ノイズ発生時には、書き換え済みクエリの代わりに同名の元クエリを実行する。
+        Loading everything up front before the benchmark starts eliminates disk I/O during execution.
+        When noise occurs, the original query with the same name is executed instead of the rewritten query.
         
         Args:
-            noise_dir: 元クエリ（書き換え前）のSQLファイルが格納されているディレクトリ
+            noise_dir: Directory containing the SQL files of the original (pre-rewrite) queries
             
         Returns:
-            ロードできたクエリ数
+            Number of queries loaded
         """
         if not noise_dir.exists():
             logger.warning(f"Noise directory not found: {noise_dir}")
@@ -76,12 +76,12 @@ class TimeDependentQueryExecutor:
         return len(self.noise_pool)
     
     def _get_connection(self):
-        """データベース接続を取得または作成
+        """Get or create a database connection.
         
         Note:
-            Docker環境でもlocalhost経由で接続（ポートフォワーディング使用）
-            Dockerコンテナは 0.0.0.0:5432->5432/tcp でマッピングされているため、
-            localhost:5432 で接続可能
+            Connects via localhost even in the Docker environment (using port forwarding).
+            The Docker container is mapped as 0.0.0.0:5432->5432/tcp,
+            so it is reachable at localhost:5432
         """
         if self.connection is None or self.connection.closed:
             self.connection = psycopg2.connect(
@@ -91,7 +91,7 @@ class TimeDependentQueryExecutor:
                 password=self.db_config.password,
                 database=self.db_config.database
             )
-            # 統計情報のターゲットを1000に設定（セッションごとにリセットされるためここで設定）
+            # Set the statistics target to 1000 (set here because it is reset per session)
             try:
                 with self.connection.cursor() as cursor:
                     # cursor.execute("SET default_statistics_target = 1000;")
@@ -107,18 +107,18 @@ class TimeDependentQueryExecutor:
         sql_file: Path, 
         timeout_minutes: int = 30
     ) -> Tuple[bool, float, Optional[str]]:
-        """SQLファイルを実行
+        """Execute an SQL file.
         
         Args:
-            sql_file: 実行するSQLファイルのパス
-            timeout_minutes: タイムアウト時間（分）
+            sql_file: Path to the SQL file to execute
+            timeout_minutes: Timeout (minutes)
             
         Returns:
-            (success, elapsed_time, error_message)のタプル
+            Tuple of (success, elapsed_time, error_message)
         """
         start_time = time.time()
         
-        # SQLファイルを読み込み
+        # Read the SQL file
         try:
             with open(sql_file, 'r', encoding='utf-8') as f:
                 sql_content = f.read()
@@ -126,13 +126,13 @@ class TimeDependentQueryExecutor:
             logger.error(f"Error reading {sql_file.name}: {e}")
             return False, 0.0, str(e)
         
-        # psqlメタコマンド（\c, \set など）を除去
-        # これらはpsqlコマンドラインツール専用で、psycopg2では実行できない
+        # Remove psql meta-commands (\c, \set, etc.)
+        # These are specific to the psql command-line tool and cannot be executed with psycopg2
         lines = sql_content.split('\n')
         filtered_lines = []
         for line in lines:
             stripped = line.strip()
-            # バックスラッシュで始まる行（psqlメタコマンド）をスキップ
+            # Skip lines starting with a backslash (psql meta-commands)
             if stripped.startswith('\\'):
                 logger.debug(f"Skipping psql meta-command: {stripped}")
                 continue
@@ -144,38 +144,38 @@ class TimeDependentQueryExecutor:
             logger.warning(f"Empty SQL file after filtering: {sql_file.name}")
             return False, 0.0, "Empty SQL file"
         
-        # SQLを実行（複数のステートメントを個別に実行）
+        # Execute the SQL (each statement individually)
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # タイムアウトを設定
+            # Set the timeout
             timeout_ms = timeout_minutes * 60 * 1000
             cursor.execute(f"SET statement_timeout = '{timeout_ms}'")
             
             logger.debug(f"Executing SQL file: {sql_file.name}")
             
-            # SQLを個別のステートメントに分割して実行
-            # セミコロンで分割し、空でないステートメントのみを実行
+            # Split the SQL into individual statements and execute them
+            # Split on semicolons and execute only non-empty statements
             statements = []
             current_statement = []
             
             for line in sql_content.split('\n'):
                 stripped = line.strip()
-                # コメント行や空行をスキップ
+                # Skip comment lines and empty lines
                 if not stripped or stripped.startswith('--'):
                     continue
                     
                 current_statement.append(line)
                 
-                # セミコロンで終わる場合、ステートメント完成
+                # A trailing semicolon completes the statement
                 if stripped.endswith(';'):
                     stmt = '\n'.join(current_statement).strip()
                     if stmt and stmt != ';':
                         statements.append(stmt)
                     current_statement = []
             
-            # 残りのステートメントがあれば追加
+            # Append any remaining statement
             if current_statement:
                 stmt = '\n'.join(current_statement).strip()
                 if stmt:
@@ -183,7 +183,7 @@ class TimeDependentQueryExecutor:
             
             print(f"DEBUG: Executing {len(statements)} SQL statements from {sql_file.name}")
             
-            # 各ステートメントを個別に実行
+            # Execute each statement individually
             for idx, statement in enumerate(statements, 1):
                 if idx % 10 == 0 or idx == len(statements):
                     print(f"DEBUG: Executing statement {idx}/{len(statements)}")
@@ -217,15 +217,15 @@ class TimeDependentQueryExecutor:
         query_name: str,
         timeout_minutes: int = 30
     ) -> Tuple[bool, float, Optional[str]]:
-        """単一クエリを実行
+        """Execute a single query.
         
         Args:
-            query_sql: 実行するSQL
-            query_name: クエリ名（ログ用）
-            timeout_minutes: タイムアウト時間（分）
+            query_sql: SQL to execute
+            query_name: Query name (for logging)
+            timeout_minutes: Timeout (minutes)
             
         Returns:
-            (success, elapsed_time, error_message)のタプル
+            Tuple of (success, elapsed_time, error_message)
         """
         start_time = time.time()
         
@@ -236,19 +236,19 @@ class TimeDependentQueryExecutor:
             conn = self._get_connection()
             cursor = conn.cursor()
             
-            # タイムアウトを設定
+            # Set the timeout
             timeout_ms = timeout_minutes * 60 * 1000
             cursor.execute(f"SET statement_timeout = '{timeout_ms}'")
             
-            # クエリを実行
+            # Execute the query
             cursor.execute(query_sql)
             
-            # 結果を取得（実際にクエリを実行するために重要）
+            # Fetch the results (important to make the query actually execute)
             try:
                 results = cursor.fetchall()
                 row_count = len(results)
             except psycopg2.ProgrammingError:
-                # 結果を返さないクエリ（CREATE, INSERTなど）
+                # Queries that return no results (CREATE, INSERT, etc.)
                 row_count = cursor.rowcount
             
             conn.commit()
@@ -278,23 +278,23 @@ class TimeDependentQueryExecutor:
         verbose: bool = False,
         ease_mode: bool = False
     ) -> Dict:
-        """頻度に基づいてクエリを実行
+        """Execute queries according to their frequencies.
         
         Args:
-            query_files: クエリファイルのリスト
-            frequencies: 各クエリの実行頻度（実行回数）
-            timeout_minutes: タイムアウト時間（分）
-            verbose: 詳細ログを出力するか
-            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける。
-                       noise有効時は元クエリも1回実行し頻度を noise/rewritten に分割して推定）
+            query_files: List of query files
+            frequencies: Execution frequency (number of executions) of each query
+            timeout_minutes: Timeout (minutes)
+            verbose: Whether to output detailed logs
+            ease_mode: Ease mode (execute each query once and multiply the time by the frequency.
+                       When noise is enabled, the original query is also executed once and the frequency is split into noise/rewritten for the estimate)
 
         Returns:
-            実行結果の辞書
+            Dict of execution results
         """
-        # ノイズ注入が有効かどうかを判定
-        # ease_mode でも noise を扱えるようにする:
-        #   通常モード → frequency 回のループ内で確率的に元クエリへ差し替える
-        #   ease_mode  → 元クエリを1回だけ追加実行し、頻度を noise/rewritten に分割して推定
+        # Determine whether noise injection is enabled
+        # Noise is also supported in ease_mode:
+        #   Normal mode -> within the loop of frequency iterations, probabilistically replace with the original query
+        #   ease_mode   -> execute the original query only once more and split the frequency into noise/rewritten for the estimate
         use_noise = (self.noise_ratio > 0.0) and (len(self.noise_pool) > 0)
         
         results = []
@@ -302,16 +302,16 @@ class TimeDependentQueryExecutor:
         total_executions = 0
         successful_executions = 0
         failed_executions = 0
-        noise_executions = 0  # ノイズとして実行した回数
+        noise_executions = 0  # Number of executions performed as noise
         
         for query_file, frequency in zip(query_files, frequencies):
-            # 頻度が0の場合はスキップ
+            # Skip if the frequency is 0
             if frequency <= 0:
                 if verbose:
                     logger.debug(f"Skipping {query_file.name} (frequency=0)")
                 continue
             
-            # SQLファイルを読み込み
+            # Read the SQL file
             try:
                 with open(query_file, 'r', encoding='utf-8') as f:
                     query_sql = f.read().strip()
@@ -332,11 +332,11 @@ class TimeDependentQueryExecutor:
             query_failed = 0
             
             if ease_mode:
-                # 簡易モード: 書き換え後クエリを1回だけ実行し、時間に頻度を掛けて推定する。
-                # noise 有効時は元（書き換え前）クエリも1回だけ追加実行し、頻度を分割して推定:
+                # Ease mode: execute the rewritten query only once and estimate by multiplying the time by the frequency.
+                # When noise is enabled, also execute the original (pre-rewrite) query once and split the frequency for the estimate:
                 #   estimated = t_original * noise_count + t_rewritten * rewritten_count
-                #   noise_count = round(frequency * noise_ratio)  ← 四捨五入(round half up)
-                #   rewritten_count = frequency - noise_count      ← 残り（合計は frequency を維持）
+                #   noise_count = round(frequency * noise_ratio)  <- round half up
+                #   rewritten_count = frequency - noise_count      <- the rest (the total stays equal to frequency)
                 if verbose:
                     logger.info(f"  [EASE] Executing {query_file.name} (single run, freq={frequency})...")
 
@@ -355,7 +355,7 @@ class TimeDependentQueryExecutor:
                     query_failed += 1
                     failed_executions += 1
 
-                # noise 分: 元クエリを1回実行（有効かつプールに元クエリが存在する場合のみ）
+                # Noise part: execute the original query once (only if enabled and the original query exists in the pool)
                 noise_sql = self.noise_pool.get(query_file.stem) if use_noise else None
                 noise_time = None
                 if noise_sql is not None:
@@ -379,8 +379,8 @@ class TimeDependentQueryExecutor:
                         if error is None:
                             error = n_error
 
-                    # 頻度を noise / rewritten に分割（合計 = frequency を維持）
-                    noise_count = int(frequency * self.noise_ratio + 0.5)  # 四捨五入(round half up)
+                    # Split the frequency into noise / rewritten (total = frequency is preserved)
+                    noise_count = int(frequency * self.noise_ratio + 0.5)  # round half up
                     rewritten_count = frequency - noise_count
                     estimated_total = noise_time * noise_count + rewritten_time * rewritten_count
                 else:
@@ -388,7 +388,7 @@ class TimeDependentQueryExecutor:
                     rewritten_count = frequency
                     estimated_total = rewritten_time * frequency
 
-                total_time += estimated_total  # 推定時間を合計に加算
+                total_time += estimated_total  # Add the estimated time to the total
 
                 if verbose:
                     if noise_sql is not None:
@@ -403,19 +403,19 @@ class TimeDependentQueryExecutor:
                     else:
                         logger.warning(f"    ✗ Failed ({rewritten_time:.2f}s): {error}")
 
-                # 結果記録
+                # Record the result
                 results.append({
                     'query_id': query_file.stem,
                     'frequency': frequency,
-                    'executions': len(execution_times),  # 実際の実行回数 (noiseありなら2)
-                    'estimated_executions': execution_count,  # 頻度として期待される回数
+                    'executions': len(execution_times),  # Actual number of executions (2 with noise)
+                    'estimated_executions': execution_count,  # Number of executions expected from the frequency
                     'successful': query_successful,
                     'failed': query_failed,
-                    'actual_time': round(rewritten_time, 5),  # 書き換え後クエリの実測時間
+                    'actual_time': round(rewritten_time, 5),  # Measured time of the rewritten query
                     'noise_time': round(noise_time, 5) if noise_time is not None else None,
                     'noise_count': noise_count,
                     'rewritten_count': rewritten_count,
-                    'total_time': round(estimated_total, 5),  # 推定合計時間
+                    'total_time': round(estimated_total, 5),  # Estimated total time
                     'avg_time': round(sum(execution_times) / len(execution_times), 5),
                     'min_time': round(min(execution_times), 5),
                     'max_time': round(max(execution_times), 5),
@@ -423,9 +423,9 @@ class TimeDependentQueryExecutor:
                     'noise_applied': noise_sql is not None,
                 })
             else:
-                # 通常モード: 頻度分だけクエリを実行
+                # Normal mode: execute the query as many times as its frequency
                 for exec_idx in range(execution_count):
-                    # ノイズ注入判定: noise_ratioの確率で書き換え前の元クエリに差し替える
+                    # Noise injection: replace with the original pre-rewrite query with probability noise_ratio
                     if use_noise and random.random() < self.noise_ratio:
                         original_sql = self.noise_pool.get(query_file.stem)
                         if original_sql is not None:
@@ -433,7 +433,7 @@ class TimeDependentQueryExecutor:
                             actual_name = f"[NOISE] {query_file.stem} (original)"
                             is_noise = True
                         else:
-                            # 元クエリがプールに見つからない場合はノイズをスキップ
+                            # Skip noise if the original query is not found in the pool
                             actual_sql = query_sql
                             actual_name = query_file.name
                             is_noise = False
@@ -469,7 +469,7 @@ class TimeDependentQueryExecutor:
                         if verbose:
                             logger.warning(f"    ✗ Failed ({elapsed:.2f}s): {error}{'  [noise]' if is_noise else ''}")
                 
-                # クエリごとの集計
+                # Per-query aggregation
                 avg_time = sum(execution_times) / len(execution_times) if execution_times else 0.0
                 results.append({
                     'query_id': query_file.stem,
@@ -504,19 +504,19 @@ class TimeDependentQueryExecutor:
         verbose: bool = False,
         ease_mode: bool = False
     ) -> Dict:
-        """時間依存型ベンチマークを実行
+        """Run the time-dependent benchmark.
         
         Args:
-            optimization_result: 最適化結果（migration_analysisを含む）
-            migration_sql_dir: マイグレーションSQLが格納されているディレクトリ
-            rewritten_queries_base_dir: 書き換えられたクエリのベースディレクトリ（例: jobs/）
-            frequencies_by_timestep: タイムステップごとの頻度情報
-            timeout_minutes: タイムアウト時間（分）
-            verbose: 詳細ログを出力するか
-            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
+            optimization_result: Optimization result (including migration_analysis)
+            migration_sql_dir: Directory containing the migration SQL
+            rewritten_queries_base_dir: Base directory of the rewritten queries (e.g., jobs/)
+            frequencies_by_timestep: Frequencies per time step
+            timeout_minutes: Timeout (minutes)
+            verbose: Whether to output detailed logs
+            ease_mode: Ease mode (execute each query once and multiply the time by the frequency)
             
         Returns:
-            ベンチマーク結果の辞書
+            Dict of benchmark results
         """
         print("DEBUG: execute_time_dependent_benchmark called")
         logger.info("Starting time-dependent benchmark execution")
@@ -540,7 +540,7 @@ class TimeDependentQueryExecutor:
         total_query_time = 0.0
         
         print("DEBUG: Starting timestep loop...")
-        # 各タイムステップを順に実行
+        # Execute each time step in order
         for t_idx, (timestep_name, timestep_info) in enumerate(zip(timesteps, migration_analysis)):
             logger.info(f"\n{'='*60}")
             logger.info(f"Timestep {t_idx}: {timestep_name}")
@@ -548,13 +548,13 @@ class TimeDependentQueryExecutor:
             
             timestep_start = time.time()
             
-            # マイグレーションSQL実行（t > 0の場合）
+            # Execute the migration SQL (when t > 0)
             migration_time = 0.0
             migration_success = True
             migration_error = None
             
             if t_idx == 0:
-                # 初期タイムステップ: 初期MV作成
+                # Initial time step: create the initial MVs
                 migration_sql_file = migration_sql_dir / f"timestep_{t_idx}_{timestep_name}.sql"
                 
                 if migration_sql_file.exists():
@@ -571,7 +571,7 @@ class TimeDependentQueryExecutor:
                 else:
                     logger.info(f"No initial migration SQL found (skipping)")
             else:
-                # タイムステップ間のマイグレーション
+                # Migration between time steps
                 migration_sql_file = migration_sql_dir / f"timestep_{t_idx}_{timestep_name}.sql"
                 
                 if migration_sql_file.exists():
@@ -590,7 +590,7 @@ class TimeDependentQueryExecutor:
             
             total_migration_time += migration_time
             
-            # 書き換えられたクエリファイルを取得（タイムステップ別）
+            # Get the rewritten query files (per time step)
             rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_{t_idx}_{timestep_name}"
             
             if not rewritten_queries_dir.exists():
@@ -614,7 +614,7 @@ class TimeDependentQueryExecutor:
             
             frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(query_files_for_timestep))
             
-            # 頻度リストの長さを調整
+            # Adjust the length of the frequency list
             if len(frequencies) < len(query_files_for_timestep):
                 frequencies.extend([0.0] * (len(query_files_for_timestep) - len(frequencies)))
             elif len(frequencies) > len(query_files_for_timestep):
@@ -635,7 +635,7 @@ class TimeDependentQueryExecutor:
             else:
                 timestep_elapsed = time.time() - timestep_start
             
-            # タイムステップごとの結果を保存
+            # Save the results for each time step
             timestep_result = {
                 'timestep': timestep_name,
                 'timestep_index': t_idx,
@@ -651,7 +651,7 @@ class TimeDependentQueryExecutor:
             
             timestep_results.append(timestep_result)
             
-            # サマリー表示
+            # Show summary
             logger.info(f"\nTimestep {timestep_name} Summary:")
             logger.info(f"  Migration time: {migration_time:.2f}s")
             logger.info(f"  Query executions: {query_results['total_executions']}")
@@ -663,7 +663,7 @@ class TimeDependentQueryExecutor:
         else:
             benchmark_elapsed = time.time() - benchmark_start
         
-        # 全体サマリー
+        # Overall summary
         logger.info(f"\n{'='*60}")
         logger.info("Benchmark Summary:")
         logger.info(f"  Total timesteps: {len(timesteps)}")
@@ -692,18 +692,18 @@ class TimeDependentQueryExecutor:
         verbose: bool = False,
         ease_mode: bool = False
     ) -> Dict:
-        """ベースライン: MVなしでクエリを実行
+        """Baseline: execute queries without MVs.
         
         Args:
-            query_files: クエリファイルのリスト
-            frequencies_by_timestep: タイムステップごとの頻度情報
-            timesteps: タイムステップのリスト
-            timeout_minutes: タイムアウト時間（分）
-            verbose: 詳細ログを出力するか
-            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
+            query_files: List of query files
+            frequencies_by_timestep: Frequencies per time step
+            timesteps: List of time steps
+            timeout_minutes: Timeout (minutes)
+            verbose: Whether to output detailed logs
+            ease_mode: Ease mode (execute each query once and multiply the time by the frequency)
             
         Returns:
-            ベンチマーク結果の辞書
+            Dict of benchmark results
         """
         print("DEBUG: execute_baseline_benchmark called")
         logger.info("Starting baseline benchmark execution (no materialized views)")
@@ -712,7 +712,7 @@ class TimeDependentQueryExecutor:
         timestep_results = []
         total_query_time = 0.0
         
-        # 各タイムステップを順に実行（MVなし）
+        # Execute each time step in order (without MVs)
         for t_idx, timestep_name in enumerate(timesteps):
             logger.info(f"\n{'='*60}")
             logger.info(f"Timestep {t_idx}: {timestep_name}")
@@ -724,7 +724,7 @@ class TimeDependentQueryExecutor:
             
             frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(query_files))
             
-            # 頻度リストの長さを調整
+            # Adjust the length of the frequency list
             if len(frequencies) < len(query_files):
                 frequencies.extend([0.0] * (len(query_files) - len(frequencies)))
             elif len(frequencies) > len(query_files):
@@ -794,30 +794,30 @@ class TimeDependentQueryExecutor:
         static_algorithm: str = 'normal',
         ease_mode: bool = False
     ) -> Dict:
-        """静的MV: 最初のタイムステップでMVを作成し、マイグレーションなしで実行
+        """Static MV: create MVs at the first time step and run without migration.
         
         Args:
-            optimization_result: 最適化結果（migration_analysis生む）
-            migration_sql_dir: マイグレーションSQLが格納されているディレクトリ
-            rewritten_queries_base_dir: 書き換えられたクエリのベースディレクトリ（例: jobs/）
-            frequencies_by_timestep: タイムステップごとの頻度情報
-            timeout_minutes: タイムアウト時間（分）
-            verbose: 詳細ログを出力するか
-            static_algorithm: 使用するアルゴリズム ('normal' or 'bigsubs')
-            ease_mode: 簡易モード（各クエリを1回実行し、時間に頻度を掛ける）
+            optimization_result: Optimization result (including migration_analysis)
+            migration_sql_dir: Directory containing the migration SQL
+            rewritten_queries_base_dir: Base directory of the rewritten queries (e.g., jobs/)
+            frequencies_by_timestep: Frequencies per time step
+            timeout_minutes: Timeout (minutes)
+            verbose: Whether to output detailed logs
+            static_algorithm: Algorithm to use ('normal' or 'bigsubs')
+            ease_mode: Ease mode (execute each query once and multiply the time by the frequency)
             
         Returns:
-            ベンチマーク結果の辞書
+            Dict of benchmark results
         """
         print("DEBUG: execute_static_mv_benchmark called")
         logger.info("Starting static MV benchmark execution (initial MVs only, no migration)")
         
         migration_analysis = optimization_result.get('migration_analysis', [])
-        # Staticモードの場合はmigration_analysisがない場合がある（純粋な静的最適化）
+        # In static mode, migration_analysis may be absent (pure static optimization)
         is_pure_static = 'migration_analysis' not in optimization_result and 'selected_mvs' in optimization_result
         
         timesteps = optimization_result.get('timesteps', [])
-        # 純粋な静的最適化の場合、timestepsが含まれていない可能性があるため、frequencies_by_timestepから取得
+        # For pure static optimization, timesteps may not be included, so get them from frequencies_by_timestep
         if not timesteps and frequencies_by_timestep:
             timesteps = sorted(frequencies_by_timestep.keys(), key=lambda x: int(x))
         
@@ -830,19 +830,19 @@ class TimeDependentQueryExecutor:
         initial_mv_creation_time = 0.0
         total_query_time = 0.0
         
-        # 最初のタイムステップでMVを作成
+        # Create MVs at the first time step
         logger.info(f"\n{'='*60}")
         logger.info("Creating initial MVs (timestep 0)")
         logger.info(f"{'='*60}")
         
         if is_pure_static:
-            # 純粋な静的最適化の場合、アルゴリズムに応じてSQLファイルを選択
+            # For pure static optimization, select the SQL file according to the algorithm
             if static_algorithm == 'bigsubs':
                 migration_sql_file = migration_sql_dir / "static_bigsubs_initial_mvs.sql"
             else:
                 migration_sql_file = migration_sql_dir / "static_initial_mvs.sql"
         else:
-            # 従来の時間依存最適化の最初のステップを使用する場合
+            # When using the first step of the conventional time-dependent optimization
             migration_sql_file = migration_sql_dir / f"timestep_0_{timesteps[0]}.sql"
         
         if migration_sql_file.exists():
@@ -858,10 +858,10 @@ class TimeDependentQueryExecutor:
         else:
             logger.warning(f"No initial migration SQL found: {migration_sql_file}")
         
-        # 最初のタイムステップの書き換えられたクエリを取得（全タイムステップで使用）
-        # Static モードではMVが変わらないため、クエリも変わらない
+        # Get the rewritten queries of the first time step (used for all time steps)
+        # In static mode the MVs do not change, so the queries do not change either
         if is_pure_static:
-            # 純粋な静的最適化の場合、rewritten_queries_base_dir がそのままクエリディレクトリ
+            # For pure static optimization, rewritten_queries_base_dir is itself the query directory
             initial_rewritten_queries_dir = rewritten_queries_base_dir
         else:
             initial_rewritten_queries_dir = rewritten_queries_base_dir / f"timestep_0_{timesteps[0]}"
@@ -884,7 +884,7 @@ class TimeDependentQueryExecutor:
         logger.info(f"Loaded {len(static_query_files)} queries from: {initial_rewritten_queries_dir}")
         logger.info(f"These queries will be used for all timesteps (MVs do not change)")
         
-        # 各タイムステップでクエリを実行（同じMVとクエリのまま）
+        # Execute queries at each time step (with the same MVs and queries)
         for t_idx, timestep_name in enumerate(timesteps):
             logger.info(f"\n{'='*60}")
             logger.info(f"Timestep {t_idx}: {timestep_name} (using initial MVs and queries)")
@@ -898,14 +898,14 @@ class TimeDependentQueryExecutor:
             
             frequencies = frequencies_by_timestep.get(timestep_name, [1.0] * len(static_query_files))
             
-            # 頻度リストの長さを調整
+            # Adjust the length of the frequency list
             if len(frequencies) < len(static_query_files):
                 frequencies.extend([0.0] * (len(static_query_files) - len(frequencies)))
             elif len(frequencies) > len(static_query_files):
                 frequencies = frequencies[:len(static_query_files)]
             
             query_results = self._execute_queries_with_frequency(
-                static_query_files,  # 常に最初のタイムステップのクエリを使用
+                static_query_files,  # Always use the queries of the first time step
                 frequencies,
                 timeout_minutes,
                 verbose,
@@ -960,7 +960,7 @@ class TimeDependentQueryExecutor:
         }
     
     def close(self):
-        """データベース接続をクローズ"""
+        """Close the database connection"""
         if self.connection and not self.connection.closed:
             self.connection.close()
             logger.debug("Database connection closed")

@@ -117,13 +117,13 @@ class OptimizationResult:
                 {
                     "view_id": mv.view_id,
                     "node_id": mv.node_id,
-                    "create_sql": mv.create_sql,  # ← SQLを保存
-                    "index_sql": mv.index_sql,  # ← インデックスSQLを保存
+                    "create_sql": mv.create_sql,  # <- save the SQL
+                    "index_sql": mv.index_sql,  # <- save the index SQL
                     "size": mv.size,
                     "size_mb": round(mv.size / (1024 * 1024), 2),
                     "maintenance_cost": mv.maintenance_cost,
                     "usage_count": len(mv.usage_positions),
-                    "usage_positions": mv.usage_positions,  # ← 使用位置も保存
+                    "usage_positions": mv.usage_positions,  # <- also save the usage positions
                 }
                 for mv in self.selected_views
             ],

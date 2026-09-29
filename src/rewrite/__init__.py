@@ -1,4 +1,4 @@
-"""クエリ書き換えモジュール"""
+"""Query rewriting module"""
 
 from .mv_generator import MVGenerator
 from .query_rewriter import QueryRewriter, load_mv_selections

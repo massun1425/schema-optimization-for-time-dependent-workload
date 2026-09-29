@@ -409,7 +409,7 @@ class CommaJoinRewriter:
                 order_by = re.sub(rf'\b{table.alias}\.', f'{mv_id}.', order_by)
             rewritten += f"\nORDER BY {order_by}"
         
-        # rewritten += ";" これはgenerateのタイミングで追加
+        # rewritten += ";" this is added at generate time
         
         logger.info(f"Full replacement with {mv_id}")
         return rewritten
@@ -536,7 +536,7 @@ class CommaJoinRewriter:
                 order_by = re.sub(rf'\b{alias}\.', f'{mv_id}.', order_by)
             rewritten += f"\nORDER BY {order_by}"
         
-        # rewritten += ";" これはgenerateのタイミングで追加
+        # rewritten += ";" this is added at generate time
         
         used_mv_list = list(used_mvs)
         logger.info(f"Partial replacement with MVs: {used_mv_list}, covers: {covered_aliases}")

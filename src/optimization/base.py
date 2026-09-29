@@ -91,7 +91,7 @@ class BaseILPOptimizer(ABC):
         # Sparse candidate utility index (for candidate-based solves)
         self._cand_pos_js_by_i: dict[int, list[int]] = {}
         self._cand_pos_is_by_j: dict[int, list[int]] = {}
-        # インデックス作成コスト（未指定の場合は全て0）
+        # Index build costs (all 0 if not specified)
         self.index_build_costs = index_build_costs or [0.0] * s_num
         self.gurobi_output = gurobi_output
         self.gurobi_time_limit_sec = gurobi_time_limit_sec
@@ -305,7 +305,7 @@ class BaseILPOptimizer(ABC):
 
         Maximizes: total utility - maintenance cost - index build cost
         
-        目的関数:
+        Objective function:
           maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
 
         Args:
@@ -322,7 +322,7 @@ class BaseILPOptimizer(ABC):
         
         maintenance_terms = gp.quicksum(z[j] * self.m_cost[j] for j in range(len(self.b_j)))
         
-        # インデックス作成コスト
+        # Index build cost
         index_build_terms = gp.quicksum(
             z[j] * self.index_build_costs[j] for j in range(len(self.b_j))
         )
@@ -340,11 +340,11 @@ class BaseILPOptimizer(ABC):
         Maximizes: total utility - maintenance cost - index build cost
         Only considers candidate queries and subqueries.
         
-        目的関数:
+        Objective function:
           maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
         
-        インデックス作成コストは、MVがマテリアライズされる場合(z_j=1)に
-        そのMVがIndex Scanを使用する場合に発生する初期構築コスト。
+        The index build cost is the initial build cost incurred when the MV is materialized (z_j=1)
+        and that MV uses an Index Scan.
 
         Args:
             y: Query-MV usage variables (indexed by candidate positions)
@@ -364,7 +364,7 @@ class BaseILPOptimizer(ABC):
         )
         
         # Build index build cost component using candidate indices
-        # インデックス作成コストは、MVをマテリアライズする際に一度だけ発生する初期コスト
+        # The index build cost is an initial cost incurred only once when the MV is materialized
         index_build_terms = gp.quicksum(
             z[j] * self.index_build_costs[cand_j[j]] for j in range(len(cand_j))
         )

@@ -2,7 +2,7 @@
 """
 PostgreSQL Executor - Docker/Local switching helper
 
-環境変数 MV_USE_DOCKER=true/false または --use-docker/--use-local フラグで切り替え可能
+Switchable via the environment variable MV_USE_DOCKER=true/false or the --use-docker/--use-local flags
 """
 
 import os
@@ -11,11 +11,11 @@ from typing import Optional
 
 
 class PostgresExecutor:
-    """PostgreSQLコマンド実行のラッパークラス
+    """Wrapper class for executing PostgreSQL commands.
     
-    Docker経由またはローカルpsqlを使い分ける
+    Uses either Docker or a local psql.
     
-    使い方:
+    Usage:
         executor = PostgresExecutor(use_docker=True)
         result = executor.run_psql_command("SELECT 1;", database="imdbload")
     """
@@ -27,16 +27,16 @@ class PostgresExecutor:
         default_user: str = "postgres",
         default_password: str = ""
     ):
-        """初期化
+        """Initialize.
         
         Args:
-            use_docker: Dockerを使用するかどうか。Noneの場合は環境変数を参照
-            container_name: Dockerコンテナ名
-            default_user: デフォルトのPostgreSQLユーザー
-            default_password: デフォルトのパスワード
+            use_docker: Whether to use Docker. If None, the environment variable is consulted
+            container_name: Docker container name
+            default_user: Default PostgreSQL user
+            default_password: Default password
         """
         if use_docker is None:
-            # 環境変数から取得（デフォルトはTrue = Docker使用）
+            # Read from the environment variable (default True = use Docker)
             env_value = os.environ.get("MV_USE_DOCKER", "true").lower()
             self.use_docker = env_value in ("true", "1", "yes")
         else:
@@ -52,15 +52,15 @@ class PostgresExecutor:
         user: Optional[str] = None,
         extra_args: Optional[list] = None
     ) -> list:
-        """psqlコマンドを構築
+        """Build the psql command.
         
         Args:
-            database: データベース名
-            user: ユーザー名（省略時はdefault_user）
-            extra_args: 追加の引数リスト
+            database: Database name
+            user: User name (default_user if omitted)
+            extra_args: List of additional arguments
             
         Returns:
-            コマンド引数のリスト
+            List of command arguments
         """
         user = user or self.default_user
         extra_args = extra_args or []
@@ -85,16 +85,16 @@ class PostgresExecutor:
         extra_args: Optional[list] = None,
         env: Optional[dict] = None
     ) -> subprocess.CompletedProcess:
-        """SQLコマンドを実行
+        """Execute an SQL command.
         
         Args:
-            sql: 実行するSQL文
-            database: データベース名
-            user: ユーザー名
-            capture_output: 出力をキャプチャするか
-            check: エラー時に例外を発生させるか
-            extra_args: 追加のpsql引数
-            env: 環境変数（省略時はPGPASSWORDを設定）
+            sql: SQL statement to execute
+            database: Database name
+            user: User name
+            capture_output: Whether to capture the output
+            check: Whether to raise an exception on error
+            extra_args: Additional psql arguments
+            env: Environment variables (PGPASSWORD is set if omitted)
             
         Returns:
             subprocess.CompletedProcess
@@ -102,7 +102,7 @@ class PostgresExecutor:
         cmd = self._build_psql_command(database, user, extra_args)
         cmd.extend(["-c", sql])
         
-        # 環境変数を設定（ローカルの場合のみPGPASSWORDが必要）
+        # Set environment variables (PGPASSWORD is needed only for local execution)
         if env is None:
             env = {**os.environ}
             if not self.use_docker:
@@ -127,23 +127,23 @@ class PostgresExecutor:
         check: bool = True,
         extra_args: Optional[list] = None
     ) -> subprocess.CompletedProcess:
-        """複数のSQLコマンドを順次実行
+        """Execute multiple SQL commands sequentially.
         
         Args:
-            sql_commands: 実行するSQL文のリスト
-            database: データベース名
-            user: ユーザー名
-            capture_output: 出力をキャプチャするか
-            check: エラー時に例外を発生させるか
-            extra_args: 追加のpsql引数
+            sql_commands: List of SQL statements to execute
+            database: Database name
+            user: User name
+            capture_output: Whether to capture the output
+            check: Whether to raise an exception on error
+            extra_args: Additional psql arguments
             
         Returns:
-            subprocess.CompletedProcess（最後のコマンドの結果）
+            subprocess.CompletedProcess (result of the last command)
         """
         base_extra_args = extra_args or []
         cmd = self._build_psql_command(database, user, base_extra_args)
         
-        # 各SQLコマンドを-cオプションで追加
+        # Add each SQL command with the -c option
         for sql in sql_commands:
             cmd.extend(["-c", sql])
         
@@ -168,13 +168,13 @@ class PostgresExecutor:
         user: Optional[str] = None,
         set_options: Optional[list] = None
     ) -> subprocess.CompletedProcess:
-        """EXPLAIN JSONを実行
+        """Execute EXPLAIN JSON.
         
         Args:
-            query_sql: 実行計画を取得するSQL
-            database: データベース名
-            user: ユーザー名
-            set_options: 事前に実行するSET文のリスト
+            query_sql: SQL whose query plan is retrieved
+            database: Database name
+            user: User name
+            set_options: List of SET statements to execute beforehand
             
         Returns:
             subprocess.CompletedProcess
@@ -194,7 +194,7 @@ class PostgresExecutor:
         )
     
     def get_mode_description(self) -> str:
-        """現在のモードの説明を取得"""
+        """Get a description of the current mode"""
         if self.use_docker:
             return f"Docker ({self.container_name})"
         else:
@@ -202,10 +202,10 @@ class PostgresExecutor:
 
 
 def get_executor_from_args(args) -> PostgresExecutor:
-    """argparseの引数からExecutorを作成
+    """Create an Executor from argparse arguments.
     
     Args:
-        args: argparse.Namespaceオブジェクト（use_docker属性を持つ）
+        args: argparse.Namespace object (with a use_docker attribute)
         
     Returns:
         PostgresExecutor
@@ -215,7 +215,7 @@ def get_executor_from_args(args) -> PostgresExecutor:
 
 
 def add_docker_args(parser):
-    """argparserにDocker関連の引数を追加
+    """Add Docker-related arguments to an argparser.
     
     Args:
         parser: argparse.ArgumentParser
@@ -226,11 +226,11 @@ def add_docker_args(parser):
         action='store_true',
         dest='use_docker',
         default=None,
-        help='Docker経由でpsqlを実行（デフォルト、環境変数MV_USE_DOCKERで変更可能）'
+        help='Run psql via Docker (default; can be changed with the MV_USE_DOCKER environment variable)'
     )
     group.add_argument(
         '--use-local',
         action='store_false',
         dest='use_docker',
-        help='ローカルのpsqlを使用'
+        help='Use the local psql'
     )

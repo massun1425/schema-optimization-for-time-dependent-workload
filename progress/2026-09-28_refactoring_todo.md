@@ -123,7 +123,7 @@
   - 確認: import チェック、テスト、dry-run のコマンド列、static（utility）の Phase 6 の結果が変わらないこと
 - [x] D（論文では使わないオプション）を決めた（2026-09-29）: simple の計算モジュールと BigSubs（`--static-algorithm bigsubs`）は残す。actual_cost は `legacy/` へ移し `job_real` の分岐を削除。`src/rewrite/enhanced_mv_generator.py` は `legacy/` へ移し、それを使う `base.py` の `generate_sql` の分岐を削除（static と BigSubs の Phase 6 が動き、static の結果が変わらないことを確認）
 - 以下は 2026-09-28 時点の一覧（判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
-- [ ] 未使用のコード（棚卸し md の §4.1）
+- [x] 未使用のコード（棚卸し md の §4.1）→ `legacy/` へ移した（2026-09-29、上記）
   - `benchmark/time_dependent_query_executor copy.py`、`core/two_step_optimizer copy.py`、`core/utility_pruner copy.py`
   - `core/utility_pruner{,_iterative,_iterative_helpers,_simple}.py`、`src/core/{query_manager,query_parser}_distinct.py`
   - `src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/`
@@ -131,9 +131,9 @@
   - `migration/` の actual_cost・simple の各計算モジュール（NeuroCard・DeepDB 関連は 2026-09-29 に削除済み。判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
   - `utils/{analyze_benchmark_results,csv_exporter,plot_benchmark}.py`
   - `scripts/run_utility_{benchmark,optimization}.py`、`scripts/setup_imdb.py`、`scripts/scratch/`、`scripts/progress/`
-- [ ] `scripts/shell/` の旧スクリプト 19 本（`paper/` に置き換え済み）。特に `run_ex1_1-ceb.sh` は頻度ファイルのサフィックスが論文と違い、誤用の元になる
-- [ ] 古い手順書 `scripts/DATABASE_SETUP.md`（移動済みのファイルや旧構成を参照している）
-- [ ] 使っていない設定 `config/experiments/*.yaml`
+- [x] `scripts/shell/` の旧スクリプト 19 本 → `legacy/` へ移した（`paper/` に置き換え済み）。特に `run_ex1_1-ceb.sh` は頻度ファイルのサフィックスが論文と違い、誤用の元になる
+- [x] 古い手順書 `scripts/DATABASE_SETUP.md` → `legacy/` へ移した（移動済みのファイルや旧構成を参照している）
+- [x] 使っていない設定 `config/experiments/*.yaml` → `legacy/` へ移した
 
 - **注意**: `src/optimization/{bigsubs,frequency,utility,utility_capacity}.py` は、使っていないが `factory.py` が import しているので、そのまま移すと壊れる。移すなら `factory.py` も直す。
 - **完了条件**: import チェック（CI と同じもの）と `DRY_RUN=1 bash paper/run_all.sh` のコマンド列が、移動前と変わらない。
@@ -150,7 +150,16 @@
 - 未確認: pickle（`qp_class.pkl`）が参照しているモジュール名。候補を移す前に確認する
 
 ### 6. 実行経路のコードを英語化する
-- [ ] 実行経路のコード 44 ファイルにある日本語のコメント・docstring・ログメッセージを英語にする（`scripts/run_experiment_normal.py`、`core/`、`src/`、`migration/` など）
+（2026-09-29 完了）
+- [x] 実行経路のコード 29 ファイル（約 2,000 行）の日本語のコメント・docstring・ログメッセージを英語にした（`dashboard/` は対象外）
+  - 確認 1: 構文木を比べ、変わったのが文字列とコメントだけであること、日本語を含まない元の文字列がすべて残っていること、日本語が残っていないことを全ファイルで確認した
+  - 確認 2: import チェック、テスト、`--help`、dry-run のコマンド列、図表の再生成が翻訳前と同じ
+  - 確認 3: スクラッチで実行し直して比べた。Phase 6〜8（static）の結果・MV の SQL（コメント行以外）・書き換えたクエリ 2,515 本が一致。Phase 4・5（mini セット）のプランとコストは、ハッシュを固定すると翻訳前とバイト単位で一致
+  - Phase 2 の pickle は、翻訳前のコード同士でも毎回違う。`QueryParser` が維持コスト `m_cost` をシードなしの `random.randint` で計算しているため（`src/core/query_parser.py`）。`m_cost` とそこから計算する統計値を除けば、翻訳の前後で同じ。static の最適化は `m_cost` を 0 にして使うので、論文の結果には影響しない
+- [x] 翻訳中に見つかった、コードと合っていないコメントをコードに合わせた（2026-09-29）
+  - `migration/sampling_migration_cost_calculator{,_high}.py` の `TARGET_TABLES` の見出し（例: 低サンプル率版は 1% / 5% / 100% / 10% / 100% / 100%）
+  - `scripts/recalculate_costs.py` の `log1p` の行のコメント（大きい行数を対数的に抑える。0 は 0 のまま）
+- [x] サンプリングの並列実行を削除した（2026-09-29）: 2 つのサンプリングの計算モジュールの並列用の関数 `_process_single_node` は、クラスの `TARGET_TABLES` と値の違う独自のサンプリング率の表を持っていたが、`--sampling-parallel` / `--sampling-workers` が `calculate_all_costs()` に渡されておらず一度も使われていなかった。実験コードの変更を避けるため、並列実行の分岐・関数・使わない import（`Pool`、`cpu_count`、`partial`）と、効かないオプション 2 つを削除した。逐次実行の処理は、構文木の比較で元と同じ（違いはログの見出し 1 行と引数だけ）
 
 - **理由**: リポジトリは英語で書くという方針に合わせるため（国際会議の成果物）。
 - **注意**: ロジックは変えない。ログの文言を変えると、過去のログとの比較や grep がしにくくなる点に注意。
@@ -161,7 +170,8 @@
 - [x] `run_experiment_normal.py` の設定に関するコメントを、実際の動作（`config/default.yaml` か `$CONFIG_PATH` を読み、`DB_*` の環境変数で上書き）に合わせて英語で書き直した
 - [x] `migration/enumerate_simple_migration_plan.py` の `__main__` を、`run_experiment_normal.py` と同じ `Settings()` を使うように直した
 - [x] `tests/test_pruning.py` のプロジェクトルートの計算を直した（別のディレクトリから素の `pytest` で実行しても import に成功することを確認）
-- [ ] `utils/csv_exporter.py` の構文エラー（5 で archive に移すなら不要）
+- [x] `utils/csv_exporter.py` の構文エラー → ファイルごと削除した（コミット `5496b1c8`）
+- [x] Phase 4 と 5 が、`--config` の実験ディレクトリではなくリポジトリの `03_parsed/`・`04_migration/` を固定のパスで読み書きしていた → `GetSimpleMigrationPlans` と 3 つのコスト計算クラスに `exp_dir` 引数（既定値は従来どおりリポジトリの直下）を追加し、`run_experiment_normal.py` から実験ディレクトリを渡すようにした（2026-09-29）。スクラッチで Phase 4・5 を実行し、書き込み先が実験ディレクトリになることを確認
 
 ### 8. 実行条件を結果 JSON に保存する
 （2026-09-29 完了）

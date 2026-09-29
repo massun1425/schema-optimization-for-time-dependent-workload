@@ -166,7 +166,7 @@ def load_timesteps_and_frequencies(base_dir: str, query_set: str = "job_like", f
 
     return timesteps, frequencies
 
-# 今は使っていない
+# Currently unused
 def load_query_frequency(
     base_dir: str, timesteps: List[str], query_count: int
 ) -> Dict[str, List[float]]:
@@ -356,22 +356,22 @@ def load_full_build_costs_and_sizes(
     query_set: str = "job"
 ) -> Tuple[Dict[int, float], Dict[int, float], List[float]]:
     """
-    simple_migration_costs.jsonから[]レシピ(フルビルド)のコスト、利得、サイズを読み込む。
+    Load the cost, utility and size of the [] recipe (full build) from simple_migration_costs.json.
     
-    簡略化版最適化では依存レシピを使用しないため、
-    フルビルド（空の依存関係 '[]'）のデータのみが必要。
-    これにより、parse_migration_costs_and_sizes()の複雑な処理を回避できる。
+    The simplified optimization does not use dependent recipes,
+    so only the full-build data (empty dependency '[]') is needed.
+    This avoids the complex processing in parse_migration_costs_and_sizes().
     
     Args:
-        base_dir: 実験ディレクトリ (e.g., experiments/small_test_ver2)
-        node_list: ノードIDのリスト (qp_class.pklから取得)
-        query_set: クエリセット名 (e.g., "job", "job_like")
+        base_dir: Experiment directory (e.g., experiments/small_test_ver2)
+        node_list: List of node IDs (obtained from qp_class.pkl)
+        query_set: Query set name (e.g., "job", "job_like")
     
     Returns:
         Tuple of (migration_costs, utilities, sizes)
-        - migration_costs: Dict[int, float] - {j: 作成コスト（読み取り+書き込み）}
-        - utilities: Dict[int, float] - {j: 利得（読み取りコストのみ）}
-        - sizes: List[float] - 各MVのサイズ (インデックスj)
+        - migration_costs: Dict[int, float] - {j: creation cost (read + write)}
+        - utilities: Dict[int, float] - {j: utility (read cost only)}
+        - sizes: List[float] - size of each MV (index j)
     """
     path = os.path.join(base_dir, "04_migration", query_set, "simple_migration_costs.json")
     
@@ -392,11 +392,11 @@ def load_full_build_costs_and_sizes(
             logger.debug(f"Node {node_id} not found in node_list, skipping")
             continue
         
-        # []キー（フルビルド）を探す
+        # Look up the [] key (full build)
         full_build = recipes.get("[]")
         if full_build and isinstance(full_build, dict):
             migration_costs[j] = float(full_build.get("cost", 0.0))
-            # utility があればそれを使用、なければ cost にフォールバック（後方互換性）
+            # Use utility if present, otherwise fall back to cost (backward compatibility)
             utilities[j] = float(full_build.get("utility", full_build.get("cost", 0.0)))
             sizes[j] = float(full_build.get("size", 1.0))
         else:

@@ -44,12 +44,12 @@ class LocalILPOptimizer:
         migration_cost: Dict[int, float],
         query_frequency_by_timestep: Dict[str, List[float]],
         fixed_mvs_by_timestep: Dict[int, Set[int]] = None,
-        candidate_indices: List[int] = None,  # ★ 新規: 事前計算された候補
+        candidate_indices: List[int] = None,  # New: precomputed candidates
         gurobi_output: int = 0,
         mip_gap: Optional[float] = None,
-        use_solution_pool: bool = False,  # Solution Pool機能を使用するか
-        pool_solutions: int = 10,  # 保持する解の個数
-        pool_gap: float = 0.001,  # 許容する相対ギャップ（0.1%）
+        use_solution_pool: bool = False,  # whether to use the Solution Pool feature
+        pool_solutions: int = 10,  # number of solutions to keep
+        pool_gap: float = 0.001,  # allowed relative gap (0.1%)
     ) -> None:
         """Initialize the local ILP optimizer.
         
@@ -104,7 +104,7 @@ class LocalILPOptimizer:
         self.pos_is_by_j: Dict[int, List[int]] = {}
         self.pos_js_by_i: Dict[int, List[int]] = {}
 
-        # マイグレーションコストへの重み付け
+        # Weighting of the migration cost
         self.migration_ratio = 1.0 # float(self.T/len(all_timesteps))
         
         # Initialize candidate filtering

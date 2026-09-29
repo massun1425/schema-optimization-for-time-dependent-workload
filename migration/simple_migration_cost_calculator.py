@@ -1,4 +1,4 @@
-# シンプルな2パターンのみのマイグレーションコスト計算
+# Simple migration cost calculation with only two patterns
 
 # python experiments/small_test_ver2/migration/simple_migration_cost_calculator.py --query-set job
 
@@ -11,32 +11,34 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-# プロジェクトルートをパスに追加
+# Add the project root to the path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from config.settings import Settings
 
 class SimpleMigrationCostCalculator:
-    """シンプルなマイグレーションプラン（2パターンのみ）のコストを計算するクラス
+    """Class that calculates the costs of simple migration plans (two patterns only)
         
-        simple_migration_plans.jsonから各SQLを読み込み、EXPLAINでtotalcostを取得。
-        2パターン: 1) NON_MIGRATE (マイグレーション無し), 2) [] (依存MV無し)
+        Reads each SQL from simple_migration_plans.json and gets the totalcost with EXPLAIN.
+        Two patterns: 1) NON_MIGRATE (no migration), 2) [] (no dependent MVs)
     """
 
-    def __init__(self, settings: Settings, query_set: str = "job_like"):
+    def __init__(self, settings: Settings, query_set: str = "job_like", exp_dir: str | Path | None = None):
         """
         Args:
-            settings: config.yamlから読み込んだSettings
-            query_set: クエリセット名
+            settings: Settings loaded from config.yaml
+            query_set: Name of the query set
         """
         self.settings = settings
         self.query_set = query_set
         
-        # JSONファイルのパス設定
-        self.json_file_path = Path(__file__).parent.parent / "04_migration" / query_set / "simple_migration_plans.json"
+        # Set the JSON file path
+        # Experiment directory holding 04_migration/ (default: the repository root)
+        base_dir = Path(exp_dir) if exp_dir is not None else Path(__file__).parent.parent
+        self.json_file_path = base_dir / "04_migration" / query_set / "simple_migration_plans.json"
         
-        # 出力ディレクトリのパス
+        # Path of the output directory
         self.output_dir = self.json_file_path.parent
         
         self.plans = self._load_plans()
@@ -47,7 +49,7 @@ class SimpleMigrationCostCalculator:
             return json.load(f)
         
     def _get_connection(self):
-        """データベース接続を取得（config.yamlの設定を使用）"""
+        """Get a database connection (using the settings in config.yaml)"""
         return psycopg2.connect(
             host=self.settings.database.host,
             port=self.settings.database.port,
@@ -58,41 +60,41 @@ class SimpleMigrationCostCalculator:
     
 
     def _explain_sql(self, cursor, sql: str) -> tuple[float, int, int]:
-        """SQLをEXPLAINし、totalcost、rows、widthを取得
+        """Run EXPLAIN on the SQL and get totalcost, rows, and width
         
         Args:
-            cursor: データベースカーソル（接続の使い回し用）
-            sql: 実行するSQL
+            cursor: Database cursor (to reuse the connection)
+            sql: SQL to run
             
         Returns:
-            (totalcost, plan_rows, plan_width) のタプル、エラー時は(0.0, 0, 0)
+            A tuple (totalcost, plan_rows, plan_width), or (0.0, 0, 0) on error
         """
         if not sql or sql.strip() == "" or not isinstance(sql, str):
             return (0.0, 0, 0)
         
-        # "NON_MIGRATE" は実際のSQLではないので0を返す
+        # "NON_MIGRATE" is not an actual SQL, so return 0
         if sql == "NON_MIGRATE":
             return (0.0, 0, 0)
         
-        # CREATE MATERIALIZED VIEWの場合、正規表現でSELECT部分を抽出
-        # re.DOTALLで改行も含めてマッチ
+        # For CREATE MATERIALIZED VIEW, extract the SELECT part with a regular expression
+        # re.DOTALL makes the match span newlines
         match = re.search(r'CREATE\s+MATERIALIZED\s+VIEW\s+\S+\s+AS\s+(.*)', sql, re.IGNORECASE | re.DOTALL)
         if match:
             sql = match.group(1).strip()
         else:
-            # "AS" が見つからない場合はエラー
-            print(f"  CREATE文のパースエラー: {sql[:80]}...")
+            # Error if "AS" is not found
+            print(f"  Parse error in CREATE statement: {sql[:80]}...")
             return (0.0, 0, 0)
         
         try:
-            # EXPLAIN を実行
+            # Run EXPLAIN
             explain_query = f"EXPLAIN (FORMAT JSON) {sql}"
             cursor.execute(explain_query)
             result = cursor.fetchone()
 
             if result and result[0]:
-                # JSON形式の結果からtotal_cost、plan_rows、plan_widthを取得
-                plan = result[0][0]  # 最初のプラン
+                # Get total_cost, plan_rows, and plan_width from the JSON result
+                plan = result[0][0]  # First plan
                 plan_data = plan.get('Plan', {})
                 total_cost = float(plan_data.get('Total Cost', 0.0))
                 plan_rows = int(plan_data.get('Plan Rows', 0))
@@ -101,71 +103,71 @@ class SimpleMigrationCostCalculator:
             else:
                 return (0.0, 0, 0)
         except Exception as e:
-            print(f"  エラー: EXPLAINの実行失敗 - {e}")
+            print(f"  Error: EXPLAIN failed - {e}")
             print(f"  SQL: {sql[:100]}...")
             return (0.0, 0, 0)
         
 
     def calculate_all_costs(self) -> Dict[str, Dict[str, Dict[str, Any]]]:
-        """すべてのマイグレーションプラン（2パターンのみ）のコストを計算
+        """Calculate the costs of all migration plans (two patterns only)
         
         Returns:
-            ノード名 -> {プランキー: {cost, utility, rows, width, size}} の辞書
-            - cost: 作成コスト（読み取り + 書き込み）
-            - utility: 利得（EXPLAINのTotal Cost = 読み取りコストのみ）
+            Dict of node name -> {plan key: {cost, utility, rows, width, size}}
+            - cost: creation cost (read + write)
+            - utility: utility (EXPLAIN Total Cost = read cost only)
         """
         print("\n" + "="*70)
-        print("マイグレーションコストを計算中（書き込みコスト含む）...")
+        print("Calculating migration costs (including write costs)...")
         print("="*70)
         
         total_nodes = len(self.plans)
         processed = 0
         
-        # データベース接続を1回だけ開く（全EXPLAIN実行で使い回し）
+        # Open the database connection only once (reused for all EXPLAIN runs)
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cursor:
-                    # Phase 1と同じ設定を適用（推定精度向上）
+                    # Apply the same settings as Phase 1 (better estimation accuracy)
                     cursor.execute("SET enable_bitmapscan = off;")
                     cursor.execute("SET default_statistics_target = 1000;")
                     cursor.execute("SET random_page_cost = 1.1;")
                     
-                    # simple_migration_plans.jsonから読み込んだ順序を保持（leaf → non_leaf, ID昇順）
+                    # Keep the order read from simple_migration_plans.json (leaf -> non_leaf, ascending ID)
                     for node, plans in self.plans.items():
                         processed += 1
                         if processed % 10 == 0 or processed == total_nodes:
-                            print(f"  進捗: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
+                            print(f"  Progress: {processed}/{total_nodes} ({processed*100//total_nodes}%)")
                         
                         self.costs[node] = {}
                         
-                        # 2パターンのみ処理（順番を保証するためソート）
+                        # Process only the two patterns (sorted to guarantee the order)
                         for plan_key in sorted(plans.keys()):
                             sql = plans[plan_key]
                             
                             if plan_key == "[]":
-                                # 依存MV無しでマイグレーション
+                                # Migration without dependent MVs
                                 total_cost, rows, width = self._explain_sql(cursor, sql)
                                 size = rows * width
                                 
-                                # 書き込みコストを計算
-                                # ページ書き込みコスト = (サイズ / ページサイズ) * SEQ_PAGE_COST
-                                # タプル処理コスト = 行数 * CPU_TUPLE_COST
+                                # Calculate the write cost
+                                # Page write cost = (size / page size) * SEQ_PAGE_COST
+                                # Tuple processing cost = number of rows * CPU_TUPLE_COST
                                 write_pages = (size // 8192) + 1 if size > 0 else 0
                                 write_cost = (write_pages * 1.0) + (rows * 0.01)
                                 
-                                # 作成コスト = 読み取りコスト + 書き込みコスト
+                                # Creation cost = read cost + write cost
                                 creation_cost = total_cost + write_cost
                                 
                                 self.costs[node][plan_key] = {
-                                    "cost": creation_cost,      # 作成コスト（読み取り + 書き込み）
-                                    "utility": total_cost,      # 利得（EXPLAINコスト = 読み取りのみ）
+                                    "cost": creation_cost,      # Creation cost (read + write)
+                                    "utility": total_cost,      # Utility (EXPLAIN cost = read only)
                                     "rows": rows,
                                     "width": width,
                                     "size": size
                                 }
                             else:
-                                # NON_MIGRATE パターン (str([target_mv])の形式)
-                                # SQLは "NON_MIGRATE" 文字列なので、コストとサイズは0
+                                # NON_MIGRATE pattern (in the form str([target_mv]))
+                                # The SQL is the string "NON_MIGRATE", so cost and size are 0
                                 self.costs[node][plan_key] = {
                                     "cost": 0.0,
                                     "utility": 0.0,
@@ -174,51 +176,51 @@ class SimpleMigrationCostCalculator:
                                     "size": 0
                                 }
 
-            print(f"\n✓ 計算完了: {len(self.costs)}個のノード")
+            print(f"\n✓ Calculation finished: {len(self.costs)} nodes")
             print("="*70 + "\n")
             
         except Exception as e:
-            print(f"\nエラー: データベース接続に失敗しました - {e}")
+            print(f"\nError: failed to connect to the database - {e}")
             raise
         
-        # コストをJSONファイルに保存
+        # Save the costs to a JSON file
         self.save_costs()
         
         return self.costs
     
     def save_costs(self, output_file: str = "simple_migration_costs.json"):
-        """計算したコストをJSONファイルに保存"""
+        """Save the calculated costs to a JSON file"""
         try:
             output_path = self.output_dir / output_file
             with open(output_path, 'w', encoding='utf-8') as f:
-                # 読み込み順序を保持（sort_keysを使わない）
+                # Keep the loading order (do not use sort_keys)
                 json.dump(self.costs, f, indent=2, ensure_ascii=False)
-            print(f"マイグレーションコストを保存しました: {output_path}")
+            print(f"Saved migration costs: {output_path}")
         except Exception as e:
-            print(f"JSONファイルの保存に失敗しました: {e}")
+            print(f"Failed to save the JSON file: {e}")
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="シンプルマイグレーションプラン（2パターン）のコスト計算")
+    parser = argparse.ArgumentParser(description="Cost calculation of simple migration plans (two patterns)")
     parser.add_argument(
         "--query-set",
         type = str,
         default = "job_like",
-        help = "使用するクエリセットの名前 (デフォルト: job_like)"
+        help = "Name of the query set to use (default: job_like)"
     )
 
     args = parser.parse_args()
 
-    # config.yamlから設定を読み込み（UTF-8で明示的に読み込み）
+    # Load settings from config.yaml (explicitly read as UTF-8)
     config_path = Path(__file__).parent.parent / "config.yaml"
     
-    # UTF-8でYAMLを読み込む
+    # Read the YAML as UTF-8
     with open(config_path, 'r', encoding='utf-8') as f:
         config_data = yaml.safe_load(f)
     
-    # 一時ファイルに書き込んでからSettingsを読み込む
+    # Write to a temporary file, then load Settings from it
     temp_config = config_path.parent / '.temp_config.yaml'
     with open(temp_config, 'w', encoding='utf-8') as f:
         yaml.dump(config_data, f, allow_unicode=True)
@@ -229,14 +231,14 @@ if __name__ == "__main__":
         if temp_config.exists():
             temp_config.unlink()
     
-    # コスト計算クラスのインスタンス化
+    # Instantiate the cost calculation class
     calculator = SimpleMigrationCostCalculator(settings, query_set=args.query_set)
     
-    # シンプルなマイグレーションプランでは既存MVを使わないため、
-    # MV作成とANALYZEは不要。直接コスト計算を実行。
-    print("\n【シンプルマイグレーションコスト計算】")
-    print("  - NON_MIGRATE: コスト = 0")
-    print("  - []: 依存MV無しでEXPLAIN実行")
+    # Simple migration plans do not use existing MVs,
+    # so MV creation and ANALYZE are unnecessary. Run the cost calculation directly.
+    print("\n[Simple migration cost calculation]")
+    print("  - NON_MIGRATE: cost = 0")
+    print("  - []: run EXPLAIN without dependent MVs")
     costs = calculator.calculate_all_costs()
     
-    print("\n✓ 処理完了")
+    print("\n✓ Processing finished")

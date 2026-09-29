@@ -569,7 +569,7 @@ class CFPruner:
             migration_cost=self.migration_cost,
             query_frequency_by_timestep=aggregated_freq,
             fixed_mvs_by_timestep=fixed_mvs_by_timestep,
-            candidate_indices=self.cand_j,  # ★ 事前計算された候補を渡す
+            candidate_indices=self.cand_j,  # pass the precomputed candidates
             gurobi_output=self.gurobi_output,
         )
         
@@ -744,55 +744,55 @@ def _solve_node_static(
     Returns:
         Dictionary with solution info
     """
-    # --- 修正: 期間を3等分して頻度を集計するロジックの追加 ---
+    # --- Change: split the interval into three equal parts and aggregate frequencies per part ---
     
     start_idx = node.min_idx
     end_idx = node.max_idx
     duration = end_idx - start_idx
     
-    # ソルバーに渡すための新しい頻度辞書を作成
-    # (最適化で使われるのは min, median, max の3点のみなので、そのキーだけ設定すれば良い)
+    # Build a new frequency dict to pass to the solver
+    # (the optimization only uses the three points min, median and max, so only those keys need to be set)
     aggregated_freq: Dict[str, List[float]] = {}
     
-    # クエリ数を取得 (freqの最初の値から推定)
+    # Get the number of queries (inferred from the first value of freq)
     first_key = list(freq.keys())[0]
     num_queries = len(freq[first_key])
 
-    # 期間が短すぎる場合は分割できないため、元の頻度をそのまま使う (フォールバック)
+    # If the interval is too short to split, use the original frequencies as is (fallback)
     if duration < 3:
         for t_idx in [node.min_idx, node.median_idx, node.max_idx]:
             ts_name = timesteps[t_idx]
             aggregated_freq[ts_name] = freq[ts_name]
     else:
-        # 均等3分割の計算
+        # Compute the equal three-way split
         partition_size = duration / 3.0
         
-        # 区間の境界インデックスを計算
-        # 区間1: [start, b1)
-        # 区間2: [b1, b2)
-        # 区間3: [b2, end] (最後はendを含む)
+        # Compute the boundary indices of the sub-intervals
+        # Sub-interval 1: [start, b1)
+        # Sub-interval 2: [b1, b2)
+        # Sub-interval 3: [b2, end] (the last one includes end)
         b1 = int(start_idx + partition_size)
         b2 = int(start_idx + partition_size * 2)
         
-        # 3つの区間を定義 (開始インデックス, 終了インデックス(exclusive))
-        # ただし最後の区間は end_idx + 1 (inclusiveにするため) までとする
+        # Define the three sub-intervals (start index, end index (exclusive))
+        # but the last sub-interval extends to end_idx + 1 (to make it inclusive)
         ranges = [
             (start_idx, b1),      # Mapped to min_idx
             (b1, b2),             # Mapped to median_idx
             (b2, end_idx + 1)     # Mapped to max_idx
         ]
         
-        # マッピング先の時刻インデックス
+        # Target time step indices of the mapping
         target_indices = [node.min_idx, node.median_idx, node.max_idx]
         
         for range_idx, (r_start, r_end) in enumerate(ranges):
-            # 集計用配列の初期化
+            # Initialize the accumulation array
             total_freqs = [0.0] * num_queries
             
-            # 区間内の全タイムステップについて頻度を加算
-            # r_end は exclusive なので range でそのまま使える
+            # Sum the frequencies over all time steps in the sub-interval
+            # r_end is exclusive, so it can be used directly with range
             for t in range(r_start, r_end):
-                # 範囲外アクセスのガード (念のため)
+                # Guard against out-of-range access (just in case)
                 if t >= len(timesteps): continue
                 
                 ts_name = timesteps[t]
@@ -801,12 +801,12 @@ def _solve_node_static(
                 for q in range(num_queries):
                     total_freqs[q] += current_freqs[q]
             
-            # 集計結果を代表時刻の頻度として登録
-            # LocalILPOptimizer は timesteps[node.min_idx] 等のキーで参照しに来る
+            # Register the aggregated result as the frequency of the representative time step
+            # LocalILPOptimizer looks it up with keys such as timesteps[node.min_idx]
             target_ts_name = timesteps[target_indices[range_idx]]
             aggregated_freq[target_ts_name] = total_freqs
 
-    # --- 修正終了 ---
+    # --- End of change ---
 
     # Prepare timestep indices for this node
     timestep_indices = [node.min_idx, node.median_idx, node.max_idx]
@@ -839,7 +839,7 @@ def _solve_node_static(
         timestep_indices=timestep_indices,
         all_timesteps=timesteps,
         migration_cost=migration_cost,
-        query_frequency_by_timestep=aggregated_freq,  # ★修正: 集計した頻度を渡す
+        query_frequency_by_timestep=aggregated_freq,  # Changed: pass the aggregated frequencies
         fixed_mvs_by_timestep=fixed_mvs_by_timestep,
         candidate_indices=cand_j,
         gurobi_output=gurobi_output,

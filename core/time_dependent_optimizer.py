@@ -47,7 +47,7 @@ class TimeDependentOptimizer:
         migration_cost: Dict[int, float],
         query_frequency_by_timestep: Dict[str, List[float]],
         gurobi_output: int = 0,
-        migration_cost_weight: float = 1.0,  # マイグレーションコストの重み係数（0.1 = 1/10に削減）
+        migration_cost_weight: float = 1.0,  # weight factor for the migration cost (0.1 = reduced to 1/10)
     ) -> None:
         """
         Initialize the time-dependent optimizer.

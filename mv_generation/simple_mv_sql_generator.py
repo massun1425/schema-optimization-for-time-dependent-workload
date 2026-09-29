@@ -35,7 +35,7 @@ class SimpleMVSQLGenerator:
         """
         self.qp = qp
         self.db_config = db_config
-        # SchemaProviderを1回だけ作成して再利用（パフォーマンス最適化）
+        # Create the SchemaProvider only once and reuse it (performance optimization)
         from src.rewrite.schema_provider import SchemaProvider
         self.schema_provider = SchemaProvider(self.db_config)
     
@@ -44,64 +44,64 @@ class SimpleMVSQLGenerator:
         node_id: str, 
         existing_mvs: list[str]
     ) -> Optional[str]:
-        """既存MVを考慮してMV SQLを生成
+        """Generate MV SQL taking existing MVs into account.
         
         Args:
-            node_id: 生成するMVのノードID
-            existing_mvs: 既存のMVノードIDリスト（再利用可能なMV）
+            node_id: Node ID of the MV to generate
+            existing_mvs: List of existing MV node IDs (reusable MVs)
             
         Returns:
-            CREATE MATERIALIZED VIEW文。生成失敗時はNone
+            CREATE MATERIALIZED VIEW statement, or None if generation fails
         """
         if not hasattr(self.qp, 'qm'):
-            print(f"  エラー: QueryParserにqmが存在しません")
+            print(f"  Error: QueryParser has no qm")
             return None
         
         try:
-            # 1. EnhancedMVGeneratorで元のMV定義を生成（再利用したschema_providerを使用）
+            # 1. Generate the original MV definition with EnhancedMVGenerator (using the reused schema_provider)
             mv_generator = EnhancedMVGenerator(
                 query_manager=self.qp.qm,
                 schema_provider=self.schema_provider,
-                selected_mvs=set(),  # 既存MVなしで純粋なクエリを生成
-                query_parser=self.qp,  # 元SQL JOIN条件へのアクセスを提供
+                selected_mvs=set(),  # generate a plain query without existing MVs
+                query_parser=self.qp,  # provides access to the join conditions of the original SQL
             )
             
             original_sql = mv_generator.generate_mv_sql(node_id)
             
             if not original_sql:
-                print(f"  エラー: {node_id} のMV SQL生成失敗")
+                print(f"  Error: MV SQL generation failed for {node_id}")
                 return None
             
-            print(f"  [INFO] 元のSQL生成完了")
+            print(f"  [INFO] Original SQL generated")
             
-            # 2. CREATE MATERIALIZED VIEW ... AS 部分を削除して元クエリを取得
+            # 2. Remove the CREATE MATERIALIZED VIEW ... AS part to get the base query
             base_query = self._extract_query_from_create(original_sql)
             
             if not base_query:
-                print(f"  エラー: {node_id} のクエリ抽出失敗")
+                print(f"  Error: query extraction failed for {node_id}")
                 return None
             
-            # 3. 既存MVがある場合、CommaJoinRewriterで書き換え
+            # 3. If there are existing MVs, rewrite with CommaJoinRewriter
             if existing_mvs:
-                print(f"  [INFO] 既存MV {len(existing_mvs)}個を使用して書き換え")
+                print(f"  [INFO] Rewriting using {len(existing_mvs)} existing MV(s)")
                 
-                # CommaJoinRewriterを初期化（再利用したschema_providerを使用）
+                # Initialize CommaJoinRewriter (using the reused schema_provider)
                 comma_rewriter = CommaJoinRewriter(
                     query_manager=self.qp.qm,
                     schema_provider=self.schema_provider
                 )
                 
-                # 各既存MVのカバー範囲を判定
+                # Determine the coverage of each existing MV
                 mv_dict = {}  # mv_id -> set of covered aliases
                 for mv_id in existing_mvs:
                     mv_tables = self._get_mv_covered_aliases(mv_id, base_query)
                     if mv_tables:
-                        print(f"  [INFO] {mv_id} がカバー: {mv_tables}")
+                        print(f"  [INFO] {mv_id} covers: {mv_tables}")
                         mv_dict[mv_id] = mv_tables
                     else:
-                        print(f"  [INFO] {mv_id} はクエリをカバーしない")
+                        print(f"  [INFO] {mv_id} does not cover the query")
                 
-                # 複数MVで書き換え
+                # Rewrite with multiple MVs
                 if mv_dict:
                     rewritten_query = comma_rewriter.rewrite_with_multiple_mvs(
                         base_query, 
@@ -110,54 +110,54 @@ class SimpleMVSQLGenerator:
                 else:
                     rewritten_query = base_query
             else:
-                print(f"  [INFO] 既存MVなし、元クエリを使用")
+                print(f"  [INFO] No existing MVs, using the base query")
                 rewritten_query = base_query
             
-            # 4. CREATE MATERIALIZED VIEW文に変換
+            # 4. Convert to a CREATE MATERIALIZED VIEW statement
             create_sql = f"CREATE MATERIALIZED VIEW {node_id} AS\n{rewritten_query};"
             
-            print(f"  [INFO] {node_id} のSQL生成完了")
+            print(f"  [INFO] {node_id}: SQL generated")
             if existing_mvs:
-                print(f"  [INFO] 再利用MV: {existing_mvs}")
+                print(f"  [INFO] Reused MVs: {existing_mvs}")
             
             return create_sql
             
         except Exception as e:
-            print(f"  エラー: SQL生成失敗 - {e}")
+            print(f"  Error: SQL generation failed - {e}")
             import traceback
             traceback.print_exc()
             return None
     
     def _extract_query_from_create(self, create_sql: str) -> Optional[str]:
-        """CREATE MATERIALIZED VIEW文からSELECTクエリを抽出
+        """Extract the SELECT query from a CREATE MATERIALIZED VIEW statement.
         
         Args:
-            create_sql: CREATE MATERIALIZED VIEW文
+            create_sql: CREATE MATERIALIZED VIEW statement
             
         Returns:
-            SELECTクエリ部分。抽出失敗時はNone
+            The SELECT query part, or None if extraction fails
         """
         import re
         match = re.search(r'CREATE MATERIALIZED VIEW\s+\w+\s+AS\s+(.+)', 
                          create_sql, re.DOTALL | re.IGNORECASE)
         if match:
             query = match.group(1).strip()
-            # 末尾のセミコロンを削除
+            # Remove the trailing semicolon
             query = query.rstrip(';').strip()
             return query
         return None
     
     
     def _get_mv_tables_info(self, mv_node_id: str) -> Optional[dict]:
-        """MVに含まれるテーブル情報を取得
+        """Get information on the tables contained in the MV.
         
         Args:
-            mv_node_id: MVのノードID
+            mv_node_id: Node ID of the MV
             
         Returns:
-            {'tables': [table_name, ...], 'aliases': [alias, ...]} または None
+            {'tables': [table_name, ...], 'aliases': [alias, ...]} or None
         """
-        # leaf_nodeの場合
+        # leaf_node case
         if mv_node_id in self.qp.qm.leaf_nodes_map_r:
             operator, table_name, alias, filter_cond = self.qp.qm.leaf_nodes_map_r[mv_node_id]
             return {
@@ -166,7 +166,7 @@ class SimpleMVSQLGenerator:
                 'filters': [filter_cond] if filter_cond else []
             }
         
-        # non_leaf_nodeの場合
+        # non_leaf_node case
         elif mv_node_id in self.qp.qm.non_leaf_nodes_info:
             all_tables = self._get_all_tables(mv_node_id)
             if all_tables:
@@ -185,30 +185,30 @@ class SimpleMVSQLGenerator:
         mv_id: str, 
         query: str
     ) -> Optional[set]:
-        """MVがカバーするテーブルエイリアスを取得
+        """Get the table aliases covered by the MV.
         
         Args:
-            mv_id: MVのノードID
-            query: クエリ文字列
+            mv_id: Node ID of the MV
+            query: Query string
             
         Returns:
-            カバーするエイリアスのset、または None
+            Set of covered aliases, or None
         """
         try:
-            # MVのテーブル情報を取得
+            # Get the table information of the MV
             mv_info = self._get_mv_tables_info(mv_id)
             if not mv_info:
                 return None
             
             mv_aliases = set(mv_info['aliases'])
             
-            # クエリからテーブルエイリアスを抽出して検証
-            # CommaJoinRewriterのparse_queryを使用（再利用したschema_providerを使用）
+            # Extract the table aliases from the query and check them
+            # Use CommaJoinRewriter.parse_query (with the reused schema_provider)
             from mv_generation.comma_join_rewriter import CommaJoinRewriter
             
             rewriter = CommaJoinRewriter(self.qp.qm, self.schema_provider)
             
-            # クエリをパースして使用されているテーブルを確認
+            # Parse the query to find the tables it uses
             parsed = rewriter.parse_query(query)
             if not parsed:
                 return None
@@ -217,22 +217,22 @@ class SimpleMVSQLGenerator:
             for table_info in parsed['tables']:
                 query_aliases.add(table_info.alias)
             
-            # MVのエイリアスがクエリに含まれているかチェック
+            # Check whether the MV aliases appear in the query
             covered = mv_aliases & query_aliases
             
             return covered if covered else None
             
         except Exception as e:
-            print(f"  [WARN] MVカバレッジ判定エラー ({mv_id}): {e}")
+            print(f"  [WARN] MV coverage check error ({mv_id}): {e}")
             return None
     
     
 
     def _get_all_tables(self, node_id: str) -> list[tuple[str, str]]:
-        """ノードIDから全てのテーブル(table_name, alias)を再帰的に取得
+        """Recursively collect all tables (table_name, alias) under a node ID.
         
         Args:
-            node_id: ノードID
+            node_id: Node ID
             
         Returns:
             List of (table_name, alias) tuples
