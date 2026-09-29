@@ -6,7 +6,9 @@ TODO の「5. 未使用のコードと古いスクリプトを archive へ移す
 > - コード: `migration/{deepdb_estimator,deepdb_migration_cost_calculator,neurocard_migration_cost_calculator}.py` と `src/estimation/`（4 ファイル）を `git rm`。`run_experiment_normal.py` から `--use-deepdb`・`--use-neurocard`・`--compare`（DeepDB 専用）と Phase 5 の分岐を削除
 > - `archive/` の `deepdb_full`・`deepdb_light`・`neurocard_full`・`neurocard_light`（約 25 GB）を削除
 > - 確認: CI と同じ import チェック（14 モジュール）、テスト 5 件、`DRY_RUN=1 bash paper/run_all.sh` のコマンド列（416 行、タイムスタンプ以外は削除前と同じ）
-> - 以下の表で D・E にしていたこれらのファイルは、もう存在しない。残る D は simple・actual_cost の計算モジュール、BigSubs、`src/rewrite/enhanced_mv_generator.py` の 4 つ
+> - E（不要）の 27 項目（50 ファイル）は `legacy/`（`.gitignore` の対象）へ移した。`* copy.py` の 3 つは元のファイルと中身が違ったので削除せずに移した。詳細は `legacy/README.md`
+> - C は、`core/small_test_schema_provider.py` を削除し、`src/optimization/{factory,frequency,utility,utility_capacity}.py` を `legacy/` へ移した（使っていない `OptimizerFactory` の import と `src/optimization/__init__.py` を修正）。`normal.py` は `--static-algorithm` の既定値なので残した
+> - 以下の表で D・E にしていたこれらのファイルは、もう存在しない。D は、simple の計算モジュールと BigSubs を残すことにした。actual_cost と `src/rewrite/enhanced_mv_generator.py` は `legacy/` へ移し、それぞれを使う分岐（`run_experiment_normal.py` の `job_real`、`base.py` の `generate_sql`）を削除した
 
 ## 1. 調べ方
 

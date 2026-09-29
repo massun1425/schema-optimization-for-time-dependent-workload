@@ -112,6 +112,17 @@
 ## 優先度: 中（リファクタリングの残り）
 
 ### 5. 未使用のコードと古いスクリプトを archive へ移す
+（2026-09-29 に E（不要）を移動済み。C・D は未対応）
+- [x] E（不要）と判定した 27 項目（git 管理下の 50 ファイル）を、git の管理から外して `legacy/`（新設、`.gitignore` の対象）へ移した。元のディレクトリ構成のまま置き、`legacy/README.md` に各ファイルの説明と戻し方を書いた
+  - `* copy.py` の 3 つは、どれも元のファイルと中身が違ったので、削除せずに `legacy/` へ移した
+  - 確認: CI と同じ import チェック（14 モジュール）、テスト 5 件、図表の再生成（14 ファイルがバイト単位で一致）、`DRY_RUN=1 bash paper/run_all.sh` のコマンド列（416 行、タイムスタンプ以外は移動前と同じ）。git 管理下のファイルに、移したファイルへの参照は残っていない
+- [x] C（import のためだけに必要）を片付けた（2026-09-29）
+  - `core/small_test_schema_provider.py` は削除し、`core/__init__.py` の import を外した
+  - `run_experiment_normal.py` の使っていない `OptimizerFactory` の import を消し、`src/optimization/__init__.py` を `base`・`bigsubs`・`normal` だけにした。`factory.py`・`frequency.py`・`utility.py`・`utility_capacity.py` は `legacy/` へ移した
+  - `normal.py` は `--static-algorithm` の既定値（`normal`）なので残す（判定を C から「使えるオプション」に改めた）
+  - 確認: import チェック、テスト、dry-run のコマンド列、static（utility）の Phase 6 の結果が変わらないこと
+- [x] D（論文では使わないオプション）を決めた（2026-09-29）: simple の計算モジュールと BigSubs（`--static-algorithm bigsubs`）は残す。actual_cost は `legacy/` へ移し `job_real` の分岐を削除。`src/rewrite/enhanced_mv_generator.py` は `legacy/` へ移し、それを使う `base.py` の `generate_sql` の分岐を削除（static と BigSubs の Phase 6 が動き、static の結果が変わらないことを確認）
+- 以下は 2026-09-28 時点の一覧（判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
 - [ ] 未使用のコード（棚卸し md の §4.1）
   - `benchmark/time_dependent_query_executor copy.py`、`core/two_step_optimizer copy.py`、`core/utility_pruner copy.py`
   - `core/utility_pruner{,_iterative,_iterative_helpers,_simple}.py`、`src/core/{query_manager,query_parser}_distinct.py`

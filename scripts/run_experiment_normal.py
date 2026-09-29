@@ -32,7 +32,6 @@ sys.path.insert(0, str(project_root))
 from config.settings import Settings
 from core.sparse_structures import SparseMatrix
 from src.core.query_parser import QueryParser
-from src.optimization.factory import OptimizerFactory
 from src.utils.legacy import get_all_job_queries, natural_sort_key
 
 # Docker/Local switching helper
@@ -1031,40 +1030,32 @@ class NormalModeExperiment:
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
         
-        # job_realの場合は実測値からコストを生成
-        if self.query_set == "job_real":
-            from migration.actual_cost_migration_calculator import ActualCostMigrationCalculator
-            CalculatorClass = ActualCostMigrationCalculator
-            self.print_info("実測値（job_real）を使用してコストを生成します")
-        else:
-            # マイグレーションプランファイルの存在確認
-            plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
-            
-            if not plans_file.exists():
-                self.print_error("マイグレーションプランが見つかりません")
-                self.print_info("先にフェーズ2.7を実行してください")
-                return False
-        
-        try:
-            # job_real以外の場合、使用するCalculatorを選択
-            if self.query_set != "job_real":
-                if use_sampling:
-                    if sampling_high:
-                        from migration.sampling_migration_cost_calculator_high import SamplingMigrationCostCalculator
-                        self.print_info("サンプリング（高サンプル率）を使用してサイズ推定を行います")
-                    else:
-                        from migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
-                        self.print_info("サンプリング（低サンプル率）を使用してサイズ推定を行います")
-                    CalculatorClass = SamplingMigrationCostCalculator
-                else:
-                    from migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
-                    CalculatorClass = SimpleMigrationCostCalculator
+        # マイグレーションプランファイルの存在確認
+        plans_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_plans.json"
 
-            
+        if not plans_file.exists():
+            self.print_error("マイグレーションプランが見つかりません")
+            self.print_info("先にフェーズ4を実行してください")
+            return False
+
+        try:
+            # 使用するCalculatorを選択
+            if use_sampling:
+                if sampling_high:
+                    from migration.sampling_migration_cost_calculator_high import SamplingMigrationCostCalculator
+                    self.print_info("サンプリング（高サンプル率）を使用してサイズ推定を行います")
+                else:
+                    from migration.sampling_migration_cost_calculator import SamplingMigrationCostCalculator
+                    self.print_info("サンプリング（低サンプル率）を使用してサイズ推定を行います")
+                CalculatorClass = SamplingMigrationCostCalculator
+            else:
+                from migration.simple_migration_cost_calculator import SimpleMigrationCostCalculator
+                CalculatorClass = SimpleMigrationCostCalculator
+
             self.print_info("マイグレーションコストを計算中...")
             
             # CostCalculatorのインスタンスを作成
-            if self.recalc_mode and use_sampling and self.query_set != "job_real":
+            if self.recalc_mode and use_sampling:
                 recalc_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
                 # SamplingMigrationCostCalculatorのみがprecomputed_costs_fileを受け取る
                 calculator = CalculatorClass(
@@ -1098,7 +1089,7 @@ class NormalModeExperiment:
                     calculator=f"{CalculatorClass.__module__}.{CalculatorClass.__name__}",
                     use_sampling=bool(use_sampling),
                     sampling_rate=("high" if sampling_high else "low") if use_sampling else None,
-                    precomputed_costs=bool(self.recalc_mode and use_sampling and self.query_set != "job_real"),
+                    precomputed_costs=bool(self.recalc_mode and use_sampling),
                 )
 
             # フェーズ時間を記録
@@ -1121,11 +1112,6 @@ class NormalModeExperiment:
         """
         self.print_header("Cost recalculation (recalculate_costs.py)", 5.5)
         phase_start = time.time()
-
-        if self.query_set == "job_real":
-            # Costs of job_real are measured values (ActualCostMigrationCalculator); keep them
-            self.print_info("job_real uses measured costs; skipping the recalculation")
-            return True
 
         costs_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
         if not self.pickle_path.exists():

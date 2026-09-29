@@ -491,51 +491,26 @@ class BaseILPOptimizer(ABC):
         """
         return sum(self.b_j[j] * z_j[j] for j in range(len(z_j)))
 
-    def get_materialized_views(self, z_j: list[int], generate_sql: bool = False) -> list[MaterializedView]:
+    def get_materialized_views(self, z_j: list[int]) -> list[MaterializedView]:
         """Create MaterializedView objects from solution.
+
+        The CREATE SQL of the views is not generated here; it is generated later in the
+        SQL generation phase (Phase 7), so create_sql is left empty.
 
         Args:
             z_j: Binary list indicating which MVs are materialized
-            generate_sql: If True, generate CREATE SQL immediately (requires database).
-                         If False (default), SQL will be generated later in sql_generation phase.
 
         Returns:
             List of MaterializedView objects
         """
         mvs = []
-        
-        # If SQL generation is requested, create MV generator
-        mv_generator = None
-        if generate_sql:
-            from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
-            
-            # Build set of selected MV node IDs
-            selected_node_ids = set()
-            for j in range(len(z_j)):
-                if z_j[j] == 1:
-                    selected_node_ids.add(self.node_list[j])
-            
-            # Create MV generator with selected MVs info
-            mv_generator = EnhancedMVGenerator(self.qm, selected_mvs=selected_node_ids)
-        
         for j in range(len(z_j)):
             if z_j[j] == 1:
                 node_id = self.node_list[j]
-                
-                # Generate SQL only if requested
-                create_sql = ""
-                if generate_sql and mv_generator:
-                    try:
-                        create_sql = mv_generator.generate_mv_sql(node_id)
-                    except Exception as e:
-                        logger = __import__('logging').getLogger(__name__)
-                        logger.warning(f"Failed to generate SQL for {node_id}: {e}")
-                        create_sql = f"-- Failed to generate SQL for {node_id}: {e}"
-                
                 mv = MaterializedView(
                     view_id=f"mv_{node_id}",
                     node_id=node_id,
-                    create_sql=create_sql,
+                    create_sql="",
                     size=self.b_j[j],
                     maintenance_cost=self.m_cost[j],
                     usage_positions=self.qm.subquery_positions.get(node_id, []),
@@ -575,7 +550,6 @@ class BaseILPOptimizer(ABC):
         z_j: list[int],
         obj_val: float,
         execution_time: float,
-        generate_sql: bool = False,
         **metadata,
     ) -> OptimizationResult:
         """Create an OptimizationResult from algorithm output.
@@ -585,14 +559,12 @@ class BaseILPOptimizer(ABC):
             z_j: MV materialization solution
             obj_val: Objective function value
             execution_time: Time taken in seconds
-            generate_sql: If True, generate CREATE SQL immediately (requires database).
-                         If False (default), SQL will be generated later in sql_generation phase.
             **metadata: Additional algorithm-specific metadata
 
         Returns:
             OptimizationResult object
         """
-        selected_mvs = self.get_materialized_views(z_j, generate_sql=generate_sql)
+        selected_mvs = self.get_materialized_views(z_j)
         total_storage = self.calculate_storage_used(z_j)
 
         return OptimizationResult(
