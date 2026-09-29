@@ -212,23 +212,20 @@ Use `--recalc` so that the optimization uses the recalculated costs (as in the p
 
 ## Appendix: generating a new workload with Redbench
 
-This is not needed to reproduce the paper. To build a new time-dependent workload, generate
-`workload.csv` with Redbench (see [Redbench/README.md](Redbench/README.md)) and convert it:
+This is not needed to reproduce the paper. The scripts that convert Redbench workloads into
+query sets and combine them are in [scripts/redbench_synthesizer/](scripts/redbench_synthesizer/README.md). To build a new
+time-dependent workload, generate `workload.csv` with Redbench (see
+[Redbench/README.md](Redbench/README.md)) and convert it:
 
 ```bash
-# 1) SQL files and the frequency file
-python scripts/generate_queryset_from_workload_csv.py \
-  --csv-path <workload.csv> \
+python scripts/redbench_synthesizer/generate_queryset_from_workload_csv.py \
+  --csv-path <workload.csv> --queries-json-path <queries.json> \
   --output-query-dir 01_queries/<query_set> \
   --start <start time, e.g. 2024-05-25T00:00:00> \
   --end <end time, e.g. 2024-05-26T23:59:59> \
-  --step-hours <hours per time step, e.g. 4> \
-  --freq-suffix <suffix, e.g. _16_2_10> \
+  --step-hours <hours per time step, e.g. 2> \
+  --freq-suffix <suffix, e.g. _2h> \
   --sanitize-ceb
-
-# 2) Normalize table names (Redbench adds version suffixes such as movie_info_1)
-python scripts/normalize_queryset_table_versions.py \
-  --input-dir 01_queries/<query_set> --in-place --copy-frequency-json
 ```
 
 The resulting `01_queries/<query_set>/` can then be processed from Phase 1.

@@ -1,12 +1,17 @@
-"""workload.csv から small_test_ver2 用クエリセットを生成する。
+"""Convert a Redbench workload.csv into a query set.
 
-生成物:
+Outputs:
 - 01_queries/<query_set>/*.sql
 - 01_queries/<query_set>/frequency_time_dependent<suffix>.json
 
-主用途:
-- 期間を絞った時系列ワークロードの作成
-- CEB系クエリを軽量化 (SELECT COUNT(*) 化 + ORDER BY/HAVING/GROUP BY/LIMIT 除去)
+Purpose:
+- Build a time-dependent workload from a time window of the trace (one time step per
+  --step-hours bin; the frequency of a query is its number of arrivals in the bin)
+- Make CEB-style queries lighter (rewrite to SELECT COUNT(*) and drop
+  ORDER BY/HAVING/GROUP BY/LIMIT)
+
+With --queries-json-path, the output files are named after the JOB/CEB queries that Redbench
+matched (e.g. 1a1000.sql), and the same source query is merged into one file.
 """
 
 from __future__ import annotations
@@ -87,7 +92,7 @@ def format_sql_like_cluster53(sql: str) -> str:
 
     lines: list[str] = []
 
-    # SELECT 句
+    # SELECT clause
     if select_part.upper().startswith("SELECT ") and "," in select_part:
         body = select_part[7:].strip()
         cols = [c.strip() for c in body.split(",")]
@@ -103,7 +108,7 @@ def format_sql_like_cluster53(sql: str) -> str:
     else:
         lines.append(select_part)
 
-    # FROM 句
+    # FROM clause
     if from_part:
         tables = [t.strip() for t in from_part.split(",")]
         if tables:
@@ -114,7 +119,7 @@ def format_sql_like_cluster53(sql: str) -> str:
                 else:
                     lines.append(f"     {t}{suffix}")
 
-    # WHERE 句
+    # WHERE clause
     if where_part:
         conds = [c.strip() for c in re.split(r"\sAND\s", where_part)]
         if conds:
@@ -236,32 +241,32 @@ def load_mappings_from_queries_json(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="workload.csv から query_set を生成")
-    parser.add_argument("--csv-path", required=True, help="入力 workload.csv")
-    parser.add_argument("--output-query-dir", required=True, help="出力先 01_queries/<query_set> ディレクトリ")
-    parser.add_argument("--start", required=True, help="開始時刻 (例: 2024-05-25T00:00:00)")
-    parser.add_argument("--end", required=True, help="終了時刻 (例: 2024-05-26T23:59:59)")
-    parser.add_argument("--step-hours", type=int, default=4, help="タイムステップ時間(時)")
-    parser.add_argument("--freq-suffix", default="", help="frequency_time_dependent<suffix>.json の suffix")
-    parser.add_argument("--sanitize-ceb", action="store_true", help="CEB系クエリを COUNT(*) 化")
+    parser = argparse.ArgumentParser(description="Generate a query set from a Redbench workload.csv")
+    parser.add_argument("--csv-path", required=True, help="input workload.csv")
+    parser.add_argument("--output-query-dir", required=True, help="output directory 01_queries/<query_set>")
+    parser.add_argument("--start", required=True, help="start time (e.g. 2024-05-25T00:00:00)")
+    parser.add_argument("--end", required=True, help="end time (e.g. 2024-05-26T23:59:59)")
+    parser.add_argument("--step-hours", type=int, default=4, help="length of a time step in hours")
+    parser.add_argument("--freq-suffix", default="", help="suffix of frequency_time_dependent<suffix>.json")
+    parser.add_argument("--sanitize-ceb", action="store_true", help="rewrite CEB-style queries to SELECT COUNT(*)")
     parser.add_argument(
         "--sanitize-distinct-on",
         action="store_true",
-        help="DISTINCT ON を含むクエリを SELECT COUNT(*) 化",
+        help="rewrite queries with DISTINCT ON to SELECT COUNT(*)",
     )
-    parser.add_argument("--query-prefix", default="q", help="出力SQL名プレフィックス")
+    parser.add_argument("--query-prefix", default="q", help="prefix of the output SQL file names")
     parser.add_argument(
         "--queries-json-path",
         default="",
-        help="Redbench の queries.json (query_id から JOB/CEB ファイル名を引く)",
+        help="Redbench queries.json (maps a query to its JOB/CEB file name)",
     )
     parser.add_argument(
         "--preserve-filenames-from-dir",
         default="",
-        help="元ファイル名を引き継ぐための参照ディレクトリ (01_queries/cluster_53 など)",
+        help="reference directory whose file names are reused (e.g. 01_queries/cluster_53)",
     )
-    parser.add_argument("--clean-output", action="store_true", help="出力先の既存 .sql を削除してから生成")
-    parser.add_argument("--freq-only", action="store_true", help="SQLファイルを出力せず頻度JSONのみを出力する")
+    parser.add_argument("--clean-output", action="store_true", help="delete the existing .sql files in the output directory first")
+    parser.add_argument("--freq-only", action="store_true", help="write only the frequency JSON, not the SQL files")
     args = parser.parse_args()
 
     csv_path = Path(args.csv_path)
@@ -306,7 +311,7 @@ def main() -> int:
 
     # dedupe_key -> output filename
     # - default: canonical SQL
-    # - queries.json がある場合: source query name（同名は同一クエリ扱い）
+    # - with queries.json: the source query name (the same name means the same query)
     sql_to_file: OrderedDict[str, str] = OrderedDict()
     file_to_sql: dict[str, str] = {}
     file_to_freq: dict[str, list[int]] = {}
@@ -349,7 +354,7 @@ def main() -> int:
             elif qid in qid_to_benchmark_name:
                 preferred_name = qid_to_benchmark_name[qid]
 
-            # queries.json がある場合、同じ source 名は同一クエリとして集約
+            # With queries.json, rows with the same source name are merged into one query
             dedupe_key = raw_key
             if args.queries_json_path and preferred_name:
                 dedupe_key = f"name::{preferred_name.lower()}"

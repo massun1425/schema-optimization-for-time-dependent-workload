@@ -1,13 +1,16 @@
-"""2つのクエリフォルダを1つにマージするスクリプト（頻度を合算版）。
+"""Merge two query sets by summing their frequencies time step by time step.
 
-- 同じSQL内容のファイルは1つに集約（ファイル名はdir1優先）
-- 頻度JSONはタイムステップを増やさず、同じタイムステップの要素同士を加算（sum）する
-- dir1にしかないクエリ: freq_dir1
-- dir2にしかないクエリ: freq_dir2
-- 両方にあるクエリ: freq_dir1 + freq_dir2 (要素ごとの和)
+- Files with the same SQL are merged into one (the file name of dir1 has priority)
+- The number of time steps is unchanged; the frequencies of the same time step are added
+- Query only in dir1: freq_dir1
+- Query only in dir2: freq_dir2
+- Query in both: freq_dir1 + freq_dir2 (element-wise)
 
-使い方:
-    python3 scripts/merge_query_folders_sum.py \
+This is the step that combined clusters 53 and 55 into cluster_55_53_combined
+(see build_cluster_53_55_combined.sh).
+
+Usage:
+    python3 scripts/redbench_synthesizer/merge_query_folders_sum.py \
         --dir1 01_queries/cluster_55_join_12 \
         --dir2 01_queries/cluster_55_join_05_25 \
         --out  01_queries/cluster_55_join_12_25 \
@@ -33,17 +36,19 @@ def load_freq_json(path: Path) -> dict[str, list[int]]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="2つのクエリフォルダをマージ（頻度合算版）")
-    parser.add_argument("--dir1", required=True, help="1つ目のクエリフォルダ")
-    parser.add_argument("--dir2", required=True, help="2つ目のクエリフォルダ")
-    parser.add_argument("--out", required=True, help="出力先フォルダ")
+    parser = argparse.ArgumentParser(description="Merge two query sets (sum the frequencies)")
+    parser.add_argument("--dir1", required=True, help="first query set")
+    parser.add_argument("--dir2", required=True, help="second query set")
+    parser.add_argument("--out", required=True, help="output directory")
     parser.add_argument(
         "--freq-name",
         default="frequency_time_dependent.json",
-        help="頻度JSONのファイル名 (両フォルダ共通)",
+        help="name of the frequency JSON (same in both directories)",
     )
-    parser.add_argument("--freq-name1", help="dir1の頻度JSON名 (指定がない場合は --freq-name を使用)")
-    parser.add_argument("--freq-name2", help="dir2の頻度JSON名 (指定がない場合は --freq-name を使用)")
+    parser.add_argument("--freq-name1", help="name of the frequency JSON of dir1 (default: --freq-name)")
+    parser.add_argument("--freq-name2", help="name of the frequency JSON of dir2 (default: --freq-name)")
+    parser.add_argument("--description", help="description field of the output frequency JSON "
+                        "(default: 'Merged by SUMMING frequencies from <dir1> and <dir2> (<T> steps)')")
     args = parser.parse_args()
 
     dir1 = Path(args.dir1)
@@ -51,7 +56,7 @@ def main() -> int:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- 頻度JSONを読み込む ---
+    # --- Load the frequency JSONs ---
     freq_name1 = args.freq_name1 if args.freq_name1 else args.freq_name
     freq_name2 = args.freq_name2 if args.freq_name2 else args.freq_name
     freq1_path = dir1 / freq_name1
@@ -60,18 +65,18 @@ def main() -> int:
     freq2: dict[str, list[int]] = load_freq_json(freq2_path) if freq2_path.exists() else {}
 
 
-    # タイムステップ数を確認
+    # Number of time steps
     n1 = len(next(iter(freq1.values()), []))
     n2 = len(next(iter(freq2.values()), []))
     print(f"[INFO] dir1 timesteps: {n1}, dir2 timesteps: {n2}")
     
     max_steps = max(n1, n2)
 
-    # --- SQLファイルを読み込み、内容でdedup ---
+    # --- Read the SQL files and deduplicate them by content ---
     # normalized_sql -> (canonical_fname, sql_content)
     sql_to_canonical: dict[str, tuple[str, str]] = {}
 
-    # dir1のファイル名を正引き: fname -> normalized_sql
+    # dir1 file name -> normalized SQL
     dir1_fname_to_norm: dict[str, str] = {}
 
     print(f"[INFO] Reading dir1: {dir1}")
@@ -83,7 +88,7 @@ def main() -> int:
         if norm not in sql_to_canonical:
             sql_to_canonical[norm] = (fname, raw)
 
-    # dir2のファイル名を正引き: fname -> canonical_fname (in sql_to_canonical)
+    # dir2 file name -> canonical file name (in sql_to_canonical)
     dir2_fname_to_canonical: dict[str, str] = {}
 
     print(f"[INFO] Reading dir2: {dir2}")
@@ -92,18 +97,18 @@ def main() -> int:
         norm = normalize_sql(raw)
         fname = sql_file.name
         if norm not in sql_to_canonical:
-            # dir2にしかないクエリ → dir2のファイル名を使う
+            # Query only in dir2 -> keep the file name of dir2
             sql_to_canonical[norm] = (fname, raw)
         canonical_fname = sql_to_canonical[norm][0]
         dir2_fname_to_canonical[fname] = canonical_fname
 
     print(f"[INFO] Unique queries total: {len(sql_to_canonical)}")
 
-    # --- 頻度を結合（要素ごとの合算） ---
+    # --- Combine the frequencies (element-wise sum) ---
     # canonical_fname -> [freq_dir1 + freq_dir2]
     merged_freq: dict[str, list[int]] = {}
 
-    # dir1の頻度を登録
+    # Frequencies of dir1
     for fname, freqs in freq1.items():
         norm = dir1_fname_to_norm.get(fname)
         if norm is None:
@@ -115,7 +120,7 @@ def main() -> int:
             if i < max_steps:
                 merged_freq[canonical][i] += v
 
-    # dir2の頻度を登録
+    # Frequencies of dir2
     for fname, freqs in freq2.items():
         sql_file = dir2 / fname
         if not sql_file.exists():
@@ -129,20 +134,20 @@ def main() -> int:
             if i < max_steps:
                 merged_freq[canonical][i] += v
 
-    # freqJSONに載っていないクエリも補完
+    # Add the queries that are missing from the frequency JSON (all zeros)
     for norm, (canonical, _) in sql_to_canonical.items():
         if canonical not in merged_freq:
             merged_freq[canonical] = [0] * max_steps
 
-    # --- SQLファイルを出力 ---
+    # --- Write the SQL files ---
     for norm, (canonical, raw) in sql_to_canonical.items():
         (out_dir / canonical).write_text(raw, encoding="utf-8")
 
     print(f"[INFO] SQL files written: {len(sql_to_canonical)}")
 
-    # --- 頻度JSONを出力 ---
+    # --- Write the frequency JSON ---
     freq_payload = {
-        "description": (
+        "description": args.description or (
             f"Merged by SUMMING frequencies from {dir1.name} and {dir2.name} ({max_steps} steps)"
         ),
         "note": "queries format: filename -> frequency list per timestep",

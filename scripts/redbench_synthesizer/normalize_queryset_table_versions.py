@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""query_set 内のテーブル名バージョンサフィックス (_0, _1, ...) を正規化する。
+"""Normalize the version suffixes (_0, _1, ...) of the table names in a query set.
 
-主用途:
-- Redbench generation の SQL が参照する `movie_info_1` などを
-  実DBの `movie_info` に戻して small_test 実験で実行可能にする。
+Purpose:
+- The SQL of the Redbench generation strategy refers to versioned tables such as
+  `movie_info_1`. This maps them back to the tables of the IMDB database (`movie_info`)
+  so that the queries can be executed. (Not needed for the matching strategy.)
 
-変換例:
+Examples:
 - "movie_info_1"."note" -> "movie_info"."note"
 - movie_info_1 -> movie_info
 
-注意:
-- 文字列リテラル内は変換しない
-- 既知の IMDB ベーステーブル名のみ変換する
+Notes:
+- String literals are not changed
+- Only the known IMDB base table names are changed
 """
 
 from __future__ import annotations
@@ -86,11 +87,11 @@ def normalize_table_versions(sql: str) -> tuple[str, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="query_set のテーブル名バージョンを正規化")
-    parser.add_argument("--input-dir", required=True, help="入力 query_set ディレクトリ")
-    parser.add_argument("--output-dir", default="", help="出力 query_set ディレクトリ（未指定時は in-place 必須）")
-    parser.add_argument("--in-place", action="store_true", help="入力ディレクトリを直接上書き")
-    parser.add_argument("--copy-frequency-json", action="store_true", help="frequency_time_dependent*.json をコピー")
+    parser = argparse.ArgumentParser(description="Normalize the table name versions of a query set")
+    parser.add_argument("--input-dir", required=True, help="input query set directory")
+    parser.add_argument("--output-dir", default="", help="output query set directory (--in-place is required if omitted)")
+    parser.add_argument("--in-place", action="store_true", help="overwrite the input directory")
+    parser.add_argument("--copy-frequency-json", action="store_true", help="also copy frequency_time_dependent*.json")
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)

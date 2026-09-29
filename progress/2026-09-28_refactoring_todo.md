@@ -130,7 +130,7 @@
 （2026-09-28 途中までの検証結果。pickle の走査は時間がかかるため中断し、後回し）
 - 実験で使う入口（`paper/` が呼ぶ 4 スクリプト、図表スクリプト、CI のテスト、ダッシュボード）から import を辿ると、Python ファイル 104 個のうち 33 個には、条件分岐の中の import を含めても到達しない
   - 到達しないもの: 上の一覧の `* copy.py` 3 個、`core/utility_pruner*.py` 4 個、`src/core/*_distinct.py`、`src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/sql_to_neurocard_csv.py`、`src/utils/{file_utils,logging_utils,validators}.py`、`utils/{analyze_benchmark_results,csv_exporter,plot_benchmark,inspect_pickle}.py`、`scripts/{run_utility_benchmark,run_utility_optimization,setup_imdb}.py`、`scripts/scratch/`
-  - Redbench のワークロード生成ツール（`scripts/generate_queryset_from_workload_csv.py`、`normalize_queryset_table_versions.py`、`merge_query_folders*.py`）も到達しないが、README の付録で案内しているので残す
+  - Redbench のワークロード生成ツール（`generate_queryset_from_workload_csv.py`、`normalize_queryset_table_versions.py`、`merge_query_folders*.py`）も到達しないが、README の付録で案内しているので残す（2026-09-29 に `scripts/redbench_synthesizer/` へ移動）
 - 到達はするが、論文の実験の条件では通らない分岐でしか import されないもの
   - `migration/{actual_cost,neurocard,deepdb,simple}_*` と `deepdb_estimator.py`、`src/estimation/neurocard_wrapper.py`: Phase 5 で `--use-sampling` 以外を選んだとき、または `job_real` のときだけ
   - `src/rewrite/enhanced_mv_generator.py`: `generate_sql=True` のときだけ（呼び出し元はない）
@@ -177,7 +177,10 @@
 
 ### 10. 入力データの作り方を記録する
 - [ ] `job-ceb-2`（JOB + CEB の 2,515 クエリ）の作り方と、頻度ファイル（`_24_2_10` / `_24_mono` / `_24_peak`、`_{12..42}_mono`）の生成方法をスクリプトか文書に残す
-- [ ] Redbench synthetic の作り方（cluster 53 と 55 の結合、10x → 50x のスケーリング）を記録する。`archive/` の `fix_combined.py`、`make_3_combined.py`、`merge_freq_files.py` が手がかり
+- [x] Redbench synthetic の作り方を記録した（2026-09-29）。スクリプトを `scripts/redbench_synthesizer/` に、経緯を `progress/2026-09-29_redbench_synthetic_provenance.md` にまとめた
+  - 経路: Redbench の matching 結果（cluster 53: 2024-05-03 12:00〜05-05、cluster 55: 2024-05-25〜05-26）→ `generate_queryset_from_workload_csv.py`（2 時間刻み、`--sanitize-ceb --queries-json-path`）→ 頻度 2 倍 → `merge_query_folders_sum.py` で合成（793 クエリ）→ LLM で同じ番号の JOB/CEB クエリを 1,491 本追加（手作業、スクリプトなし）→ 2 倍 → 10 倍 → 50 倍 → `Redbench_synthetic` にリネーム
+  - `build_cluster_53_55_combined.sh` で合成までを再現できる。cluster_53_join / cluster_55_join はバイト単位で一致、合成後は SQL と頻度が一致（頻度ファイルのキーの順序だけ違う）。2 倍・10 倍・50 倍の頻度ファイルは `scale_frequency.py` でバイト単位で一致
+  - 入力の Redbench 出力（`Redbench/output/`）は git 管理外。使った `used_config.json` を `redbench_configs/` に、SHA-256 を経緯のメモに残した
 
 ### 11. 論文で使っていないデータを整理する
 （2026-09-29 完了。ローカルのファイルは削除していない）
