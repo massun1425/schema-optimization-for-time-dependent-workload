@@ -58,11 +58,11 @@ class QueryManager:
         # Node properties
         self.subquery_positions: dict[str, list[list[int]]] = {}
         self.subquery_costs: dict[str, float] = {}
-        self.original_subquery_costs: dict[str, float] = {}  # EXPLAIN JSONから取得した元のコスト
+        self.original_subquery_costs: dict[str, float] = {}  # Original cost obtained from EXPLAIN JSON
         self.subquery_sizes: dict[str, int] = {}
         self.relation_tables: dict[str, str] = {}
         self.subquery_widths: dict[str, int] = {}
-        self.subquery_rows: dict[str, int] = {}  # ノードの推定行数
+        self.subquery_rows: dict[str, int] = {}  # Estimated number of rows of the node
         
         # Index build cost for Index Scan nodes
         # This is used for optimization phase to consider index creation cost
@@ -73,10 +73,10 @@ class QueryManager:
         # Stores the columns that should be indexed for each node
         self.index_columns: dict[str, list[str]] = {}  # node_id -> list of column names
 
-        # 元SQLから抽出したJOIN条件（クエリインデックス → 条件リスト）
-        # 各条件は (left_alias, left_column, right_alias, right_column) のタプル
+        # JOIN conditions extracted from the original SQL (query index -> list of conditions)
+        # Each condition is a tuple (left_alias, left_column, right_alias, right_column)
         self.original_query_join_conditions: dict[int, list[tuple[str, str, str, str]]] = {}
-        # 元SQLから抽出したエイリアスマッピング（クエリインデックス → {alias: table_name}）
+        # Alias mapping extracted from the original SQL (query index -> {alias: table_name})
         self.original_query_aliases: dict[int, dict[str, str]] = {}
 
     def _generate_unique_id(self, prefix: str) -> str:
@@ -108,12 +108,12 @@ class QueryManager:
         filter_condition: str,
         position: list[int],
         total_cost: float,
-        original_cost: float,  # EXPLAIN JSONの生のコスト
+        original_cost: float,  # Raw cost from EXPLAIN JSON
         size: int,
         width: int,
-        rows: int = 0,  # 推定行数（index build cost計算用）
-        index_build_cost_per_row: float = 1.0,  # 1行あたりのインデックス構築コスト
-        index_columns: list[str] | None = None,  # インデックス対象のカラム名リスト
+        rows: int = 0,  # Estimated number of rows (for the index build cost calculation)
+        index_build_cost_per_row: float = 1.0,  # Index build cost per row
+        index_columns: list[str] | None = None,  # List of column names to index
     ) -> str:
         """Process a leaf node (table scan).
 
@@ -165,8 +165,8 @@ class QueryManager:
         else:
             self.subquery_costs[node_id] = total_cost
         
-        # original_subquery_costsは常にEXPLAIN JSONの生の値を保存
-        # 初回設定時のみ保存（後で最小値に更新しない）
+        # original_subquery_costs always stores the raw value from EXPLAIN JSON
+        # Stored only when first set (not updated to the minimum later)
         if node_id not in self.original_subquery_costs:
             self.original_subquery_costs[node_id] = original_cost
 
@@ -249,7 +249,7 @@ class QueryManager:
         # Update properties
         self.non_leaf_nodes_filter[node_id] = filter_condition
         self.subquery_costs[node_id] = total_cost
-        # 初回設定時のみoriginal_subquery_costsにも保存
+        # Also store in original_subquery_costs, only when first set
         if node_id not in self.original_subquery_costs:
             self.original_subquery_costs[node_id] = total_cost
         self.subquery_sizes[node_id] = size
@@ -266,7 +266,7 @@ class QueryManager:
         filters: list[str],
         position: list[int],
         total_cost: float,
-        original_cost: float,  # EXPLAIN JSONの生のコスト
+        original_cost: float,  # Raw cost from EXPLAIN JSON
         rows: int,
         width: int,
         output_columns: list | None = None,
@@ -344,8 +344,8 @@ class QueryManager:
         # Update properties
         self.non_leaf_nodes_filter[node_id] = " AND ".join(filters) if filters else ""
         self.subquery_costs[node_id] = total_cost
-        # original_subquery_costsは常にEXPLAIN JSONの生の値を保存
-        # 初回設定時のみ保存（後で更新しない）
+        # original_subquery_costs always stores the raw value from EXPLAIN JSON
+        # Stored only when first set (not updated later)
         if node_id not in self.original_subquery_costs:
             self.original_subquery_costs[node_id] = original_cost
         self.subquery_sizes[node_id] = rows * width
@@ -390,7 +390,7 @@ class QueryManager:
                 node["filter"],
                 position,
                 node["cost"],
-                node.get("original_cost", node["cost"]),  # EXPLAIN JSONの生のコスト
+                node.get("original_cost", node["cost"]),  # Raw cost from EXPLAIN JSON
                 node["size"],
                 node["width"],
                 rows=rows,
@@ -416,7 +416,7 @@ class QueryManager:
                     filters=additional_filters,
                     position=position,
                     total_cost=node["cost"],
-                    original_cost=node.get("original_cost", node["cost"]),  # EXPLAIN JSONの生のコスト
+                    original_cost=node.get("original_cost", node["cost"]),  # Raw cost from EXPLAIN JSON
                     rows=rows,
                     width=node["width"],
                 )

@@ -13,6 +13,11 @@ from config.settings import Settings
 from ..core.models import MaterializedView, OptimizationResult
 from ..core.query_manager import QueryManager
 
+try:
+    from core.sparse_structures import SparseMatrix
+except Exception:  # pragma: no cover - sparse module optional
+    SparseMatrix = ()
+
 
 class BaseILPOptimizer(ABC):
     """Abstract base class for ILP-based materialized view selection.
@@ -86,7 +91,7 @@ class BaseILPOptimizer(ABC):
         # Sparse candidate utility index (for candidate-based solves)
         self._cand_pos_js_by_i: dict[int, list[int]] = {}
         self._cand_pos_is_by_j: dict[int, list[int]] = {}
-        # インデックス作成コスト（未指定の場合は全て0）
+        # Index build costs (all 0 if not specified)
         self.index_build_costs = index_build_costs or [0.0] * s_num
         self.gurobi_output = gurobi_output
         self.gurobi_time_limit_sec = gurobi_time_limit_sec
@@ -300,7 +305,7 @@ class BaseILPOptimizer(ABC):
 
         Maximizes: total utility - maintenance cost - index build cost
         
-        目的関数:
+        Objective function:
           maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
 
         Args:
@@ -317,7 +322,7 @@ class BaseILPOptimizer(ABC):
         
         maintenance_terms = gp.quicksum(z[j] * self.m_cost[j] for j in range(len(self.b_j)))
         
-        # インデックス作成コスト
+        # Index build cost
         index_build_terms = gp.quicksum(
             z[j] * self.index_build_costs[j] for j in range(len(self.b_j))
         )
@@ -335,11 +340,11 @@ class BaseILPOptimizer(ABC):
         Maximizes: total utility - maintenance cost - index build cost
         Only considers candidate queries and subqueries.
         
-        目的関数:
+        Objective function:
           maximize Σ(u_ij × y_ij) - Σ(z_j × m_cost_j) - Σ(z_j × index_build_cost_j)
         
-        インデックス作成コストは、MVがマテリアライズされる場合(z_j=1)に
-        そのMVがIndex Scanを使用する場合に発生する初期構築コスト。
+        The index build cost is the initial build cost incurred when the MV is materialized (z_j=1)
+        and that MV uses an Index Scan.
 
         Args:
             y: Query-MV usage variables (indexed by candidate positions)
@@ -359,7 +364,7 @@ class BaseILPOptimizer(ABC):
         )
         
         # Build index build cost component using candidate indices
-        # インデックス作成コストは、MVをマテリアライズする際に一度だけ発生する初期コスト
+        # The index build cost is an initial cost incurred only once when the MV is materialized
         index_build_terms = gp.quicksum(
             z[j] * self.index_build_costs[cand_j[j]] for j in range(len(cand_j))
         )
@@ -437,18 +442,28 @@ class BaseILPOptimizer(ABC):
             if z_leaf_1 + z_non_leaf_2 > 1:
                 print(f"WARNING: Constraint violated! Both leaf_1 and non_leaf_2 are selected")
 
-        # Initialize solution arrays in full index space
-        ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
         ret_z = [0] * len(self.b_j)
 
-        # Extract solution from candidate variables and map to original indices
-        for j_idx in range(len(cand_j)):
-            j_orig = cand_j[j_idx]
-            ret_z[j_orig] = int(z[j_idx].X)
-            
-            for i_idx in range(len(cand_i)):
-                i_orig = cand_i[i_idx]
-                ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X) if (i_idx, j_idx) in y else 0
+        if isinstance(self.u_ij, SparseMatrix):
+            # Sparse: a dense I*J ret_y is infeasible at scale; store only the
+            # selected (i, j) pairs as {i_orig: {j_orig: 1}}. Downstream uses z_j
+            # for materialized views; y_ij is metadata only.
+            ret_y = {}
+            for j_idx in range(len(cand_j)):
+                j_orig = cand_j[j_idx]
+                ret_z[j_orig] = int(z[j_idx].X)
+                for i_idx in range(len(cand_i)):
+                    if (i_idx, j_idx) in y and int(y[i_idx, j_idx].X) == 1:
+                        ret_y.setdefault(cand_i[i_idx], {})[j_orig] = 1
+        else:
+            # Initialize solution arrays in full index space
+            ret_y = [[0] * len(self.b_j) for _ in range(len(self.u_ij))]
+            for j_idx in range(len(cand_j)):
+                j_orig = cand_j[j_idx]
+                ret_z[j_orig] = int(z[j_idx].X)
+                for i_idx in range(len(cand_i)):
+                    i_orig = cand_i[i_idx]
+                    ret_y[i_orig][j_orig] = int(y[i_idx, j_idx].X) if (i_idx, j_idx) in y else 0
 
         obj_val = self.model.objVal
 
@@ -476,51 +491,26 @@ class BaseILPOptimizer(ABC):
         """
         return sum(self.b_j[j] * z_j[j] for j in range(len(z_j)))
 
-    def get_materialized_views(self, z_j: list[int], generate_sql: bool = False) -> list[MaterializedView]:
+    def get_materialized_views(self, z_j: list[int]) -> list[MaterializedView]:
         """Create MaterializedView objects from solution.
+
+        The CREATE SQL of the views is not generated here; it is generated later in the
+        SQL generation phase (Phase 7), so create_sql is left empty.
 
         Args:
             z_j: Binary list indicating which MVs are materialized
-            generate_sql: If True, generate CREATE SQL immediately (requires database).
-                         If False (default), SQL will be generated later in sql_generation phase.
 
         Returns:
             List of MaterializedView objects
         """
         mvs = []
-        
-        # If SQL generation is requested, create MV generator
-        mv_generator = None
-        if generate_sql:
-            from src.rewrite.enhanced_mv_generator import EnhancedMVGenerator
-            
-            # Build set of selected MV node IDs
-            selected_node_ids = set()
-            for j in range(len(z_j)):
-                if z_j[j] == 1:
-                    selected_node_ids.add(self.node_list[j])
-            
-            # Create MV generator with selected MVs info
-            mv_generator = EnhancedMVGenerator(self.qm, selected_mvs=selected_node_ids)
-        
         for j in range(len(z_j)):
             if z_j[j] == 1:
                 node_id = self.node_list[j]
-                
-                # Generate SQL only if requested
-                create_sql = ""
-                if generate_sql and mv_generator:
-                    try:
-                        create_sql = mv_generator.generate_mv_sql(node_id)
-                    except Exception as e:
-                        logger = __import__('logging').getLogger(__name__)
-                        logger.warning(f"Failed to generate SQL for {node_id}: {e}")
-                        create_sql = f"-- Failed to generate SQL for {node_id}: {e}"
-                
                 mv = MaterializedView(
                     view_id=f"mv_{node_id}",
                     node_id=node_id,
-                    create_sql=create_sql,
+                    create_sql="",
                     size=self.b_j[j],
                     maintenance_cost=self.m_cost[j],
                     usage_positions=self.qm.subquery_positions.get(node_id, []),
@@ -560,7 +550,6 @@ class BaseILPOptimizer(ABC):
         z_j: list[int],
         obj_val: float,
         execution_time: float,
-        generate_sql: bool = False,
         **metadata,
     ) -> OptimizationResult:
         """Create an OptimizationResult from algorithm output.
@@ -570,14 +559,12 @@ class BaseILPOptimizer(ABC):
             z_j: MV materialization solution
             obj_val: Objective function value
             execution_time: Time taken in seconds
-            generate_sql: If True, generate CREATE SQL immediately (requires database).
-                         If False (default), SQL will be generated later in sql_generation phase.
             **metadata: Additional algorithm-specific metadata
 
         Returns:
             OptimizationResult object
         """
-        selected_mvs = self.get_materialized_views(z_j, generate_sql=generate_sql)
+        selected_mvs = self.get_materialized_views(z_j)
         total_storage = self.calculate_storage_used(z_j)
 
         return OptimizationResult(

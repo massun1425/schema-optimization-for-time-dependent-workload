@@ -1,462 +1,273 @@
-# Materialized View Query Optimization
+# Schema Optimization for Time-Dependent Workloads — Experiments
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![PostgreSQL 18](https://img.shields.io/badge/postgresql-18-blue.svg)](https://www.postgresql.org/)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+This repository contains the implementation and the experiment scripts of the paper
+**"Schema Optimization for Time-Dependent Workloads"** (EDBT 2027).
+The method selects a time series of materialized views (MVs) with an integer linear program
+that maximizes the total utility of the MVs minus the migration cost between time steps, and
+prunes MV candidates with a *workload summary tree*.
 
-マテリアライズドビュー選択を用いたクエリ最適化システム
+This README explains how to get from a fresh clone to running the experiments, and how the
+repository is organized.
 
-## 📋 概要
+## Results and figures of the paper
 
-このプロジェクトは、ILP（整数線形計画法）を用いてマテリアライズドビューを選択し、クエリ実行時間を最適化するシステムです。
+**[`paper_results/`](paper_results/README.md) contains the results reported in the paper and
+its figures and tables:**
 
-### 主要機能
+- `paper_results/rq1/` … `paper_results/rq4/`: the result files (JSON) behind every figure and
+  table, organized by research question (RQ1: Figs. 7–9, RQ2: Fig. 10, RQ3: Table 2, RQ4: Fig. 11).
+- `paper_results/figures/`: the figures (PDF) of the paper (Figs. 5–11) and Table 2 (LaTeX and
+  Markdown), generated from these files.
 
-- **クエリ解析**: PostgreSQL EXPLAIN JSONからクエリプランを解析
-- **MV選択最適化**: 5種類のILPアルゴリズムによる最適化
-  - Normal ILP
-  - BigSubs ILP
-  - Utility-based
-  - Utility-Capacity
-  - Frequency-based
-- **クエリ書き換え**: 選択されたMVを使用するようクエリを自動書き換え
-- **ベンチマーク**: JOB/CEB/RedBenchでの性能評価
+They can be regenerated without running any experiment (step 2 below).
 
-## 🚀 クイックスタート
+## Getting started
 
-### 前提条件
+All commands are run from the repository root.
 
-- **Python 3.11以上** (pyenv推奨)
-- **Docker Desktop** (PostgreSQLコンテナ用)
-- **Gurobi Optimizer 12.0** (ライセンス必要)
+### Requirements
 
-### ステップ1: PostgreSQLデータベースセットアップ
+- **Software.** Linux, Docker, Python 3.12, Gurobi 12.0 (an academic license is sufficient;
+  the license bundled with `gurobipy` is too small for the experiments).
+- **Hardware.** The paper used an HPE ProLiant DL385 Gen10 Plus with two AMD EPYC 7542
+  (32 cores each) and 2 TB of memory. The PostgreSQL container is limited to 8 cores and 16 GB.
+  The optimizer runs outside the container; the largest query-scaling experiment (100k queries)
+  loads a 13 GB parse result.
+- **Disk.** About 5 GB for the container image, about 6 GB for the preprocessing outputs of the
+  two query sets, and about 36 GB for the synthetic query sets of the query-scaling experiment.
 
-#### 1.1 Dockerイメージのビルド
-
-```bash
-# IMDBデータを自動ダウンロード・セットアップ (初回は15-20分程度)
-docker build -t mv_postgres:1.0 .
-```
-
-#### 1.2 PostgreSQLコンテナの起動
+### 1. Clone and install the Python environment
 
 ```bash
-# コンテナ起動 (初回はデータロードに5-10分程度)
-docker run -d \
-  --name mv_postgres \
-  -p 5432:5432 \
-  -v mv_postgres_data:/var/lib/postgresql/data \
-  mv_postgres:1.0
-
-# 起動確認
-docker ps
-
-# データベース接続テスト
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT count(*) FROM title;"
-
-docker exec -it mv_postgres psql -U postgres -d imdbload
-```
-
-**接続情報:**
-- ホスト: `localhost`
-- ポート: `5432`
-- データベース: `imdbload`
-- ユーザー: `postgres`
-- パスワード: `pass`
-
-### ステップ2: Python環境セットアップ
-
-#### 2.1 仮想環境の作成
-
-```bash
-# Python 3.11以上を使用
-python --version  # 3.11以上であることを確認
-
-# 仮想環境作成
-python -m venv .venv
-
-# 仮想環境をアクティベート
-source .venv/bin/activate  # macOS/Linux
-# または
-.venv\Scripts\activate  # Windows
-```
-
-#### 2.2 依存パッケージのインストール
-
-```bash
-# pipをアップグレード
-pip install --upgrade pip
-
-# 依存パッケージインストール
+git clone <repository URL> mv-query-optimization
+cd mv-query-optimization
+python3.12 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### ステップ3: Gurobiライセンス設定
+`requirements.txt` pins the package versions used for the experiments of the paper
+(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, Matplotlib for the figures, and
+FastAPI/Uvicorn for the dashboard). With [uv](https://docs.astral.sh/uv/), `uv sync`
+installs the same versions from `uv.lock` (`uv sync --extra dev` adds pytest and the linters).
 
-プロジェクトの実行にはGurobiライセンスが必要です。
-
-1. [Gurobi公式サイト](https://www.gurobi.com/)でライセンスを取得
-2. ライセンスファイル(`gurobi.lic`)をプロジェクトルートに配置
-3. 環境変数を設定（任意）:
+### 2. Check the installation (no database or Gurobi license needed)
 
 ```bash
-export GUROBI_HOME=/path/to/gurobi
+python -m pytest tests/        # unit and regression tests; the ILP tests are skipped without a Gurobi license
+bash paper_figures/make_all.sh --td-dir paper_results --out-dir /tmp/figures
+diff -r paper_results/figures /tmp/figures && echo "identical to the paper"
+```
+
+The second command regenerates all figures and tables of the paper from the included results;
+the output is byte-identical to `paper_results/figures/` (this is also checked by the CI).
+
+### 3. Gurobi license
+
+Obtain a license from [gurobi.com](https://www.gurobi.com/) and make it visible to `gurobipy`:
+
+```bash
 export GRB_LICENSE_FILE=/path/to/gurobi.lic
 ```
 
-**ベンチマークデータ**: [JOB (Join Order Benchmark)](https://github.com/viktorleis/job)
-
-## 📚 使用方法
-
-### 実験実行
+### 4. PostgreSQL container
 
 ```bash
-# 仮想環境をアクティベート（毎回必要）
-source .venv/bin/activate
-
-# 単一アルゴリズムで実験
-python scripts/run_experiment.py --algorithms normal
-
-# 複数アルゴリズムで実験
-python scripts/run_experiment.py --algorithms normal bigsubs utility
-
-# すべてのアルゴリズムで実験
-python scripts/run_experiment.py --algorithms none normal bigsubs utility utility_capacity frequency
-
-# 詳細ログ出力
-python scripts/run_experiment.py --algorithms normal --verbose
-
-# CSV比較を初期化してから実験
-python scripts/run_experiment.py --algorithms normal --initialize
+bash docker/create_container.sh     # build -> start -> load IMDB (tens of minutes) -> verify
+bash docker/verify_env.sh           # check that the container matches the paper environment
 ```
 
-### データベース接続確認
+The container is named `mv_postgres` and listens on port 5432 (both are assumed by the code).
+It runs PostgreSQL 18.4 with the server parameters of the paper (shared_buffers = 2 GB,
+work_mem = 128 MB, jit = off, ...), limited to 8 cores, 16 GB of memory and 4 GB of shared memory.
+The build downloads the IMDB data of the Join Order Benchmark (about 1.2 GB).
+See [docker/README.md](docker/README.md) for details.
+
+### 5. Preprocessing (needs the database)
 
 ```bash
-# Python から接続テスト
-python -c "import psycopg2; conn = psycopg2.connect(host='localhost', port=5432, database='imdbload', user='postgres', password='pass'); print('✓ データベース接続成功')"
-
-# psqlで直接接続
-psql -h localhost -p 5432 -U postgres -d imdbload
-# パスワード: pass
+bash paper_scripts/00_prepare.sh
 ```
 
-### 実験結果の確認
+For each query set (`job-ceb-2`, `Redbench_synthetic`) this runs EXPLAIN (Phase 1), plan parsing
+and MV candidate enumeration (Phases 2–3), migration plan enumeration (Phase 4), sampling-based
+cost estimation (Phase 5), and the cost recalculation (Phase 5.5). It writes `02_json/`,
+`03_parsed/` and `04_migration/`. Query sets whose outputs already exist are skipped.
+
+### 6. A first, short experiment
 
 ```bash
-# 実験結果は Output/ ディレクトリに保存される
-ls -la Output/
-
-# 各ディレクトリの内容:
-# - experiment/run_mv/      : MV実行ログ
-# - experiment/mv_create/   : MV作成ログ
-# - query_rewrite/          : クエリ書き換え結果
-# - redbench/               : RedBenchベンチマーク結果
+TIMESTEPS=12 bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
 ```
 
-## 🧪 テスト
+This runs only the optimization (no database) for one point of Fig. 8 (job-ceb-2, T = 12, with
+and without pruning), which took about 15 minutes in the paper. The results are written to
+`time_dependent_output/rq1/exp1_2/` and can be compared with `paper_results/rq1/exp1_2/`.
+Because step 5 re-estimates the migration costs by sampling (and EXPLAIN estimates can change
+between runs), the selected MVs and the objective value may differ slightly from the paper;
+the run times depend on the machine.
+
+### 7. All experiments
+
+| RQ | Script | Paper | Output (`time_dependent_output/`) | Approx. run time |
+|---|---|---|---|---|
+| RQ1 | `paper_scripts/rq1_exp1_1_timestep_time.sh` | Fig. 7 | `rq1/exp1_1/` | ~4.5 days |
+| RQ1 | `paper_scripts/rq1_exp1_2_timestep_scaling.sh` | Fig. 8 | `rq1/exp1_2/` | ~5 hours |
+| RQ1 | `paper_scripts/rq1_exp1_3_query_scaling.sh` | Fig. 9 | `rq1/exp1_3/` | ~3 days |
+| RQ2 | `paper_scripts/rq2_prediction_recall.sh` | Fig. 10 | `rq2/` | ~2 days |
+| RQ3 | `paper_scripts/rq3_pruning.sh` | Table 2 | `rq3/` | ~1.5 days |
+| RQ4 | `paper_scripts/rq4_capacity.sh` | Fig. 11 | `rq4/` | ~12 days |
+
+Run all of them in dependency order with:
 
 ```bash
-# 仮想環境をアクティベート
-source .venv/bin/activate
-
-# クエリパースのテスト
-python scripts/test_query_parse.py
-
-# ILP最適化のテスト (単一アルゴリズム)
-python scripts/test_optimization.py --algorithm bigsubs
-
-# MV作成SQL生成のテスト
-python scripts/test_mv_generation.py --algorithm bigsubs --max-mvs 5
-
-# 全アルゴリズムのテスト
-python scripts/test_optimization.py --algorithm all
-
-# 全テスト実行
-pytest
-
-# カバレッジレポート
-pytest --cov=src --cov-report=html
-
-# 特定のテストのみ
-pytest tests/unit/test_query_rewriter.py
-
-# パフォーマンステスト
-pytest -m performance
+DRY_RUN=1 bash paper_scripts/run_all.sh                          # print the commands only
+nohup bash paper_scripts/run_all.sh > paper_run_all.log 2>&1 &   # run everything
 ```
 
-## 🏗️ プロジェクト構造
+- Run times are estimates from the original runs (about 11 hours per benchmark run on
+  job-ceb-2 and 2–3 hours on Redbench). The optimization without pruning in the scalability
+  experiments is stopped after 24 hours and reported as DNF, as in the paper.
+- RQ2, RQ3 and RQ4 reuse the results of RQ1 Exp1-1 that have identical settings, so
+  `run_all.sh` runs it first.
+- Runs whose results exist are skipped; re-running a script resumes it.
+- Subsets can be run with environment variables, e.g.
+  `SUFFIXES="_24_mono" CAPS="1000" bash paper_scripts/rq4_capacity.sh`.
 
-```
-mv-query-optimization/
-├── Dockerfile              # PostgreSQLコンテナ定義
-├── requirements.txt        # Python依存パッケージ
-├── gurobi.lic             # Gurobiライセンス（要配置）
-├── src/                   # ソースコード
-│   ├── core/              # コアモジュール
-│   ├── database/          # データベース操作
-│   ├── optimization/      # ILPアルゴリズム
-│   ├── rewrite/           # クエリ書き換え
-│   └── utils/             # ユーティリティ
-├── scripts/               # CLIスクリプト
-│   └── run_experiment.py  # 実験実行スクリプト
-├── tests/                 # テストコード
-├── config/                # 設定ファイル
-├── data/                  # データとスキーマ
-│   ├── schema.sql         # データベーススキーマ
-│   └── setup.sql          # 初期化スクリプト
-├── dataset/               # ベンチマークデータセット
-│   └── redbench/          # RedBenchデータ
-├── Output/                # 実験結果（自動生成）
-└── docs/                  # ドキュメント
-```
+The exact settings of every experiment (methods, flags, storage constraints, output layout)
+are documented in [paper_scripts/README.md](paper_scripts/README.md).
 
-## 📊 対応アルゴリズム
-
-| アルゴリズム | 説明 | 用途 |
-|------------|------|------|
-| Normal ILP | 基本的なILP定式化 | ベースライン |
-| BigSubs ILP | 確率的フリップを使用 | 大規模問題 |
-| Utility-based | 効用最大化 | コスト重視 |
-| Utility-Capacity | 効用/容量比最大化 | ストレージ制約 |
-| Frequency-based | 頻度ベース選択 | 頻出パターン |
-
-## 🐳 Docker環境
-
-### アーキテクチャ
-
-このプロジェクトは以下の構成で動作します:
-
-- **Dockerコンテナ**: PostgreSQL 18 + IMDBデータベース
-- **ホストマシン**: Python実行環境 + プロジェクトコード
-
-この分離により、開発効率とデバッグ容易性が向上します。
-
-### PostgreSQLコンテナ管理
+### 8. Figures and tables
 
 ```bash
-# コンテナ起動
-docker start mv_postgres
-
-# コンテナ停止
-docker stop mv_postgres
-
-# コンテナ再起動
-docker restart mv_postgres
-
-# コンテナログ確認
-docker logs mv_postgres
-
-# コンテナ内でコマンド実行
-docker exec -it mv_postgres psql -U postgres -d imdbload
-
-# コンテナ削除（データは保持）
-docker rm mv_postgres
-
-# ボリューム含めて完全削除
-docker rm -f mv_postgres
-docker volume rm mv_postgres_data
+bash paper_figures/make_all.sh                            # from your own runs (time_dependent_output/rq*/)
+bash paper_figures/make_all.sh --td-dir paper_results     # from the results reported in the paper
 ```
 
-### データベースの再構築
+Both write the figures (PDF) and Table 2 (LaTeX and Markdown) to `paper_figures/output/`:
 
-```bash
-# コンテナとボリュームを削除
-docker rm -f mv_postgres
-docker volume rm mv_postgres_data
+| Paper | Output |
+|---|---|
+| Fig. 5 | `setup_frequency_pattern_{Cycles,Evolution_and_Stagnation,Growth_and_Spikes}.pdf` |
+| Fig. 6 | `setup_redbench_total_count.pdf` |
+| Fig. 7 | `rq1_exp1_1_timestep_time_{cycles,evolution_and_stagnation,growth_and_spikes,redbench_synthetic}.pdf` |
+| Fig. 8 | `rq1_exp1_2_timestep_scaling.pdf` |
+| Fig. 9 | `rq1_exp1_3_query_scaling.pdf` |
+| Fig. 10 | `rq2_prediction_recall.pdf` |
+| Table 2 | `rq3_pruning.tex`, `rq3_pruning.md` |
+| Fig. 11 | `rq4_capacity.pdf` |
 
-# イメージを再ビルド（IMDBデータを再ダウンロード）
-docker build -t mv_postgres:1.0 .
+Execution times measured on a different machine will differ from the paper. For given
+preprocessing outputs (`03_parsed/`, `04_migration/`) and Gurobi configuration, the MVs selected
+by the optimizer (promising candidates, objective value and schedule) are deterministic.
 
-# 新しいコンテナを起動
-docker run -d \
-  --name mv_postgres \
-  -p 5432:5432 \
-  -v mv_postgres_data:/var/lib/postgresql/data \
-  mv_postgres:1.0
-```
+## Repository layout
 
-### トラブルシューティング
+### In the repository
 
-#### データベースに接続できない
+| Path | Content |
+|---|---|
+| `scripts/run_experiment_normal.py` | Experiment driver (Phases 1–9, see [Reference](#reference-experiment-pipeline)) |
+| `scripts/recalculate_costs.py` | Cost recalculation (Phase 5.5) |
+| `scripts/extract_sparse_base.py`, `scripts/generate_synthetic_scaling.py` | Construction of the synthetic query sets of the query-scaling experiment (Fig. 9) |
+| `scripts/redbench_synthesizer/` | Conversion of Redbench workloads into query sets ([README](scripts/redbench_synthesizer/README.md)); not needed to reproduce the paper |
+| `core/` | Time-dependent ILP optimizer, candidate pruning (workload summary tree), Static and Adapt baselines |
+| `src/` | Query plan parsing and MV candidates (`core/`), static ILP optimizers (`optimization/`), query rewriting (`rewrite/`) |
+| `migration/` | Migration plans (Phase 4) and cost estimation by sampling (Phase 5) |
+| `mv_generation/` | MV definition SQL (including join conditions recovered from the original queries) |
+| `benchmark/` | Benchmark executor (Phase 9) |
+| `config/` | Settings (`default.yaml`: database connection and defaults) |
+| `utils/` | PostgreSQL access (directly or through the Docker container) |
+| `01_queries/` | Input query sets and time-dependent query frequencies (see below) |
+| `paper_scripts/` | Shell scripts that run every experiment of the paper ([README](paper_scripts/README.md)) |
+| `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([README](paper_figures/README.md)) |
+| `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([README](paper_results/README.md)) |
+| `dashboard/` | Browser dashboard for inspecting the results ([README](dashboard/README.md)) |
+| `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([README](docker/README.md)) |
+| `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
+| `tests/`, `.github/workflows/` | Unit and regression tests; CI (tests, import check, regeneration of the figures) |
+| `requirements.txt`, `pyproject.toml`, `uv.lock` | Python dependencies (versions of the experiments) |
 
-```bash
-# ポート確認
-docker port mv_postgres
+Input query sets in `01_queries/`:
 
-# コンテナ状態確認
-docker ps -a
+| Query set | Content | Used by |
+|---|---|---|
+| `job-ceb-2/` | 2,515 JOB and CEB queries and their frequencies: `frequency_time_dependent_24_2_10.json` (Cycles), `_24_mono.json` (Evolution and Stagnation), `_24_peak.json` (Growth and Spikes), `_{12,18,24,30,36,42}_mono.json` (time-step scaling) | RQ1, RQ3, RQ4 |
+| `Redbench_synthetic/` | 2,284 queries and `frequency_time_dependent_2h_x2_50x.json`, generated with Redbench from anonymized cloud traces | RQ1, RQ2 |
+| `job-ceb-2-q{20000,...,100000}/` | Frequencies of the synthetic query sets obtained by block-replicating job-ceb-2; their plans and costs are generated by `paper_scripts/rq1_exp1_3_query_scaling.sh` | RQ1 (query scaling) |
+| `job/` | The 113 JOB queries (not used by the experiments of the paper) | — |
 
-# ログでエラー確認
-docker logs mv_postgres | tail -50
-```
+### Generated by running the experiments
 
-#### データがロードされていない
+These directories are created by the steps above and are not in the repository (`.gitignore`).
 
-```bash
-# テーブル数確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "\dt"
+| Path | Created by | Content |
+|---|---|---|
+| `.venv/` | Step 1 | Python environment |
+| `02_json/<set>/` | Preprocessing (Phases 1, 3) | EXPLAIN plans of the queries, with node IDs |
+| `03_parsed/<set>/` | Preprocessing (Phase 2); `rq1_exp1_3_query_scaling.sh` | Parsed plans and MV candidates (`qp_class.pkl`, up to 13 GB), `parse_summary.json`; `sparse_base.pkl` and `job-ceb-2-q*/` for the query-scaling experiment |
+| `04_migration/<set>/` | Preprocessing (Phases 4–5.5); `rq1_exp1_3_query_scaling.sh` | Migration plans and costs (`simple_migration_plans.json`, `simple_migration_costs.json` and the settings used in `simple_migration_costs.meta.json`) |
+| `time_dependent_output/<set>/` | `scripts/run_experiment_normal.py` (Phases 6–9) | Working directory of the driver: the latest optimization and benchmark results, MV SQL per time step (`timestep_*.sql`) and rewritten queries (`jobs/`) |
+| `time_dependent_output/rq*/` | `paper_scripts/*.sh` | Results of the paper experiments, in the same layout as `paper_results/rq*/`, with logs in `log/` |
+| `time_dependent_output/prep/log/` | `paper_scripts/00_prepare.sh` | Logs of the preprocessing |
+| `paper_figures/output/` | `paper_figures/make_all.sh` | Figures and tables |
 
-# レコード数確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT 'title' as table_name, count(*) FROM title;"
-```
+Every result JSON written by the driver records the settings of its run (command line, options, code version and the
+preprocessing settings) under the key `run_config`. With `FORCE_PREP=1`, the preprocessing moves
+existing outputs to `<dir>/<set>__backup_<timestamp>/` instead of deleting them; the experiment
+scripts keep intermediate files of earlier runs in `time_dependent_output/<set>/_stash/`
+(see [paper_scripts/README.md](paper_scripts/README.md)).
 
-## 🔧 高度な設定
+## Reference: experiment pipeline
 
-### 開発環境のセットアップ
+`scripts/run_experiment_normal.py` runs the pipeline phase by phase.
+The scripts in `paper_scripts/` call it with the settings of the paper.
 
-```bash
-# 開発用パッケージのインストール
-pip install -r requirements-dev.txt
+| Phase | Content | Output |
+|---|---|---|
+| 1 | EXPLAIN plans of all queries (needs the DB) | `02_json/<set>/*.json` |
+| 2 | Plan parsing, MV candidate enumeration, utilities | `03_parsed/<set>/qp_class.pkl` |
+| 3 | Node IDs added to the plans | `02_json/<set>/*.json` |
+| 4 | Migration plan enumeration | `04_migration/<set>/simple_migration_plans.json` |
+| 5 | Migration cost estimation by sampling (needs the DB) | `04_migration/<set>/simple_migration_costs.json` |
+| 5.5 | Cost recalculation with the node structure of the parsed plans (`--phase 5.5`, or `scripts/recalculate_costs.py --overwrite`) | same file, overwritten |
+| 6 | Optimization (`--optimization-mode dynamic` = proposed, `static`, `adaptive`) | `time_dependent_output/<set>/*_optimization_result<suffix>.json` |
+| 7 | MV creation/deletion SQL per time step | `time_dependent_output/<set>/timestep_*.sql` |
+| 8 | Query rewriting to use the MVs | `time_dependent_output/<set>/jobs/` |
+| 9 | Benchmark (needs the DB) | `time_dependent_output/<set>/benchmark_results_<mode><suffix>.json` |
 
-# コードフォーマット
-black src/ tests/
+`--phase all` runs Phases 1–9 including the cost recalculation (5.5); `--phase post-opt` runs Phases 6–9.
+Use `--recalc` so that the optimization uses the recalculated costs (as in the paper). Main options:
 
-# リント
-flake8 src/ tests/
+| Option | Meaning |
+|---|---|
+| `--query-set <name>` | Query set in `01_queries/` |
+| `--exp-suffix <suffix>` | Frequency file `frequency_time_dependent<suffix>.json`; also appended to the result file names |
+| `--optimization-mode {dynamic,static,adaptive}` | Proposed (time-dependent ILP), Static, Adapt |
+| `--use-pruning [--pruning-parallel] [--pruning-workers N]` | MV candidate pruning with the workload summary tree |
+| `--static-timestep average --static-algorithm utility` | Static baseline (average frequencies over all time steps) |
+| `--window-size 4 --freq-weight linear` | Adapt baseline |
+| `--b-max <MB>` | Storage constraint |
+| `--recalc` | Use the recalculated costs (always used in the paper) |
+| `--ease` | Execute each query once per time step and multiply by its frequency |
+| `--noise-ratio <r>` / `--benchmark-mode <mode>` | Benchmark with prediction errors (Phase 9) |
+| `--use-docker` | Access PostgreSQL through the `mv_postgres` container |
 
-# 型チェック
-mypy src/
-```
+## Troubleshooting
 
-### データベース接続設定のカスタマイズ
+- **`GurobiError: No Gurobi license found`**: set `GRB_LICENSE_FILE` to the path of the license file.
+- **PostgreSQL is not reachable**: check `docker exec mv_postgres pg_isready -U postgres` and
+  `docker logs mv_postgres`. `bash docker/verify_env.sh` checks the whole environment.
+- **`qp_class.pkl` not found**: run the preprocessing (`bash paper_scripts/00_prepare.sh`).
+- **A script stops with "A file with the same name is already stashed"**: a previous run was
+  interrupted; see "Staging and existing files" in [paper_scripts/README.md](paper_scripts/README.md).
 
-プロジェクト内の接続設定は以下のファイルで管理されています:
+## Third-party code and data
 
-```python
-# src/database/connection.py
-DEFAULT_CONFIG = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'imdbload',
-    'user': 'postgres',
-    'password': 'pass'
-}
-```
-
-### JOB/CEBクエリ切り替え
-
-`utils.py`の`GET_CEB`値を変更:
-- `True`: CEBクエリ使用
-- `False`: JOBクエリ使用
-
-### RedBench設定
-
-RedBenchを使用する場合は、`dataset/redbench/run.py`の`DEFAULT_PSQL`定数を変更してください。
-
-## 💡 Tips
-
-### よく使うコマンド
-
-```bash
-# 仮想環境アクティベート（毎回必要）
-source .venv/bin/activate
-
-# データベース接続確認
-docker exec -it mv_postgres psql -U postgres -d imdbload -c "SELECT version();"
-
-# 実験実行（詳細ログ付き）
-python scripts/run_experiment.py --algorithms normal --verbose
-
-# 実験結果の確認
-ls -lh Output/query_rewrite/
-
-# コンテナのログをリアルタイム表示
-docker logs -f mv_postgres
-```
-
-### パフォーマンスチューニング
-
-PostgreSQLのパフォーマンスを向上させるには:
-
-```bash
-# コンテナ内で設定変更
-docker exec -it mv_postgres bash
-echo "shared_buffers = 256MB" >> /var/lib/postgresql/data/postgresql.conf
-echo "work_mem = 16MB" >> /var/lib/postgresql/data/postgresql.conf
-exit
-
-# コンテナ再起動
-docker restart mv_postgres
-```
-
-## 📈 その他の実験
-
-プロジェクトには以下の実験スクリプトも含まれています:
-
-- `compare_insertquery.py`: INSERT クエリ性能比較
-- `compare_capacity.py`: ストレージ容量の影響評価
-- `compare_topk_beta.py`: Top-K MV選択の評価
-
-## ❓ FAQ
-
-### Q: Dockerコンテナが起動しない
-
-**A:** Docker Desktopが起動していることを確認してください。
-
-```bash
-open -a Docker  # macOS
-docker ps       # 起動確認
-```
-
-### Q: Python パッケージのインストールに失敗する
-
-**A:** Python 3.11以上を使用していることを確認してください。
-
-```bash
-python --version  # 3.11以上であることを確認
-python -m venv .venv  # 仮想環境を再作成
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Q: データベースに接続できない
-
-**A:** PostgreSQLコンテナが起動していることを確認してください。
-
-```bash
-docker ps | grep mv_postgres
-docker logs mv_postgres | tail -20
-```
-
-### Q: 実験結果が出力されない
-
-**A:** Output/ ディレクトリの権限を確認してください。
-
-```bash
-mkdir -p Output/{experiment/{run_mv,mv_create},query_rewrite,redbench}
-chmod -R 755 Output/
-```
-
-## 📝 ライセンス
-
-このプロジェクトは研究目的で開発されています。
-
-## 🤝 貢献
-
-バグ報告や機能提案は Issue でお願いします。
-
-プルリクエストも歓迎します:
-1. フォークする
-2. フィーチャーブランチを作成 (`git checkout -b feature/AmazingFeature`)
-3. 変更をコミット (`git commit -m 'Add some AmazingFeature'`)
-4. ブランチにプッシュ (`git push origin feature/AmazingFeature`)
-5. プルリクエストを作成
-
-## 📖 参考文献
-
-- [Join Order Benchmark (JOB)](https://github.com/viktorleis/job)
-- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
-- [Gurobi Optimizer](https://www.gurobi.com/documentation/)
-
-## 🙏 謝辞
-
-このプロジェクトはJOBベンチマークデータセットを使用しています。
-
----
-
-**開発者**: [Kaina3](https://github.com/Kaina3)  
-**最終更新**: 2025年10月7日
-
+| Item | Where it is used | Source | License / terms |
+|---|---|---|---|
+| Redbench | `Redbench/` (modified copy; the changes are listed at the top of [Redbench/README.md](Redbench/README.md)) | [DataManagementLab/Redbench](https://github.com/DataManagementLab/Redbench), commit `a129890` (2025-11-19); J. Wehrstein, R. Heinrich, M. Stoian, et al. *Redbench: Workload Synthesis From Cloud Traces*. [arXiv:2511.13059](https://arxiv.org/abs/2511.13059), 2025 | Apache License 2.0 |
+| Redset | Query arrival times behind `01_queries/Redbench_synthetic/` (through Redbench; the dataset itself is not included) | [amazon-science/redset](https://github.com/amazon-science/redset); A. van Renen, D. Horn, P. Pfeil, et al. *Why TPC Is Not Enough: An Analysis of the Amazon Redshift Fleet*. PVLDB 17(11):3694–3706, 2024 | CC BY-NC 4.0 |
+| Join Order Benchmark (JOB) | Queries in `01_queries/` | V. Leis, A. Gubichev, A. Mirchev, et al. *How Good Are Query Optimizers, Really?* PVLDB 9(3):204–215, 2015 (queries also distributed at [gregrahn/join-order-benchmark](https://github.com/gregrahn/join-order-benchmark)) | — |
+| Cardinality Estimation Benchmark (CEB) | Queries in `01_queries/` | [learnedsystems/CEB](https://github.com/learnedsystems/CEB); P. Negi, R. Marcus, A. Kipf, et al. *Flow-Loss: Learning Cardinality Estimates That Matter*. PVLDB 14(11):2019–2032, 2021 | MIT (repository) |
+| IMDB data (JOB version, CSV files of May 2013) | Loaded into the PostgreSQL container by the `Dockerfile` (downloaded during the build; not included) | https://event.cwi.nl/da/job/imdb.tgz | IMDb terms of use ([imdb.com/interfaces](https://www.imdb.com/interfaces/)) |

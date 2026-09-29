@@ -7,28 +7,33 @@ name = "mv-query-optimization"
 version = "0.1.0"
 description = "Materialized View Selection using ILP Optimization"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     {name = "OnizukaLab"}
 ]
 
+# Pinned to the versions used for the experiments of the paper (keep in sync with
+# requirements.txt). The ILP results can depend on the Gurobi version.
 dependencies = [
-    "gurobipy>=11.0.0",
-    "sqlparse>=0.4.4",
-    "psycopg2-binary>=2.9.0",
-    "pyyaml>=6.0",
-    "python-dotenv>=1.0.0",
+    "gurobipy==12.0.1",
+    "numpy==2.4.2",
+    "psycopg2-binary==2.9.11",
+    "PyYAML==6.0.3",
+    "sqlparse==0.5.3",
+    "matplotlib==3.10.8",   # figures (paper_figures/)
+    "fastapi==0.128.0",     # dashboard/
+    "uvicorn==0.40.0",      # dashboard/
 ]
 
 [project.optional-dependencies]
 dev = [
-    "mypy>=1.5.0",
-    "types-PyYAML>=6.0.0",
+    "pytest==9.0.3",
+    "pytest-cov==7.1.0",
+    "pytest-mock>=3.11.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
-    "pytest>=7.4.0",
-    "pytest-cov>=4.1.0",
-    "pytest-mock>=3.11.0",
+    "mypy>=1.5.0",
+    "types-PyYAML>=6.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -37,7 +42,7 @@ include = ["src*"]
 
 [tool.black]
 line-length = 100
-target-version = ['py310']
+target-version = ['py312']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -56,7 +61,7 @@ exclude = '''
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -68,8 +73,8 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by black)
-    "N803",  # argument name should be lowercase (数学記号用)
-    "N806",  # variable in function should be lowercase (数学記号用)
+    "N803",  # argument name should be lowercase (mathematical notation)
+    "N806",  # variable in function should be lowercase (mathematical notation)
 ]
 exclude = [
     ".git",
@@ -82,10 +87,10 @@ exclude = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false  # 段階的に true にする
+disallow_untyped_defs = false  # to be enabled gradually
 ignore_missing_imports = true
 exclude = [
     "dataset/",

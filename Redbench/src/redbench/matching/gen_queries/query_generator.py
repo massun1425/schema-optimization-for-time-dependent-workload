@@ -1,3 +1,5 @@
+# Modified from Redbench (commit a129890) for the artifact of "Schema Optimization for
+# Time-Dependent Workloads": pass the only_select option to get_query_timeline.
 import csv
 import json
 import os

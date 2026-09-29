@@ -173,7 +173,7 @@ class QueryParser:
         
         # Extract from current node
         if "Index Cond" in node:
-            # Index Scanノードの場合、テーブルエイリアスも取得
+            # For Index Scan nodes, also get the table alias
             table_alias = node.get("Alias", "")
             conditions.append((node["Index Cond"], table_alias))
         
@@ -401,10 +401,10 @@ class QueryParser:
                     additional_filters.append(node[filter_key])
 
             # Cost calculation logic
-            # まず、EXPLAIN JSONからの生のコストを取得（original_subquery_costs用）
+            # First, get the raw cost from EXPLAIN JSON (for original_subquery_costs)
             original_cost = node.get("Total Cost", 0.0)
             
-            # 次に、MV選択用の調整されたコストを計算
+            # Next, compute the adjusted cost for MV selection
             # Prevent MVs with no filter condition
             if "Seq Scan" in node["Node Type"] and filter_condition == "":
                 cost = 0.0
@@ -431,7 +431,7 @@ class QueryParser:
                     "additional_filters": additional_filters,  # New field
                     "filter": filter_condition,
                     "cost": cost * frequency,
-                    "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
+                    "original_cost": original_cost * frequency,  # Raw cost from EXPLAIN JSON
                     "size": node.get("Plan Rows", 0) * width,
                     "rows": node.get("Plan Rows", 0),  # New field
                     "width": width,
@@ -443,14 +443,14 @@ class QueryParser:
 
         else:  # Leaf node
             # Determine filter condition
-            # Note: Index Condは結合条件なのでリーフMV生成時は使わない
-            # 親ノードのextract_join_conditions()で抽出される
+            # Note: Index Cond is a join condition, so it is not used when generating leaf MVs
+            # It is extracted by the parent node's extract_join_conditions()
             
-            # まず、EXPLAIN JSONからの生のコストを取得（original_subquery_costs用）
+            # First, get the raw cost from EXPLAIN JSON (for original_subquery_costs)
             original_cost = node.get("Total Cost", 0.0)
             
             if "Filter" in node:
-                # Filterのみを使用（Index Condは除外）
+                # Use only the Filter (Index Cond is excluded)
                 filter_condition = node["Filter"]
                 cost = node["Total Cost"]
             else:
@@ -491,10 +491,10 @@ class QueryParser:
                     "alias": alias,
                     "filter": filter_condition,
                     "cost": cost * frequency,
-                    "original_cost": original_cost * frequency,  # EXPLAIN JSONの生のコスト
+                    "original_cost": original_cost * frequency,  # Raw cost from EXPLAIN JSON
                     "size": node.get("Plan Rows", 0) * width,
                     "width": width,
-                    "index_columns": index_columns,  # インデックス対象カラム
+                    "index_columns": index_columns,  # Columns to index
                 }
             )
             order_list.append(order)
@@ -658,9 +658,9 @@ class QueryParser:
         """Calculate maintenance cost using the three-component model from the paper.
 
         This implements the IVM (Incremental View Maintenance) cost model:
-        1. Computing changes (差分計算コスト): cost(A ⋈ ΔB) ≈ cost_read(A ⋈ B) × |ΔB|/|B|
-        2. Identifying records (特定コスト): cost(σ_ΔV(V)) ≈ cost_read(σ_ΔB(B)) × fanout
-        3. Applying changes (適用コスト): cost(V - ΔV) ≈ cost_write(-ΔB) × fanout
+        1. Computing changes (delta computation cost): cost(A ⋈ ΔB) ≈ cost_read(A ⋈ B) × |ΔB|/|B|
+        2. Identifying records (identification cost): cost(σ_ΔV(V)) ≈ cost_read(σ_ΔB(B)) × fanout
+        3. Applying changes (application cost): cost(V - ΔV) ≈ cost_write(-ΔB) × fanout
 
         The model assumes |ΔB| = 1 (single row update) and multiplies by update_frequency.
 
@@ -934,16 +934,16 @@ class QueryParser:
         return X
 
     def _load_original_sql_conditions(self, json_files: list[str], sql_dir: str) -> None:
-        """元のSQLファイルからJOIN条件を抽出してQueryManagerに保存.
+        """Extract JOIN conditions from the original SQL files and store them in the QueryManager.
 
-        PostgreSQLの定数プッシュダウン最適化により、実行プランから消失する
-        JOIN条件を元のSQLから補完するために使用する。
+        Used to restore, from the original SQL, JOIN conditions that disappear from the query plan
+        due to PostgreSQL's constant pushdown optimization.
 
         Args:
-            json_files: 処理されたJSONファイルのパスリスト（順序はクエリインデックスに対応）
-            sql_dir: 元のSQLファイルが格納されているディレクトリのパス
+            json_files: List of paths of the processed JSON files (order corresponds to the query index)
+            sql_dir: Path of the directory containing the original SQL files
         """
-        from experiments.small_test_ver2.mv_generation.original_sql_join_extractor import (
+        from mv_generation.original_sql_join_extractor import (
             extract_aliases_from_sql,
             extract_equijoin_conditions,
             find_sql_file_for_query,
@@ -968,10 +968,10 @@ class QueryParser:
                     self.qm.original_query_join_conditions[i] = conditions
                     loaded_count += 1
             except Exception as e:
-                print(f"  [WARN] 元SQL読み込み失敗 ({sql_path}): {e}")
+                print(f"  [WARN] Failed to read original SQL ({sql_path}): {e}")
 
         if loaded_count > 0:
-            print(f"  [INFO] {loaded_count}個のクエリから元SQL JOIN条件を読み込み完了")
+            print(f"  [INFO] {loaded_count} queries: loaded original SQL JOIN conditions")
 
     def query_parse(self, q_num: int, path: str, insert_query: int, sql_dir: str | None = None) -> None:
         """Parse workload and compute optimization parameters.
@@ -1033,7 +1033,7 @@ class QueryParser:
 
                     query.append(converted_data)
 
-            # 元のSQLファイルからJOIN条件を抽出して保存
+            # Extract JOIN conditions from the original SQL files and store them
             if sql_dir:
                 self._load_original_sql_conditions(files, sql_dir)
 

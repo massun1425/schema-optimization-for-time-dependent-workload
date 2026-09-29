@@ -1,7 +1,7 @@
-"""IMDBデータベーススキーマ定義"""
+"""IMDB database schema definition"""
 
 
-# IMDBテーブルのカラム定義
+# Column definitions of the IMDB tables
 IMDB_SCHEMA: dict[str, list[str]] = {
     "aka_name": [
         "id",
@@ -81,16 +81,16 @@ IMDB_SCHEMA: dict[str, list[str]] = {
 
 
 def get_table_columns(table_name: str) -> list[str]:
-    """テーブルのカラム名を取得
+    """Get the column names of a table
 
     Args:
-        table_name: テーブル名
+        table_name: Table name
 
     Returns:
-        カラム名のリスト
+        List of column names
 
     Raises:
-        KeyError: テーブルが見つからない場合
+        KeyError: If the table is not found
     """
     if table_name not in IMDB_SCHEMA:
         raise KeyError(f"Unknown table: {table_name}")
@@ -98,12 +98,12 @@ def get_table_columns(table_name: str) -> list[str]:
 
 
 def validate_table(table_name: str) -> bool:
-    """テーブルがスキーマに存在するか確認
+    """Check whether a table exists in the schema
 
     Args:
-        table_name: テーブル名
+        table_name: Table name
 
     Returns:
-        存在する場合True
+        True if it exists
     """
     return table_name in IMDB_SCHEMA

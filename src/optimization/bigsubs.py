@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 from ..core.models import OptimizationResult
 from .base import BaseILPOptimizer
 
+try:
+    from core.sparse_structures import SparseMatrix
+except Exception:  # pragma: no cover - sparse module optional
+    SparseMatrix = ()  # isinstance(x, ()) is always False
+
 
 class BigSubsOptimizer(BaseILPOptimizer):
     """BigSubs optimization with randomized search and local ILP.
@@ -33,17 +38,32 @@ class BigSubsOptimizer(BaseILPOptimizer):
             **kwargs: Keyword arguments for BaseILPOptimizer
         """
         # Extract BigSubs-specific parameters before calling super().__init__
-        self.U_j_max = kwargs.pop("U_j_max", None)
-        self.U_max = kwargs.pop("U_max", 0.0)
         self.y_ij_init = kwargs.pop("y_ij", None)
+        # Remove legacy external U_max/U_j_max params if passed (now computed internally)
+        kwargs.pop("U_j_max", None)
+        kwargs.pop("U_max", None)
 
         # Call parent constructor with remaining kwargs
         super().__init__(*args, **kwargs)
 
-        # Set defaults if not provided
-        if self.U_j_max is None:
-            self.U_j_max = [0] * self.s_num
-        if self.y_ij_init is None:
+        # Compute U_max and U_j_max from u_ij (paper Algorithm 1 initialization)
+        self._sparse = isinstance(self.u_ij, SparseMatrix)
+        if self._sparse:
+            # Sparse: column sums over stored non-zeros only (no O(I*J) scan).
+            self.U_j_max = [0.0] * self.s_num
+            for row in self.u_ij.rows.values():
+                for j, v in row.items():
+                    self.U_j_max[j] += v
+        else:
+            self.U_j_max = [
+                sum(self.u_ij[i][j] for i in range(len(self.u_ij)))
+                for j in range(self.s_num)
+            ]
+        self.U_max = sum(self.U_j_max)
+
+        if self.y_ij_init is None and not self._sparse:
+            # Dense initial y_ij. In sparse mode y_ij is tracked as per-query
+            # selected-index lists instead (a dense I*J array is infeasible).
             self.y_ij_init = [[0] * self.s_num for _ in range(len(self.u_ij))]
 
     def initialize_random(self, mv_list: list[int]) -> list[int]:
@@ -55,11 +75,8 @@ class BigSubsOptimizer(BaseILPOptimizer):
         Returns:
             Randomized MV selection
         """
-        k = random.randint(1, len(mv_list))
-        k_list = random.sample(range(len(mv_list)), k)
-        for i in k_list:
-            mv_list[i] = 1
-        return mv_list
+        # Independent Bernoulli assignment per MV (paper: random 0/1 labels)
+        return [random.randint(0, 1) for _ in range(len(mv_list))]
 
     def flip_probability(
         self,
@@ -72,6 +89,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         U_j_max: float,
         U_max: float,
         B_max: float,
+        iter_max: int = 50,
     ) -> float:
         """Calculate probability of flipping a node's materialization status.
 
@@ -85,11 +103,12 @@ class BigSubsOptimizer(BaseILPOptimizer):
             U_j_max: Maximum possible utility of node j
             U_max: Maximum possible total utility
             B_max: Storage budget
+            iter_max: Maximum iterations (used to compute p threshold)
 
         Returns:
             Flip probability between 0 and 1
         """
-        p = 160  # Iteration threshold
+        p = int(0.8 * iter_max)  # 80% of iter_max (paper default)
 
         # Capacity component
         if B_cur < B_max:
@@ -117,7 +136,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
         else:
             p_j_utility = 0
 
-        return p_j_capacity * p_j_utility
+        return max(0.0, min(1.0, p_j_capacity * p_j_utility))
 
     def do_flip(self, probability: float, current_z: int) -> int:
         """Decide whether to flip based on probability.
@@ -152,19 +171,19 @@ class BigSubsOptimizer(BaseILPOptimizer):
         model = gp.Model("local_ilp")
         model.Params.OutputFlag = 0
 
-        # Variables
-        y = {}
-        for j in range(len(self.b_j)):
-            y[j] = model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}")
+        # Variables: only for candidates in k (= M_i ∩ M_i').
+        # Only k appears in the objective and constraints. Generating variables for all candidates (s_num) would create
+        # tens of thousands of variables every time on large workloads and be fatally slow, so only k is generated.
+        y = {j: model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}") for j in k}
 
         model.update()
 
-        # Objective: maximize utility minus maintenance cost
+        # Objective: maximize utility (paper Eq. 6)
         model.setObjective(
-            gp.quicksum(u_ij_row[j] * y[j] - self.m_cost[j] * y[j] for j in k), gp.GRB.MAXIMIZE
+            gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
         )
 
-        # Constraints: overlapping subexpression
+        # Constraints: overlapping subexpression (paper Eq. 7; normalized by the total number of candidates len(b_j)=m)
         for i in k:
             k_minus = [s for s in k if s != i]
             if k_minus:
@@ -174,12 +193,42 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
         model.optimize()
 
-        # Extract solution
+        # Extract solution (always 0 outside k)
         y_opt = [0] * len(self.b_j)
-        for j in range(len(self.b_j)):
+        for j in k:
             y_opt[j] = int(y[j].X)
 
         return y_opt
+
+    def local_ilp_selected(self, u_ij_row, k: list[int]) -> list[int]:
+        """Sparse variant of local_ilp: return only the selected MV indices.
+
+        Identical model to local_ilp() but avoids allocating a dense length-J
+        result vector per query (which is infeasible at large scale).
+        ``u_ij_row`` may be a dict or any object supporting ``row[j]``.
+        """
+        if not k:
+            return []
+
+        model = gp.Model("local_ilp")
+        model.Params.OutputFlag = 0
+
+        y = {j: model.addVar(vtype=gp.GRB.BINARY, name=f"y_{j}") for j in k}
+        model.update()
+
+        model.setObjective(
+            gp.quicksum(u_ij_row[j] * y[j] for j in k), gp.GRB.MAXIMIZE
+        )
+
+        for i in k:
+            k_minus = [s for s in k if s != i]
+            if k_minus:
+                model.addConstr(
+                    y[i] + gp.quicksum(y[j] * self.X[i][j] for j in k_minus) / len(self.b_j) <= 1
+                )
+
+        model.optimize()
+        return [j for j in k if int(y[j].X) == 1]
 
     def initialize_candidates(self, **kwargs) -> tuple[list[int], list[int]]:
         """Initialize MV candidates (not used in BigSubs).
@@ -209,9 +258,9 @@ class BigSubsOptimizer(BaseILPOptimizer):
         # Log header
         logger.info("="*60)
         logger.info("BigSubs Optimization - Convergence Tracking")
-        logger.info(f"iter_max={iter_max}, B_max={self.B_max/1024/1024:.2f}MB, MV候補数={self.s_num}")
+        logger.info(f"iter_max={iter_max}, B_max={self.B_max/1024/1024:.2f}MB, MV candidates={self.s_num}")
         logger.info("="*60)
-        logger.info(f"{'Iter':>5} | {'Utility':>12} | {'Storage%':>10} | {'MV数':>6} | {'Best':>5}")
+        logger.info(f"{'Iter':>5} | {'Utility':>12} | {'Storage%':>10} | {'#MVs':>6} | {'Best':>5}")
         logger.info("-"*60)
 
         # Initialize random MV selection
@@ -228,12 +277,21 @@ class BigSubsOptimizer(BaseILPOptimizer):
         U_j_cur = [0.0] * len(z_j)
         best_u = 0.0
         best_b = 0.0
-        best_y_ij = self.y_ij_init
         best_z_j = z_j.copy()
 
-        y_ij = [list(row) for row in self.y_ij_init]
+        if self._sparse:
+            # y_ij tracked as per-query lists of selected node indices (sparse).
+            y_sel = [[] for _ in range(len(self.u_ij))]
+            best_y_sel = [[] for _ in range(len(self.u_ij))]
+            best_y_ij = best_y_sel
+        else:
+            best_y_ij = self.y_ij_init
+            y_ij = [list(row) for row in self.y_ij_init]
 
-        # Iterative refinement
+        # Iterative refinement: at most iter_max iterations, stop early on convergence.
+        # (Paper's pseudocode uses OR which can exceed iter_max / risk non-termination;
+        #  we adopt the safer "max iterations, early-stop on convergence" interpretation,
+        #  matching the paper's natural-language description.)
         while updated == 1 and iter_num < iter_max:
             updated = 0
 
@@ -249,6 +307,7 @@ class BigSubsOptimizer(BaseILPOptimizer):
                     self.U_j_max[j],
                     self.U_max,
                     self.B_max,
+                    iter_max,
                 )
                 z_j_new = self.do_flip(p_flip, z_j[j])
 
@@ -261,35 +320,35 @@ class BigSubsOptimizer(BaseILPOptimizer):
 
                 z_j[j] = z_j_new
 
-            # Edge labeling: assign MVs to queries
+            # Edge labeling: assign MVs to queries (paper Algorithm 1 step 2)
+            # z_j is NOT modified here; only y_ij, U_cur, U_j_cur are updated
             U_cur = 0.0
             U_j_cur = [0.0] * len(z_j)
-            z_j_new = [0] * len(z_j)
 
-            for i in range(len(self.q_s_list)):
-                # Find candidates for this query
-                M_i = [j for j in range(len(z_j)) if self.u_ij[i][j] > 0]
-                M_i_ = [j for j in range(len(z_j)) if z_j[j] > 0]
-                k = list(set(M_i) & set(M_i_))
+            if self._sparse:
+                # Materialized set computed ONCE per iteration (not per query),
+                # and per-query candidates come from the stored non-zeros only.
+                mat_set = set(j for j in range(len(z_j)) if z_j[j] > 0)
+                for i in range(len(self.q_s_list)):
+                    row = self.u_ij.rows.get(i, {})
+                    k = [j for j, v in row.items() if v > 0 and j in mat_set]
+                    sel = self.local_ilp_selected(row, k)
+                    y_sel[i] = sel
+                    for j in sel:
+                        v = row[j]
+                        U_cur += v
+                        U_j_cur[j] += v
+            else:
+                for i in range(len(self.q_s_list)):
+                    M_i = [j for j in range(len(z_j)) if self.u_ij[i][j] > 0]
+                    M_i_ = [j for j in range(len(z_j)) if z_j[j] > 0]
+                    k = list(set(M_i) & set(M_i_))
 
-                # Solve local ILP for this query
-                y_ij[i] = self.local_ilp(self.u_ij[i], k)
+                    y_ij[i] = self.local_ilp(self.u_ij[i], k)
 
-                # Update utilities
-                for j in k:
-                    if y_ij[i][j] == 1 and z_j_new[j] == 0:
-                        U_cur += self.u_ij[i][j] * y_ij[i][j] - self.m_cost[j] / len(self.q_s_list)
-                        z_j_new[j] = 1
-                    U_j_cur[j] += self.u_ij[i][j] * y_ij[i][j]
-
-            # Update z_j and deduct maintenance costs
-            for j in range(len(z_j)):
-                z_j[j] = z_j_new[j]
-                U_cur -= self.m_cost[j] * z_j[j]
-
-            # B_cur を z_j に合わせて正しく再計算する
-            # Edge Labelingで使われなかったMVが削除されるため、B_curも更新が必要
-            B_cur = sum(z_j[j] * self.b_j[j] for j in range(len(z_j)))
+                    for j in k:
+                        U_cur += self.u_ij[i][j] * y_ij[i][j]
+                        U_j_cur[j] += self.u_ij[i][j] * y_ij[i][j]
 
             iter_num += 1
 
@@ -312,11 +371,14 @@ class BigSubsOptimizer(BaseILPOptimizer):
                 best_mark = "*" if is_best else ""
                 logger.info(f"{iter_num:>5} | {U_cur:>12.2f} | {storage_percent:>9.2f}% | {mv_count:>6} | {best_mark:>5}")
 
-            # Track best solution (容量制約を満たしている場合のみベストを更新)
+            # Track best solution (update the best only if the storage constraint is satisfied)
             if U_cur > best_u and B_cur <= self.B_max:
                 best_u = U_cur
                 best_b = B_cur
-                best_y_ij = [list(row) for row in y_ij]
+                if self._sparse:
+                    best_y_ij = [list(s) for s in y_sel]
+                else:
+                    best_y_ij = [list(row) for row in y_ij]
                 best_z_j = z_j.copy()
 
         execution_time = time.time() - start_time
@@ -326,9 +388,9 @@ class BigSubsOptimizer(BaseILPOptimizer):
         last_best_iter = max(best_iterations) if best_iterations else 0
         
         logger.info("-"*60)
-        logger.info(f"{'Finished':>5} | 総イテレーション: {iter_num}, 最終ベスト更新: iter {last_best_iter}")
+        logger.info(f"{'Finished':>5} | Total iterations: {iter_num}, last best update: iter {last_best_iter}")
         logger.info(f"{'Result':>5} | Utility: {best_u:.2f}, Storage: {best_b/1024/1024:.2f}MB ({best_b/self.B_max*100:.2f}%)")
-        logger.info(f"{'':>5} | 選択MV数: {sum(best_z_j)}, 実行時間: {execution_time:.2f}秒")
+        logger.info(f"{'':>5} | Selected MVs: {sum(best_z_j)}, execution time: {execution_time:.2f}s")
         logger.info("="*60)
 
         # Get materialized view list

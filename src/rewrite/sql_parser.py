@@ -1,23 +1,23 @@
-"""SQL解析ユーティリティ"""
+"""SQL parsing utilities"""
 
 import re
 
 
 class SQLParser:
-    """SQLクエリの解析を行うヘルパークラス"""
+    """Helper class for parsing SQL queries"""
 
     def __init__(self):
-        """初期化"""
+        """Initialize"""
         pass
 
     def extract_from_clause(self, sql: str) -> str:
-        """FROM句を抽出
+        """Extract the FROM clause
 
         Args:
-            sql: SQL文字列
+            sql: SQL string
 
         Returns:
-            FROM句の文字列
+            The FROM clause string
         """
         pattern = r"FROM\s+(.+?)(?:WHERE|GROUP BY|ORDER BY|LIMIT|$)"
         match = re.search(pattern, sql, re.IGNORECASE | re.DOTALL)
@@ -26,13 +26,13 @@ class SQLParser:
         return ""
 
     def extract_where_clause(self, sql: str) -> str:
-        """WHERE句を抽出
+        """Extract the WHERE clause
 
         Args:
-            sql: SQL文字列
+            sql: SQL string
 
         Returns:
-            WHERE句の文字列
+            The WHERE clause string
         """
         pattern = r"WHERE\s+(.+?)(?:GROUP BY|ORDER BY|LIMIT|$)"
         match = re.search(pattern, sql, re.IGNORECASE | re.DOTALL)
@@ -41,23 +41,23 @@ class SQLParser:
         return ""
 
     def extract_tables(self, from_clause: str) -> list[tuple[str, str]]:
-        """FROM句からテーブルとエイリアスを抽出
+        """Extract tables and aliases from the FROM clause
 
         Args:
-            from_clause: FROM句の文字列
+            from_clause: FROM clause string
 
         Returns:
-            (テーブル名, エイリアス) のリスト
+            List of (table name, alias)
         """
         tables = []
-        # カンマで分割
+        # Split on commas
         parts = from_clause.split(",")
 
         for part in parts:
             part = part.strip()
-            # JOIN句を含む場合
+            # If the part contains a JOIN clause
             if "JOIN" in part.upper():
-                # 複数のJOINを処理
+                # Handle multiple JOINs
                 join_parts = re.split(
                     r"\s+(?:INNER|LEFT|RIGHT|FULL)?\s*JOIN\s+", part, flags=re.IGNORECASE
                 )
@@ -73,19 +73,19 @@ class SQLParser:
         return tables
 
     def _extract_table_alias(self, part: str) -> tuple[str, str] | None:
-        """テーブル名とエイリアスを抽出
+        """Extract the table name and alias
 
         Args:
-            part: SQL断片
+            part: SQL fragment
 
         Returns:
-            (テーブル名, エイリアス) または None
+            (table name, alias) or None
         """
-        # ON句を削除
+        # Remove the ON clause
         part = re.sub(r"\s+ON\s+.+$", "", part, flags=re.IGNORECASE)
         part = part.strip()
 
-        # "table AS alias" または "table alias" の形式
+        # Form "table AS alias" or "table alias"
         match = re.match(r"(\w+)(?:\s+(?:AS\s+)?(\w+))?", part, re.IGNORECASE)
         if match:
             table = match.group(1)
@@ -94,22 +94,22 @@ class SQLParser:
         return None
 
     def parse_condition(self, condition: str) -> dict[str, list[str]]:
-        """条件式を解析してカラムごとに分類
+        """Parse a condition expression and group it by column
 
         Args:
-            condition: WHERE句の条件式
+            condition: Condition expression of the WHERE clause
 
         Returns:
-            {alias.column: [条件1, 条件2, ...]}
+            {alias.column: [condition1, condition2, ...]}
         """
         conditions = {}
 
-        # AND/ORで分割
+        # Split on AND/OR
         parts = re.split(r"\s+(?:AND|OR)\s+", condition, flags=re.IGNORECASE)
 
         for part in parts:
             part = part.strip()
-            # alias.column を抽出
+            # Extract alias.column
             match = re.match(r"(\w+)\.(\w+)\s*([<>=!]+|LIKE|IN)\s*(.+)", part, re.IGNORECASE)
             if match:
                 alias = match.group(1)
@@ -133,18 +133,18 @@ class SQLParser:
         order_by: str = "",
         limit: str = "",
     ) -> str:
-        """クエリを再構築
+        """Reconstruct a query
 
         Args:
-            select_clause: SELECT句
-            from_clause: FROM句
-            where_clause: WHERE句
-            group_by: GROUP BY句
-            order_by: ORDER BY句
-            limit: LIMIT句
+            select_clause: SELECT clause
+            from_clause: FROM clause
+            where_clause: WHERE clause
+            group_by: GROUP BY clause
+            order_by: ORDER BY clause
+            limit: LIMIT clause
 
         Returns:
-            再構築されたSQL
+            The reconstructed SQL
         """
         sql = f"SELECT {select_clause}\nFROM {from_clause}"
 

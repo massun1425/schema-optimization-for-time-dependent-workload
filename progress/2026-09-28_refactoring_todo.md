@@ -1,0 +1,249 @@
+# 論文提出に向けたリファクタリング: 残作業リスト
+
+作成日: 2026-09-28
+
+これまでに整えたもの:
+- `paper/`: 実験を再現するシェルスクリプト。出力は `time_dependent_output/rq*/`
+- `paper_figures/`: `rq*/` から論文の図表を作るスクリプト
+- `docker/` と修正済みの `Dockerfile`: 実験環境のコンテナの作成と検証
+- 英語の `README.md`、CI（`.github/workflows/tests.yml`）
+- 不要ファイルの archive への移動と、不要データの削除（約 115GB）
+
+根拠となる調査は `progress/2026-09-28_paper_experiment_inventory.md` を参照。
+
+**方針: 実験スクリプトは時間がかかる（全体で約 3 週間）ため、今回は実行しない。**
+実行が必要な作業は、最後の「実験を動かすときにやること」に分けた。
+
+---
+
+## 優先度: 高（提出・再現に直接関わる）
+
+### 1. 既存の論文結果を `rq*/` 構成に配置する
+- [x] 既存の結果（`*_ok` など）を **`paper_results/`**（git 管理下、`rq*/` と同じ構成）にコピーした
+  - 実験を再実行したときに上書きされないよう、`time_dependent_output/rq*/` とは別のフォルダにした
+  - 収集スクリプトは `paper_results/collect_paper_results.sh`。コピーのみで、既存ファイルは上書きしない
+  - 論文の図表も `paper_results/figures/` に生成した（12 枚の図と表 2 本が論文のものと一致し、再生成してもバイト単位で同一）
+- [x] `bash paper_figures/make_all.sh --td-dir paper_results` で論文の図表が生成できることを確認した
+
+（2026-09-28 完了）
+- 作成したのは 161 ファイル（JSON 158 本と DNF の印 3 つ）。ほかに `README.md` と `SHA256SUMS` を置いた
+- 元データ（`time_dependent_output/`）に変化がないことを確認した
+- 12 枚の図と表 2 本が、論文の図表とピクセル単位で一致した
+- 作業ツリー上は 1.6GB、圧縮後は 0.11GB。最大ファイルは 49.8MiB
+
+- **理由**: `paper/` はまだ一度も実行していないので `rq*/` が存在せず、`paper_figures/` で図を作れない状態になっている。
+- **対応付け**: 模擬検証で使ったものと同じで、この対応付けで 12 枚の図と表 2 本が論文の図表と一致することを確認済み。
+
+  | `rq*/` | 元データ |
+  |---|---|
+  | `rq1/exp1_1/job-ceb-2/` | `job-ceb-2/result_500M_ok/` |
+  | `rq1/exp1_1/Redbench_synthetic/`、`rq2/` | `ex2_500M_ok/` |
+  | `rq1/exp1_2/` | `job-ceb-2/result_scaling_time_ok/` |
+  | `rq1/exp1_3/job-ceb-2-q{N}/` | `job-ceb-2-q{N}/`（プルーニングなしは `_wo` に改名。60k/80k/100k は DNF の印を置く） |
+  | `rq3/` | `ex3_500M_ok/` |
+  | `rq4/{24_2_10,24_mono,24_peak}/b*/` | `ex4_ok_{cycle,mono,peak}/b*/` |
+
+- **注意**: 移動ではなくコピーで行い、元の `*_ok` は残す。
+- **完了条件**: `make_all.sh` が成功し、出力が論文の図表と一致する。
+
+### 0. 論文に Artifacts 節を追加する（EDBT の必須要件）
+- [ ] 参考文献の直前に「Artifacts」という節を置き、すべての成果物の入手方法と使い方を書く（ページ数に数えない）
+  - GitHub のリポジトリへのリンク（アクセスを監視しないページであること）
+  - 論文の結果と図表が `paper_results/` にあり、実験を動かさずに図表を再生成できること
+  - 実験の再現手順（README の手順、Docker による環境、実行時間の目安）
+- [ ] 投稿前に、GitHub へ push した状態でリンク先から README どおりに図表を再生成できるか確かめる
+- 締め切り: EDBT 2027 第 3 サイクルの投稿は 2026-10-07
+
+### 2. 依存の定義を実態に合わせる
+- [x] `requirements.txt`: 実験で使った版に固定。matplotlib を追加し、使わない torch を削除。ダッシュボード用の fastapi・uvicorn は同じファイルにまとめた
+- [x] `pyproject.toml`: 依存を `requirements.txt` と同じ版に固定（numpy・matplotlib・fastapi・uvicorn を追加、`gurobipy==12.0.1`、`python-dotenv` を削除）、`requires-python = ">=3.12"`、Black・Ruff・mypy の対象を 3.12 に変更
+- [x] `uv.lock` を作り直し（`uv lock --check` で整合を確認）
+- [x] README の回避手順を削除し、CI も `pip install -r requirements.txt` を使うように変更
+
+（2026-09-28 完了。新しい仮想環境で `pip install -r requirements.txt` だけを実行して、import チェック・テスト・Fig. 5/6 の生成が通り、図が論文のものとピクセル単位で一致することを確認。`uv sync --frozen` でも同じ版の環境が作れることを確認）
+
+- **理由**: 今の定義どおりにインストールすると図が作れないうえ、不要な重い依存（torch）が入る。
+- **完了条件**: 新しい仮想環境で `pip install -r requirements.txt` だけを実行し、import チェックと図表生成が通る。
+
+### 3. 論文本文の修正（論文側の作業）
+（2026-09-29: 1 つめ以外は論文側で修正済み）
+- [ ] Abstract / Intro の「最大 24.6%（Static 比）」「最大 45.6%（Adapt 比）」: 一致する結果がない。現在のデータに基づく値に直す
+- [x] 5.2.1 節の「Static 比 62.8%」→ **63.3%** に直す（Adapt 比 87.4% はそのまま）
+  - 2026-09-28 再確認: `ex2_500M_ok` から計算すると、初期 MV 構築を除くと 62.77%、含めると 63.31%
+  - Static の `total_benchmark_time`（141,991.6 s）＝ 各時刻の合計（139,951.7 s）＋ 初期 MV 構築（2,039.9 s）
+  - 論文 5.1.4 節の定義（Static は初期 MV 構築を最初の時刻に含める）と、Fig. 7 の Static 系列の合計、Fig. 10 の recall 100% の値（どちらも 141,991.6 s）は、構築時間を含めている
+  - 62.8% は `progress/gen_data_summary.py` が構築時間を含めずに合計した値だった
+- [x] 5.1.2 節の「2,294 クエリ」→ **2,284** に直す
+  - 2026-09-28 再確認: 次の 6 つがすべて 2,284
+    - SQL ファイル数
+    - EXPLAIN JSON 数
+    - `parse_summary.json` の `num_queries`
+    - 頻度ファイル（`_2h_x2_50x`）のキー数
+    - 1 回以上実行されるクエリ数
+    - ベンチマークで実際に実行されたクエリ数
+  - git の履歴でも最初（2026-06-04）から 2,284 で、2,294 の出どころは見つからない（誤記と思われる）
+  - 中身が同じ SQL が 2 組あるため、内容で数えると 2,282。論文の「クエリ数」としてはファイル数・頻度ファイルと一致する 2,284 が妥当
+- [x] 5.1.1 節の「PostgreSQL 18.3」→ 実際は 18.4
+- [x] （任意）Fig. 8 のキャプションの「2500 queries」→ 正確には **2,515**（JOB 113 + CEB 2,402）
+  - 2026-09-28 確認: SQL ファイル数、EXPLAIN JSON 数、`parse_summary.json`、使った頻度ファイル 8 種のキー数、ベンチマークで実行されたクエリ数（3 パターン）がすべて 2,515
+  - Redbench を 2,284 と正確に書くなら、こちらもそろえるとよい
+  - Fig. 9 の合成セットは 20,000〜100,000 クエリちょうどで、論文の表記どおり
+
+根拠となる数値は棚卸し md の §6 と `progress/2026-08-09_experiment_data_summary.md` にある。
+
+- [x] 4.3 節のサンプリングの記述を確認する
+  - 2026-09-28 に `paper/00_prepare.sh` を変更し、Redbench_synthetic も高サンプル率版（`TABLESAMPLE BERNOULLI`、大きいテーブルの 10〜30%）を使うようにした
+  - ただし、論文の Redbench の結果（Fig. 7 の Redbench パネル、Fig. 10、`paper_results/`）は、元の低サンプル率版（ハッシュによる相関サンプリング、1〜10%）のコストで出ている
+  - EXPLAIN の結果も実行のたびに変わりうるため、再実行で結果が多少変わるのは前提どおりとして、Redbench のやり直しは行わない（2026-09-28 判断）
+
+### 4. 結果データの公開方法を決める
+
+（2026-09-28 途中経過）
+- 最終結果と図表は `paper_results/` に入れて GitHub に含めることにした（1 の項目）
+- 中間結果は GitHub に含めず、前処理（`paper/00_prepare.sh`）を読者に再実行してもらう方針にした
+  - 理由: `04_migration` のノード ID は Phase 2 が EXPLAIN の結果から振るため、単体で配布しても、読者が Phase 1 をやり直すと対応が保証できない
+  - job-ceb-2 と Redbench_synthetic の `04_migration` のコピーは `04_migration_paper/` に残してあるが、`.gitignore` の対象にした（手元の来歴用）
+- [x] 公開方法を決めた: 最終結果と図表は `paper_results/` として GitHub に含める。中間結果（`03_parsed/` など）は含めず、読者に前処理を再実行してもらう
+- [x] README に `paper_results/` の説明と、図表を再生成する方法を書いた（別途のダウンロードは不要になった）
+
+- **理由**: どちらのデータも git 管理外で、今のままでは第三者が論文の結果そのものを確認できない。
+
+---
+
+## 優先度: 中（リファクタリングの残り）
+
+### 5. 未使用のコードと古いスクリプトを archive へ移す
+（2026-09-29 に E（不要）を移動済み。C・D は未対応）
+- [x] E（不要）と判定した 27 項目（git 管理下の 50 ファイル）を、git の管理から外して `legacy/`（新設、`.gitignore` の対象）へ移した。元のディレクトリ構成のまま置き、`legacy/README.md` に各ファイルの説明と戻し方を書いた
+  - `* copy.py` の 3 つは、どれも元のファイルと中身が違ったので、削除せずに `legacy/` へ移した
+  - 確認: CI と同じ import チェック（14 モジュール）、テスト 5 件、図表の再生成（14 ファイルがバイト単位で一致）、`DRY_RUN=1 bash paper/run_all.sh` のコマンド列（416 行、タイムスタンプ以外は移動前と同じ）。git 管理下のファイルに、移したファイルへの参照は残っていない
+- [x] C（import のためだけに必要）を片付けた（2026-09-29）
+  - `core/small_test_schema_provider.py` は削除し、`core/__init__.py` の import を外した
+  - `run_experiment_normal.py` の使っていない `OptimizerFactory` の import を消し、`src/optimization/__init__.py` を `base`・`bigsubs`・`normal` だけにした。`factory.py`・`frequency.py`・`utility.py`・`utility_capacity.py` は `legacy/` へ移した
+  - `normal.py` は `--static-algorithm` の既定値（`normal`）なので残す（判定を C から「使えるオプション」に改めた）
+  - 確認: import チェック、テスト、dry-run のコマンド列、static（utility）の Phase 6 の結果が変わらないこと
+- [x] D（論文では使わないオプション）を決めた（2026-09-29）: simple の計算モジュールと BigSubs（`--static-algorithm bigsubs`）は残す。actual_cost は `legacy/` へ移し `job_real` の分岐を削除。`src/rewrite/enhanced_mv_generator.py` は `legacy/` へ移し、それを使う `base.py` の `generate_sql` の分岐を削除（static と BigSubs の Phase 6 が動き、static の結果が変わらないことを確認）
+- 以下は 2026-09-28 時点の一覧（判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
+- [x] 未使用のコード（棚卸し md の §4.1）→ `legacy/` へ移した（2026-09-29、上記）
+  - `benchmark/time_dependent_query_executor copy.py`、`core/two_step_optimizer copy.py`、`core/utility_pruner copy.py`
+  - `core/utility_pruner{,_iterative,_iterative_helpers,_simple}.py`、`src/core/{query_manager,query_parser}_distinct.py`
+  - `src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/`
+  - `src/utils/{file_utils,logging_utils,validators}.py`
+  - `migration/` の actual_cost・simple の各計算モジュール（NeuroCard・DeepDB 関連は 2026-09-29 に削除済み。判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
+  - `utils/{analyze_benchmark_results,csv_exporter,plot_benchmark}.py`
+  - `scripts/run_utility_{benchmark,optimization}.py`、`scripts/setup_imdb.py`、`scripts/scratch/`、`scripts/progress/`
+- [x] `scripts/shell/` の旧スクリプト 19 本 → `legacy/` へ移した（`paper/` に置き換え済み）。特に `run_ex1_1-ceb.sh` は頻度ファイルのサフィックスが論文と違い、誤用の元になる
+- [x] 古い手順書 `scripts/DATABASE_SETUP.md` → `legacy/` へ移した（移動済みのファイルや旧構成を参照している）
+- [x] 使っていない設定 `config/experiments/*.yaml` → `legacy/` へ移した
+
+- **注意**: `src/optimization/{bigsubs,frequency,utility,utility_capacity}.py` は、使っていないが `factory.py` が import しているので、そのまま移すと壊れる。移すなら `factory.py` も直す。
+- **完了条件**: import チェック（CI と同じもの）と `DRY_RUN=1 bash paper/run_all.sh` のコマンド列が、移動前と変わらない。
+
+（2026-09-28 途中までの検証結果。pickle の走査は時間がかかるため中断し、後回し）
+- 実験で使う入口（`paper/` が呼ぶ 4 スクリプト、図表スクリプト、CI のテスト、ダッシュボード）から import を辿ると、Python ファイル 104 個のうち 33 個には、条件分岐の中の import を含めても到達しない
+  - 到達しないもの: 上の一覧の `* copy.py` 3 個、`core/utility_pruner*.py` 4 個、`src/core/*_distinct.py`、`src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/sql_to_neurocard_csv.py`、`src/utils/{file_utils,logging_utils,validators}.py`、`utils/{analyze_benchmark_results,csv_exporter,plot_benchmark,inspect_pickle}.py`、`scripts/{run_utility_benchmark,run_utility_optimization,setup_imdb}.py`、`scripts/scratch/`
+  - Redbench のワークロード生成ツール（`generate_queryset_from_workload_csv.py`、`normalize_queryset_table_versions.py`、`merge_query_folders*.py`）も到達しないが、README の付録で案内しているので残す（2026-09-29 に `scripts/redbench_synthesizer/` へ移動）
+- 到達はするが、論文の実験の条件では通らない分岐でしか import されないもの
+  - `migration/{actual_cost,neurocard,deepdb,simple}_*` と `deepdb_estimator.py`、`src/estimation/neurocard_wrapper.py`: Phase 5 で `--use-sampling` 以外を選んだとき、または `job_real` のときだけ
+  - `src/rewrite/enhanced_mv_generator.py`: `generate_sql=True` のときだけ（呼び出し元はない）
+- 注意: `run_experiment_normal.py` は `OptimizerFactory` を import しているが使っていない。この import によって `src/optimization/__init__.py` が最適化モジュール 7 つ（`bigsubs`・`frequency`・`utility`・`utility_capacity`・`normal` など）を毎回 import する。これらを移す前に、この import と `__init__.py` を整理する必要がある（`base.py` は Static が使う `UtilityOptimizerV2` の基底クラスなので必要）
+- 文字列による動的な import（`importlib` など）はない。候補名への文字列参照は、候補ファイル同士の間にしかない
+- 未確認: pickle（`qp_class.pkl`）が参照しているモジュール名。候補を移す前に確認する
+
+### 6. 実行経路のコードを英語化する
+（2026-09-29 完了）
+- [x] 実行経路のコード 29 ファイル（約 2,000 行）の日本語のコメント・docstring・ログメッセージを英語にした（`dashboard/` は対象外）
+  - 確認 1: 構文木を比べ、変わったのが文字列とコメントだけであること、日本語を含まない元の文字列がすべて残っていること、日本語が残っていないことを全ファイルで確認した
+  - 確認 2: import チェック、テスト、`--help`、dry-run のコマンド列、図表の再生成が翻訳前と同じ
+  - 確認 3: スクラッチで実行し直して比べた。Phase 6〜8（static）の結果・MV の SQL（コメント行以外）・書き換えたクエリ 2,515 本が一致。Phase 4・5（mini セット）のプランとコストは、ハッシュを固定すると翻訳前とバイト単位で一致
+  - Phase 2 の pickle は、翻訳前のコード同士でも毎回違う。`QueryParser` が維持コスト `m_cost` をシードなしの `random.randint` で計算しているため（`src/core/query_parser.py`）。`m_cost` とそこから計算する統計値を除けば、翻訳の前後で同じ。static の最適化は `m_cost` を 0 にして使うので、論文の結果には影響しない
+- [x] 翻訳中に見つかった、コードと合っていないコメントをコードに合わせた（2026-09-29）
+  - `migration/sampling_migration_cost_calculator{,_high}.py` の `TARGET_TABLES` の見出し（例: 低サンプル率版は 1% / 5% / 100% / 10% / 100% / 100%）
+  - `scripts/recalculate_costs.py` の `log1p` の行のコメント（大きい行数を対数的に抑える。0 は 0 のまま）
+- [x] サンプリングの並列実行を削除した（2026-09-29）: 2 つのサンプリングの計算モジュールの並列用の関数 `_process_single_node` は、クラスの `TARGET_TABLES` と値の違う独自のサンプリング率の表を持っていたが、`--sampling-parallel` / `--sampling-workers` が `calculate_all_costs()` に渡されておらず一度も使われていなかった。実験コードの変更を避けるため、並列実行の分岐・関数・使わない import（`Pool`、`cpu_count`、`partial`）と、効かないオプション 2 つを削除した。逐次実行の処理は、構文木の比較で元と同じ（違いはログの見出し 1 行と引数だけ）
+
+- **理由**: リポジトリは英語で書くという方針に合わせるため（国際会議の成果物）。
+- **注意**: ロジックは変えない。ログの文言を変えると、過去のログとの比較や grep がしにくくなる点に注意。
+- **完了条件**: 5 と同じ回帰チェックが通る。
+
+### 7. 小さな不具合を直す
+- [x] `--phase 0` が存在しないメソッド `phase0_setup` を呼んでいる → 選択肢から外した（DB のセットアップは `docker/create_container.sh` が担う）
+- [x] `run_experiment_normal.py` の設定に関するコメントを、実際の動作（`config/default.yaml` か `$CONFIG_PATH` を読み、`DB_*` の環境変数で上書き）に合わせて英語で書き直した
+- [x] `migration/enumerate_simple_migration_plan.py` の `__main__` を、`run_experiment_normal.py` と同じ `Settings()` を使うように直した
+- [x] `tests/test_pruning.py` のプロジェクトルートの計算を直した（別のディレクトリから素の `pytest` で実行しても import に成功することを確認）
+- [x] `utils/csv_exporter.py` の構文エラー → ファイルごと削除した（コミット `5496b1c8`）
+- [x] Phase 4 と 5 が、`--config` の実験ディレクトリではなくリポジトリの `03_parsed/`・`04_migration/` を固定のパスで読み書きしていた → `GetSimpleMigrationPlans` と 3 つのコスト計算クラスに `exp_dir` 引数（既定値は従来どおりリポジトリの直下）を追加し、`run_experiment_normal.py` から実験ディレクトリを渡すようにした（2026-09-29）。スクラッチで Phase 4・5 を実行し、書き込み先が実験ディレクトリになることを確認
+
+### 8. 実行条件を結果 JSON に保存する
+（2026-09-29 完了）
+- [x] `run_experiment_normal.py` が、実行時の引数（`--freq-weight`、`--sampling-rate`、`--pruning-parallel`、`--pruning-workers` など）と、コードのバージョン（git のコミット）を結果 JSON に書き出すようにした
+  - 最適化結果（td / static / static_bigsubs / adaptive / peloton）とベンチマーク結果の JSON に、トップレベルのキー `run_config` を追加した（既存のキーは変更なし）。中身は、コマンドライン、全引数、実際に効いた設定値（予算、プルーニングの並列数など）、git のコミットと未コミット変更の有無、Python と主要パッケージの版、前処理の条件
+  - 前処理（Phase 5 のサンプリング方式・率、Phase 5.5 の再計算）の条件は、`04_migration/<set>/simple_migration_costs.meta.json` に別ファイルで保存する。ダッシュボードが `simple_migration_costs.json` を「MV 名 → コスト」の対応として走査するため、このファイルにはキーを足していない
+  - 確認: 全 158 本の論文結果 JSON に `run_config` を足したコピーから `make_all.sh` で図表を作り、`paper_results/figures/` とバイト単位で一致した。Phase 5.5 と Phase 6（static）をスクラッチの実験ディレクトリで実行し、選ばれる MV が論文の結果と同じことを確認した
+
+- **理由**: 今は一部の条件が結果から判別できず、元のシェルスクリプトの記述を信じるしかなかった。
+- **注意**: 結果の JSON 形式が変わるので、`paper_figures/` が読むフィールドを壊さないようにする（追加だけにする）。
+
+### 9. テストと CI を強化する
+- [x] CI で、`paper_results/` から論文の図表（Fig. 5〜11、Table 2）をすべて再生成し、`paper_results/figures/` とバイト単位で一致するかを確かめるようにした
+- [x] 空のテスト 2 件を、最適解を手計算で求められる小さな問題で検証する中身にした（`tests/test_pruning.py`。LocalILP の固定制約、TimeDependentOptimizer との一致、プルーニングで劣った候補が除かれ最適解が変わらないこと、並列と逐次で有望集合が同じこと）
+- [x] 回帰テストを追加した（`tests/test_optimizer_regression.py` と期待値 `tests/data/optimizer_regression_expected.json`。seed 固定の 12 クエリ・15 候補・6 時刻の問題。期待値は `--update` で作り直せる）
+- [x] Gurobi のライセンスが使えないときは最適化のテストを skip するようにした（`tests/conftest.py` と `@pytest.mark.gurobi`）。pip 版 gurobipy 12.0.1 付属の無償ライセンスが 2026-11-23 に切れるため
+- [x] lint の扱いを決めた: CI から `lint` ジョブを外した（2026-09-29）。2025-10 の初期設定で入ったが、最初から失敗しても CI を止めない設定で、一度も機能していなかった
+  - Black と Ruff の設定は `pyproject.toml` に残してあるので、手元では `black` / `ruff check` を使える
+  - 参考（2026-09-28 時点）: 今回作ったコード（`paper_figures/`・`tests/`）は 11 ファイルが整形対象・指摘 7 件、既存の `src/` は 1,228 件、`core/`・`scripts/` などは 2,989 件
+
+---
+
+## 優先度: 低（来歴・公開前の整理）
+
+### 10. 入力データの作り方を記録する
+- [x] `job-ceb-2`（JOB + CEB の 2,515 クエリ）の作り方と頻度ファイルの生成方法の記録 → 不要と判断した（2026-09-29）。クエリセットと頻度ファイルはリポジトリに含まれている
+- [x] Redbench synthetic の作り方を記録した（2026-09-29）。スクリプトを `scripts/redbench_synthesizer/` に、経緯を `progress/2026-09-29_redbench_synthetic_provenance.md` にまとめた
+  - 経路: Redbench の matching 結果（cluster 53: 2024-05-03 12:00〜05-05、cluster 55: 2024-05-25〜05-26）→ `generate_queryset_from_workload_csv.py`（2 時間刻み、`--sanitize-ceb --queries-json-path`）→ 頻度 2 倍 → `merge_query_folders_sum.py` で合成（793 クエリ）→ LLM で同じ番号の JOB/CEB クエリを 1,491 本追加（手作業、スクリプトなし）→ 2 倍 → 10 倍 → 50 倍 → `Redbench_synthetic` にリネーム
+  - `build_cluster_53_55_combined.sh` で合成までを再現できる。cluster_53_join / cluster_55_join はバイト単位で一致、合成後は SQL と頻度が一致（頻度ファイルのキーの順序だけ違う）。2 倍・10 倍・50 倍の頻度ファイルは `scale_frequency.py` でバイト単位で一致
+  - 入力の Redbench 出力（`Redbench/output/`）は git 管理外。使った `used_config.json` を `redbench_configs/` に、SHA-256 を経緯のメモに残した
+
+### 11. 論文で使っていないデータを整理する
+（2026-09-29 完了。ローカルのファイルは削除していない）
+- [x] `01_queries/` の論文で使っていないセットを git の管理から外した（`git rm --cached`。ローカルには残る）: `job_real`、`explicit_join`、`job-ceb-2-q10000`、`job-ceb-2-x2`。`.gitignore` にも追加した
+  - `job` は git の管理に残す（141 ファイル）
+  - `job-ceb-2-q{20000,...,100000}` の頻度ファイルは Fig. 9（RQ1 のクエリ数スケーリング）で使うので残す
+- [x] 対応する `02_json/`、`04_migration/`、`time_dependent_output/` の旧データ（`cluster_*` など）: ディレクトリごと `.gitignore` の対象で、git には入っていない。ローカルのデータはそのまま残した
+- [x] `01_queries/job_like/` の削除は、コミット `986c03dd` ですでにコミットされていた
+
+### 12. 公開に含めるものを決める
+- [ ] `progress/`（日本語の作業メモ。このファイルも含む）: 今は残し、いずれ `.gitignore` の対象にする（2026-09-29 判断）
+- [x] `small_docs/`（他の論文の PDF や発表資料を含む）→ git の管理から外して `legacy/small_docs/` へ移した（2026-09-29）
+- [x] `dashboard/` → 公開に含める。`dashboard/README.md` に起動方法と読むデータを書き、ルートの README の目次に追加した（2026-09-29）
+- [x] `Redbench/`（第三者のツール）: 同梱したまま、出典と変更点を明記した（2026-09-29）
+  - 上流の最新コミット `a129890`（2025-11-19）と比べて特定した変更点（`only_select` の 4 ファイル、`include_ceb` の `imdb.py`、`.gitignore`）を `Redbench/README.md` の冒頭に記載し、変更した 5 ファイルの先頭に注記した（Apache 2.0 の第 4 条 (b)）
+  - 日本語メモ `SOLUTION_SELECT_ONLY.md` は `progress/2026-05-15_redbench_select_only.md` に移した
+  - ルートの README に「Third-party code and data」の節を追加（Redbench、Redset、JOB、CEB、IMDB の出典）
+- [x] このリポジトリ自体のライセンス → 論文投稿用なので付けない（2026-09-29 判断）
+
+### 14. IMDB データのチェックサムを記録する（任意）
+- [x] （行わない、2026-09-29 判断）Dockerfile が外部 URL から取得する IMDB データの SHA-256 を記録し、ビルド時に照合する
+  - 優先度を下げた理由（2026-09-28）: データの同一性は `docker/verify_env.sh` の行数チェック（21 テーブル）とインデックスのチェックで確認できる。JOB の標準データで、EDBT の要件でもない
+  - 実施するなら、アーカイブの再ダウンロード（約 1.2GB）が必要。イメージの中の CSV 21 個のチェックサムを記録する方法もある
+
+### 13. 文書を最新の状態に更新する
+- [x] （行わない、2026-09-29 判断）棚卸し md（`progress/2026-09-28_paper_experiment_inventory.md`）の「git 管理外」という記述を、入力データのコミット後の状態に合わせて直す
+
+---
+
+## 実験を動かすときにやること（今回は実施しない）
+
+- [x] （行わない、2026-09-29 判断）**短い実走で動作確認する**: DB 不要で短く終わる RQ1 Exp1-2 の T=12 だけを実行し（`TIMESTEPS=12 bash paper/rq1_exp1_2_timestep_scaling.sh`。プルーニングありとなしで計 15 分程度）、次を確かめる
+  - 結果が `rq1/exp1_2/` に回収されること
+  - staging の既存ファイルが元の場所に戻ること
+  - 有望 MV 集合と目的関数値が論文の結果（`result_scaling_time_ok`）と一致すること
+- [x] （行わない、2026-09-29 判断）リファクタリング（5〜8）のあとにも、同じ実走で結果が変わっていないことを確認する
+- [ ] 全実験を再実行する場合は `nohup bash paper/run_all.sh > paper_run_all.log 2>&1 &`（約 3 週間）。実行時間の目安は README の 4.2 節を参照
+
+## 2026-09-29 の追加作業
+- [x] `paper/` を `paper_scripts/` に改名した（`git mv`）。README・CI・`paper_figures/`・`paper_results/`・スクリプトの使い方コメントの参照を直した（`progress/` の記述は当時のまま）。`DRY_RUN=1 bash paper_scripts/run_all.sh` のコマンド列は改名前と同じ
+- [x] ルートの README を書き直した: clone から実験までの手順（環境構築 → DB 不要の確認 → Gurobi → コンテナ → 前処理 → 短い実験 → 全実験 → 図表）と、フォルダ構成（リポジトリにあるもの／実験で生成されるもの）
+- [x] `paper_figures/output/` を `.gitignore` に追加した
+- [ ] （時間があれば）ダッシュボードが `time_dependent_output/rq*/` を閲覧できない（`result_*` のサブフォルダしか辿らない）
+

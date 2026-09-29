@@ -1,3 +1,5 @@
+# Modified from Redbench (commit a129890) for the artifact of "Schema Optimization for
+# Time-Dependent Workloads": pass the only_select option to load_and_preprocess_redset.
 import os
 from collections import defaultdict
 

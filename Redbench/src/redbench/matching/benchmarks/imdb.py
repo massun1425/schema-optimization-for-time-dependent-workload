@@ -1,3 +1,5 @@
+# Modified from Redbench (commit a129890) for the artifact of "Schema Optimization for
+# Time-Dependent Workloads": added the include_ceb option (match against JOB only).
 import os
 import re
 

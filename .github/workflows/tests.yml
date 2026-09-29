@@ -1,5 +1,9 @@
 name: Tests
 
+# Mirrors the experimental environment of the paper: Python 3.12 and the package
+# versions of the experiment virtualenv (Gurobi 12.0). No test needs PostgreSQL,
+# so no database service is started; the DB container is covered by docker/verify_env.sh.
+
 on:
   push:
     branches: [ main, develop, fix/* ]
@@ -9,92 +13,53 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
-    strategy:
-      matrix:
-        python-version: ['3.10', '3.11']
-    
-    services:
-      postgres:
-        image: postgres:13
-        env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: test_db
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -e .
-        pip install pytest pytest-cov
-    
-    - name: Run unit tests
-      run: |
-        pytest tests/unit/ -v --cov=src --cov-report=xml --cov-report=term
-    
-    - name: Run integration tests
-      run: |
-        pytest tests/integration/ -v -m integration
-      continue-on-error: true
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
-    
-    - name: Generate coverage report
-      run: |
-        coverage report
-        coverage html
-    
-    - name: Upload coverage HTML
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report-${{ matrix.python-version }}
-        path: htmlcov/
 
-  lint:
-    runs-on: ubuntu-latest
-    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
-    - name: Set up Python
+
+    - name: Set up Python 3.12
       uses: actions/setup-python@v5
       with:
-        python-version: '3.11'
-    
-    - name: Install linting tools
+        python-version: '3.12'
+
+    - name: Install dependencies (versions used in the experiments)
       run: |
         python -m pip install --upgrade pip
-        pip install black ruff
-    
-    - name: Check code formatting with Black
+        pip install -r requirements.txt
+        pip install pytest==9.0.3 pytest-cov==7.1.0
+
+    - name: Run unit tests
+      # "python -m" puts the repository root on sys.path (the tests import core.*)
+      run: python -m pytest tests/
+
+    - name: Check that all pipeline modules import
       run: |
-        black --check src/ tests/
-      continue-on-error: true
-    
-    - name: Lint with Ruff
+        python - <<'EOF'
+        import importlib, os, sys
+        sys.path.insert(0, os.getcwd())
+        sys.path.insert(0, os.path.join(os.getcwd(), "scripts"))
+        modules = [
+            "run_experiment_normal", "recalculate_costs", "extract_sparse_base", "generate_synthetic_scaling",
+            "src.core.parse_exporter", "mv_generation.original_sql_join_extractor",
+            "migration.enumerate_simple_migration_plan",
+            "migration.sampling_migration_cost_calculator", "migration.sampling_migration_cost_calculator_high",
+            "core.cf_pruner", "core.utility_v2", "core.two_step_optimizer",
+            "src.rewrite.query_rewriter", "benchmark",
+        ]
+        for m in modules:
+            importlib.import_module(m)
+        print(f"imported {len(modules)} modules")
+        EOF
+
+    - name: Check the syntax of the reproduction scripts
       run: |
-        ruff check src/ tests/
-      continue-on-error: true
+        for f in paper_scripts/*.sh docker/*.sh paper_figures/make_all.sh paper_results/*.sh scripts/redbench_synthesizer/*.sh; do bash -n "$f"; done
+        python -m py_compile paper_figures/*.py scripts/redbench_synthesizer/*.py
+
+    - name: Regenerate the figures and tables of the paper from paper_results/
+      # Figs. 5-6 are generated from 01_queries/, the others from paper_results/rq*/.
+      # The output must be byte-identical to paper_results/figures/.
+      run: |
+        PY=python bash paper_figures/make_all.sh --td-dir paper_results --out-dir "${RUNNER_TEMP}/figures"
+        diff -r paper_results/figures "${RUNNER_TEMP}/figures"

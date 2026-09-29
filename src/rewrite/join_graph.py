@@ -1,16 +1,16 @@
-"""結合条件のグラフ表現と最小化
+"""Graph representation and minimization of join conditions
 
-このモジュールは、SQLの結合条件を無向グラフとしてモデル化し、
-最小全域木（Minimum Spanning Tree）を構築することで、
-推移的に冗長な結合条件を削除する。
+This module models the join conditions of a SQL query as an undirected graph
+and builds a minimum spanning tree to remove
+transitively redundant join conditions.
 
-例:
-    元の結合条件:
+Example:
+    Original join conditions:
         t.id = mk.movie_id
         mk.movie_id = at.movie_id
-        t.id = at.movie_id  ← 冗長（推移律により t→mk→at で到達可能）
+        t.id = at.movie_id  ← redundant (reachable via t→mk→at by transitivity)
     
-    最小化後:
+    After minimization:
         t.id = mk.movie_id
         mk.movie_id = at.movie_id
 """
@@ -26,33 +26,33 @@ IDENT = r'"?[A-Za-z_][A-Za-z0-9_]*"?'
 
 
 class JoinGraph:
-    """結合条件をグラフとして表現し、最小全域木を構築する
+    """Represent join conditions as a graph and build a minimum spanning tree
     
-    結合条件を無向グラフとしてモデル化:
-    - ノード: テーブル/MVのエイリアス
-    - エッジ: 結合条件（alias1.col = alias2.col）
+    Join conditions are modeled as an undirected graph:
+    - Nodes: aliases of tables/MVs
+    - Edges: join conditions (alias1.col = alias2.col)
     
-    Kruskalアルゴリズムを使用して最小全域木を構築し、
-    推移的に冗長な結合条件を削除する。
+    Kruskal's algorithm is used to build a minimum spanning tree
+    and remove transitively redundant join conditions.
     
     Attributes:
-        nodes: グラフ内のすべてのノード（テーブルエイリアス）
-        edges: グラフ内のすべてのエッジ（結合条件）
+        nodes: All nodes in the graph (table aliases)
+        edges: All edges in the graph (join conditions)
     """
     
     def __init__(self):
-        """初期化"""
+        """Initialize"""
         self.nodes: Set[str] = set()
         self.edges: List[Tuple[str, str, str]] = []  # (table1, table2, condition)
-        self._parent: Dict[str, str] = {}  # Union-Find用
+        self._parent: Dict[str, str] = {}  # for Union-Find
     
     def add_join_condition(self, table1: str, table2: str, condition: str):
-        """結合条件をグラフに追加
+        """Add a join condition to the graph
         
         Args:
-            table1: 1つ目のテーブルエイリアス
-            table2: 2つ目のテーブルエイリアス
-            condition: 結合条件（例: "t.id = mk.movie_id"）
+            table1: First table alias
+            table2: Second table alias
+            condition: Join condition (e.g. "t.id = mk.movie_id")
         """
         if table1 and table2 and table1 != table2:
             self.nodes.add(table1)
@@ -61,16 +61,16 @@ class JoinGraph:
             logger.debug(f"Added join edge: {table1} <-> {table2}: {condition}")
     
     def build_minimal_spanning_tree(self) -> List[str]:
-        """最小全域木を構築して必要最小限の結合条件を返す
+        """Build a minimum spanning tree and return the minimal set of join conditions
         
-        Kruskalアルゴリズムを使用:
-        1. すべてのノードを独立した集合として初期化
-        2. 各エッジ（結合条件）を順に試行
-        3. 2つの異なる集合を結合する場合のみエッジを追加
-        4. サイクルを作る場合は追加しない（冗長な結合）
+        Uses Kruskal's algorithm:
+        1. Initialize every node as a separate set
+        2. Try each edge (join condition) in order
+        3. Add an edge only if it joins two different sets
+        4. Do not add it if it creates a cycle (redundant join)
         
         Returns:
-            最小限の結合条件のリスト
+            List of the minimal join conditions
         """
         if not self.nodes:
             logger.debug("No nodes in join graph")
@@ -80,7 +80,7 @@ class JoinGraph:
             logger.debug("Only one node in join graph, no joins needed")
             return []
         
-        # Union-Findの初期化（各ノードが独立した集合）
+        # Initialize Union-Find (each node is its own set)
         self._parent = {node: node for node in self.nodes}
         
         minimal_conditions = []
@@ -89,9 +89,9 @@ class JoinGraph:
         logger.info(f"Building minimal spanning tree from {len(self.edges)} join conditions")
         logger.debug(f"Nodes in graph: {sorted(self.nodes)}")
         
-        # すべてのエッジを試行
+        # Try every edge
         for table1, table2, condition in self.edges:
-            # この結合が新しい連結を作る場合のみ追加
+            # Add the join only if it creates a new connection
             if self._union(table1, table2):
                 minimal_conditions.append(condition)
                 logger.debug(f"  ✓ Keeping join: {condition}")
@@ -102,7 +102,7 @@ class JoinGraph:
         logger.info(f"Join minimization: {len(self.edges)} → {len(minimal_conditions)} "
                    f"(removed {redundant_count} redundant joins)")
         
-        # すべてのノードが連結されているか確認
+        # Check whether all nodes are connected
         expected_edges = len(self.nodes) - 1
         if len(minimal_conditions) < expected_edges:
             logger.warning(f"Join graph may not be fully connected: "
@@ -114,47 +114,47 @@ class JoinGraph:
         return minimal_conditions
     
     def _find(self, x: str) -> str:
-        """Union-Find: ルートを見つける（経路圧縮付き）
+        """Union-Find: find the root (with path compression)
         
-        経路圧縮により、後続の検索を高速化する。
+        Path compression speeds up subsequent lookups.
         
         Args:
-            x: ノード
+            x: Node
             
         Returns:
-            ルートノード
+            Root node
         """
         if self._parent[x] != x:
-            # 経路圧縮: 途中のノードを直接ルートに接続
+            # Path compression: attach intermediate nodes directly to the root
             self._parent[x] = self._find(self._parent[x])
         return self._parent[x]
     
     def _union(self, x: str, y: str) -> bool:
-        """Union-Find: 2つのノードを結合
+        """Union-Find: merge two nodes
         
         Args:
-            x: 1つ目のノード
-            y: 2つ目のノード
+            x: First node
+            y: Second node
             
         Returns:
-            新しい結合が作成された場合True、既に同じ連結成分にある場合False
+            True if a new merge was made, False if they are already in the same connected component
         """
         px = self._find(x)
         py = self._find(y)
         
         if px != py:
-            # 異なる集合に属している → 結合
+            # They belong to different sets -> merge
             self._parent[px] = py
             return True
         else:
-            # 既に同じ集合に属している → サイクルを作るので結合しない
+            # They already belong to the same set -> merging would create a cycle, so do not merge
             return False
     
     def get_connectivity_info(self) -> Dict[str, List[str]]:
-        """連結成分の情報を取得（デバッグ用）
+        """Get connected component information (for debugging)
         
         Returns:
-            {ルートノード: [そのグループに属するノード]} の辞書
+            Dict of {root node: [nodes in that group]}
         """
         components: Dict[str, List[str]] = {}
         
@@ -168,22 +168,22 @@ class JoinGraph:
     
     @staticmethod
     def parse_join_condition(condition: str) -> Tuple[str, str]:
-        """結合条件からテーブルエイリアスを抽出
+        """Extract table aliases from a join condition
         
-        結合条件は以下の形式を想定:
+        Join conditions are expected to have one of the following forms:
         - alias1.column1 = alias2.column2
         - alias1.column1=alias2.column2
         
         Args:
-            condition: 結合条件（例: "t.id = mk.movie_id"）
+            condition: Join condition (e.g. "t.id = mk.movie_id")
             
         Returns:
-            (table1, table2) のタプル、解析失敗時は ('', '')
+            Tuple (table1, table2), or ('', '') if parsing fails
         """
-        # 正規化: 前後の空白を削除
+        # Normalize: strip leading/trailing whitespace
         condition = condition.strip()
         
-        # alias1.col = alias2.col のパターン（ダブルクォート識別子対応）
+        # Pattern alias1.col = alias2.col (supports double-quoted identifiers)
         pattern = rf'({IDENT})\.({IDENT})\s*=\s*({IDENT})\.({IDENT})'
         match = re.search(pattern, condition)
         
@@ -198,30 +198,30 @@ class JoinGraph:
     
     @staticmethod
     def is_join_condition(condition: str) -> bool:
-        """条件が結合条件かどうかを判定
+        """Determine whether a condition is a join condition
         
-        結合条件は alias1.col1 = alias2.col2 の形式
-        フィルタ条件は alias1.col1 = 'value' や alias1.col1 > 100 など
+        Join conditions have the form alias1.col1 = alias2.col2
+        Filter conditions are e.g. alias1.col1 = 'value' or alias1.col1 > 100
         
         Args:
-            condition: 条件文字列
+            condition: Condition string
             
         Returns:
-            結合条件ならTrue、フィルタ条件ならFalse
+            True for a join condition, False for a filter condition
         """
-        # alias1.col1 = alias2.col2 のパターンをチェック（ダブルクォート識別子対応）
+        # Check the pattern alias1.col1 = alias2.col2 (supports double-quoted identifiers)
         pattern = rf'^\s*{IDENT}\.{IDENT}\s*=\s*{IDENT}\.{IDENT}\s*$'
         return re.match(pattern, condition.strip()) is not None
 
 
 class JoinMinimizer:
-    """結合条件の最小化を管理する高レベルクラス
+    """High-level class that manages join condition minimization
     
-    JoinGraphを使用して、SQL WHERE句の結合条件を最小化する。
+    Uses JoinGraph to minimize the join conditions of a SQL WHERE clause.
     """
     
     def __init__(self):
-        """初期化"""
+        """Initialize"""
         pass
     
     def minimize_joins(
@@ -229,20 +229,20 @@ class JoinMinimizer:
         join_conditions: List[str], 
         filter_conditions: List[str]
     ) -> Tuple[List[str], List[str]]:
-        """結合条件を最小化
+        """Minimize join conditions
         
         Args:
-            join_conditions: 結合条件のリスト（alias1.col = alias2.col）
-            filter_conditions: フィルタ条件のリスト（alias.col = 'value'など）
+            join_conditions: List of join conditions (alias1.col = alias2.col)
+            filter_conditions: List of filter conditions (e.g. alias.col = 'value')
             
         Returns:
-            (最小化された結合条件のリスト, フィルタ条件のリスト)
+            (list of minimized join conditions, list of filter conditions)
         """
         if not join_conditions:
             logger.debug("No join conditions to minimize")
             return [], filter_conditions
         
-        # 結合グラフを構築
+        # Build the join graph
         graph = JoinGraph()
         
         for condition in join_conditions:
@@ -253,10 +253,10 @@ class JoinMinimizer:
                 logger.warning(f"Could not parse join condition, treating as filter: {condition}")
                 filter_conditions.append(condition)
         
-        # 最小全域木を構築
+        # Build the minimum spanning tree
         minimal_joins = graph.build_minimal_spanning_tree()
         
-        # 連結性を確認（デバッグ）
+        # Check connectivity (debug)
         if logger.isEnabledFor(logging.DEBUG):
             components = graph.get_connectivity_info()
             logger.debug(f"Connectivity components: {len(components)}")
@@ -267,18 +267,18 @@ class JoinMinimizer:
     
     @staticmethod
     def classify_conditions(where_clause: str) -> Tuple[List[str], List[str]]:
-        """WHERE句を結合条件とフィルタ条件に分類
+        """Classify the WHERE clause into join conditions and filter conditions
         
         Args:
-            where_clause: WHERE句の文字列
+            where_clause: WHERE clause string
             
         Returns:
-            (結合条件のリスト, フィルタ条件のリスト)
+            (list of join conditions, list of filter conditions)
         """
         if not where_clause:
             return [], []
         
-        # ANDで分割（BETWEEN...AND を保護）
+        # Split on AND (protecting BETWEEN...AND)
         conditions = JoinMinimizer._extract_conditions(where_clause)
         
         join_conditions = []
@@ -297,21 +297,21 @@ class JoinMinimizer:
     
     @staticmethod
     def _extract_conditions(where_clause: str) -> List[str]:
-        """WHERE句から個別の条件を抽出
+        """Extract individual conditions from the WHERE clause
         
-        BETWEEN...AND構文を適切に処理するため、BETWEENを含む条件を
-        一時的にプレースホルダーに置き換えてからANDで分割します。
+        To handle the BETWEEN...AND syntax correctly, conditions containing BETWEEN are
+        temporarily replaced with placeholders before splitting on AND.
         
         Args:
-            where_clause: WHERE句の文字列
+            where_clause: WHERE clause string
             
         Returns:
-            条件のリスト
+            List of conditions
         """
         if not where_clause:
             return []
         
-        # BETWEEN...AND句を保護するため、一時的にプレースホルダーに置き換え
+        # Temporarily replace BETWEEN...AND clauses with placeholders to protect them
         between_pattern = re.compile(
             r'(\w+\.?\w*\s+BETWEEN\s+[\w\d\'\"\-]+\s+AND\s+[\w\d\'\"\-]+)',
             re.IGNORECASE
@@ -327,13 +327,13 @@ class JoinMinimizer:
             placeholder_counter += 1
             return placeholder
         
-        # BETWEENをプレースホルダーに置き換え
+        # Replace BETWEEN with placeholders
         protected_clause = between_pattern.sub(replace_between, where_clause)
         
-        # ANDで分割
+        # Split on AND
         conditions = [c.strip() for c in protected_clause.split(' AND ') if c.strip()]
         
-        # プレースホルダーを元のBETWEEN句に戻す
+        # Restore the placeholders to the original BETWEEN clauses
         restored_conditions = []
         for cond in conditions:
             restored = cond
