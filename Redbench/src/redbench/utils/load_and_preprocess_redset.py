@@ -1,3 +1,5 @@
+# Modified from Redbench (commit a129890) for the artifact of "Schema Optimization for
+# Time-Dependent Workloads": added the only_select option (sample only SELECT queries).
 from functools import lru_cache
 
 import duckdb

@@ -2,6 +2,12 @@
 
 TODO の「5. 未使用のコードと古いスクリプトを archive へ移す」のための調査結果。**ファイルの移動・変更はまだしていない。**
 
+> **追記（2026-09-29）**: DeepDB・NeuroCard は使わないので削除した。
+> - コード: `migration/{deepdb_estimator,deepdb_migration_cost_calculator,neurocard_migration_cost_calculator}.py` と `src/estimation/`（4 ファイル）を `git rm`。`run_experiment_normal.py` から `--use-deepdb`・`--use-neurocard`・`--compare`（DeepDB 専用）と Phase 5 の分岐を削除
+> - `archive/` の `deepdb_full`・`deepdb_light`・`neurocard_full`・`neurocard_light`（約 25 GB）を削除
+> - 確認: CI と同じ import チェック（14 モジュール）、テスト 5 件、`DRY_RUN=1 bash paper/run_all.sh` のコマンド列（416 行、タイムスタンプ以外は削除前と同じ）
+> - 以下の表で D・E にしていたこれらのファイルは、もう存在しない。残る D は simple・actual_cost の計算モジュール、BigSubs、`src/rewrite/enhanced_mv_generator.py` の 4 つ
+
 ## 1. 調べ方
 
 1. **入口の洗い出し**: `paper/*.sh`（`common.sh` の `run_main` / `run_postopt` / `run_phase6` が渡すオプションを含む）、`paper_figures/make_all.sh`、CI（`.github/workflows/tests.yml`）、`docker/`、`dashboard/`、`tests/`、`scripts/redbench_synthesizer/`

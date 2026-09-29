@@ -1026,7 +1026,7 @@ class NormalModeExperiment:
             traceback.print_exc()
             return False
     
-    def phase5_calculate_migration_costs(self, use_neurocard=False, use_deepdb=False, use_sampling=True, compare=False, sampling_high=False):
+    def phase5_calculate_migration_costs(self, use_sampling=True, sampling_high=False):
         """フェーズ5: マイグレーションコスト計算"""
         self.print_header("マイグレーションコスト計算", 5)
         phase_start = time.time()
@@ -1048,15 +1048,7 @@ class NormalModeExperiment:
         try:
             # job_real以外の場合、使用するCalculatorを選択
             if self.query_set != "job_real":
-                if use_neurocard:
-                    from migration.neurocard_migration_cost_calculator import NeuroCardMigrationCostCalculator
-                    CalculatorClass = NeuroCardMigrationCostCalculator
-                    self.print_info("NeuroCardを使用してサイズ推定を行います")
-                elif use_deepdb:
-                    from migration.deepdb_migration_cost_calculator import DeepDBMigrationCostCalculator
-                    CalculatorClass = DeepDBMigrationCostCalculator
-                    self.print_info("DeepDBを使用してサイズ推定を行います")
-                elif use_sampling:
+                if use_sampling:
                     if sampling_high:
                         from migration.sampling_migration_cost_calculator_high import SamplingMigrationCostCalculator
                         self.print_info("サンプリング（高サンプル率）を使用してサイズ推定を行います")
@@ -1086,18 +1078,10 @@ class NormalModeExperiment:
                     query_set=self.query_set
                 )
             
-            if compare and use_deepdb:
-                self.print_info("PostgreSQL と DeepDB の推定値を比較します")
-                calculator.compare_with_postgresql()
-                # 比較のみの場合はここで終了（コスト保存は行わない）
-                self.phase_times['phase5_migration_costs'] = time.time() - phase_start
-                return True
-            
             # コストを計算・保存
             costs = calculator.calculate_all_costs()
             
-            # 出力ファイルのパスを確認（Calculatorによって出力ファイル名が異なる可能性があるため、ここではチェックを柔軟にするか統一する）
-            # deepdb_migration_cost_calculator も simple_migration_costs.json に保存するように修正済み
+            # 出力ファイルのパスを確認（どの Calculator も simple_migration_costs.json に保存する）
             output_file = self.exp_dir / "04_migration" / self.query_set / "simple_migration_costs.json"
             
             if output_file.exists():
@@ -1114,8 +1098,6 @@ class NormalModeExperiment:
                     calculator=f"{CalculatorClass.__module__}.{CalculatorClass.__name__}",
                     use_sampling=bool(use_sampling),
                     sampling_rate=("high" if sampling_high else "low") if use_sampling else None,
-                    use_neurocard=bool(use_neurocard),
-                    use_deepdb=bool(use_deepdb),
                     precomputed_costs=bool(self.recalc_mode and use_sampling and self.query_set != "job_real"),
                 )
 
@@ -3317,16 +3299,6 @@ def main():
         help='最適化モード (static: 初期タイムステップのみ, dynamic: 時間依存型最適化, adaptive: 適応的最適化, peloton: 1ステップ先読み完全予知)'
     )
     parser.add_argument(
-        '--use-neurocard',
-        action='store_true',
-        help='NeuroCardを使用してコスト推定を行う'
-    )
-    parser.add_argument(
-        '--use-deepdb',
-        action='store_true',
-        help='DeepDBを使用してコスト推定を行う（学習済みアンサンブル必須）'
-    )
-    parser.add_argument(
         '--use-sampling',
         action='store_true',
         help='サンプリングを使用してコスト推定を行う'
@@ -3348,11 +3320,6 @@ def main():
         type=int,
         default=None,
         help='サンプリング並列実行時のワーカー数（デフォルト：CPUコア数）'
-    )
-    parser.add_argument(
-        '--compare',
-        action='store_true',
-        help='コスト推定結果を比較する（DeepDB使用時のみ有効）'
     )
     parser.add_argument(
         '--use-pruning',
@@ -3502,10 +3469,7 @@ def main():
         success = exp.phase4_enumerate_migration_plans()
     elif args.phase == '5':
         success = exp.phase5_calculate_migration_costs(
-            use_neurocard=args.use_neurocard,
-            use_deepdb=args.use_deepdb,
             use_sampling=args.use_sampling,
-            compare=args.compare,
             sampling_high=(args.sampling_rate == 'high')
         )
     elif args.phase == '5.5':

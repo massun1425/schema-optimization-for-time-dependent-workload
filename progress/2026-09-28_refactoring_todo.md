@@ -117,7 +117,7 @@
   - `core/utility_pruner{,_iterative,_iterative_helpers,_simple}.py`、`src/core/{query_manager,query_parser}_distinct.py`
   - `src/rewrite/{advanced_rewriter,query_graph}.py`、`src/database/`、`src/benchmark/`、`src/estimation/`
   - `src/utils/{file_utils,logging_utils,validators}.py`
-  - `migration/` の NeuroCard・DeepDB・actual_cost・simple の各計算モジュールと `deepdb_estimator.py`
+  - `migration/` の actual_cost・simple の各計算モジュール（NeuroCard・DeepDB 関連は 2026-09-29 に削除済み。判定の詳細は `progress/2026-09-29_unused_code_audit.md`）
   - `utils/{analyze_benchmark_results,csv_exporter,plot_benchmark}.py`
   - `scripts/run_utility_{benchmark,optimization}.py`、`scripts/setup_imdb.py`、`scripts/scratch/`、`scripts/progress/`
 - [ ] `scripts/shell/` の旧スクリプト 19 本（`paper/` に置き換え済み）。特に `run_ex1_1-ceb.sh` は頻度ファイルのサフィックスが論文と違い、誤用の元になる
@@ -194,7 +194,11 @@
 - [ ] `progress/`（日本語の作業メモ。このファイルも含む）
 - [ ] `small_docs/`（他の論文の PDF や発表資料を含む）
 - [ ] `dashboard/`
-- [ ] `Redbench/`（第三者のツール。ライセンスと出典の表記を確認する）
+- [x] `Redbench/`（第三者のツール）: 同梱したまま、出典と変更点を明記した（2026-09-29）
+  - 上流の最新コミット `a129890`（2025-11-19）と比べて特定した変更点（`only_select` の 4 ファイル、`include_ceb` の `imdb.py`、`.gitignore`）を `Redbench/README.md` の冒頭に記載し、変更した 5 ファイルの先頭に注記した（Apache 2.0 の第 4 条 (b)）
+  - 日本語メモ `SOLUTION_SELECT_ONLY.md` は `progress/2026-05-15_redbench_select_only.md` に移した
+  - ルートの README に「Third-party code and data」の節を追加（Redbench、Redset、JOB、CEB、IMDB の出典）
+- [ ] このリポジトリ自体のライセンス（LICENSE ファイル）を決める
 
 ### 14. IMDB データのチェックサムを記録する（任意）
 - [ ] Dockerfile が外部 URL から取得する IMDB データの SHA-256 を記録し、ビルド時に照合する

@@ -1,3 +1,22 @@
+> **About this copy (added for the artifact of "Schema Optimization for Time-Dependent Workloads")**
+>
+> This directory is a modified copy of [Redbench](https://github.com/DataManagementLab/Redbench)
+> (*Redbench: Workload Synthesis From Cloud Traces*, [arXiv:2511.13059](https://arxiv.org/abs/2511.13059)),
+> taken from commit [`a129890`](https://github.com/DataManagementLab/Redbench/commit/a129890) (2025-11-19) and
+> distributed under its original [Apache License 2.0](LICENSE). It was used to generate the
+> workloads from which `01_queries/Redbench_synthetic/` was built; it is not needed to reproduce
+> the experiments of the paper. Changes to the original:
+>
+> - `only_select` configuration option (matching and generation): sample only SELECT queries
+>   from Redset. Files: `src/redbench/utils/load_and_preprocess_redset.py`,
+>   `src/redbench/matching/utils.py`, `src/redbench/matching/gen_queries/query_generator.py`,
+>   `src/redbench/generation/query_builder/gen_wl_weighted_sampling.py`
+> - `include_ceb` benchmark option (matching): allow matching against JOB only. File:
+>   `src/redbench/matching/benchmarks/imdb.py`
+> - `.gitignore`: one entry added
+>
+> The modified files carry a notice at the top. The original README follows.
+
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-g.svg)](LICENSE)

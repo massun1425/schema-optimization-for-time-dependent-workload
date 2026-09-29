@@ -39,8 +39,10 @@ To reproduce the results themselves, follow the steps below.
 | `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([paper_results/README.md](paper_results/README.md)) |
 | `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([docker/README.md](docker/README.md)) |
 | `01_queries/` | Query sets and time-dependent query frequencies |
-| `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) || `time_dependent_output/` | Experiment results (`rq*/` for the paper experiments) |
-| `Redbench/` | Redbench workload generator (used to build the Redbench synthetic workload) |
+| `02_json/`, `03_parsed/`, `04_migration/` | Preprocessing outputs (EXPLAIN plans, parsed plans, migration plans and costs) |
+| `time_dependent_output/` | Experiment results (`rq*/` for the paper experiments) |
+| `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
+| `scripts/redbench_synthesizer/` | Conversion of Redbench workloads into query sets ([README](scripts/redbench_synthesizer/README.md)) |
 
 ## 1. Requirements
 
@@ -210,22 +212,14 @@ Use `--recalc` so that the optimization uses the recalculated costs (as in the p
 - **A script stops with "A file with the same name is already stashed"**: a previous run was
   interrupted; see "Staging and existing files" in [paper/README.md](paper/README.md).
 
-## Appendix: generating a new workload with Redbench
+## Third-party code and data
 
-This is not needed to reproduce the paper. The scripts that convert Redbench workloads into
-query sets and combine them are in [scripts/redbench_synthesizer/](scripts/redbench_synthesizer/README.md). To build a new
-time-dependent workload, generate `workload.csv` with Redbench (see
-[Redbench/README.md](Redbench/README.md)) and convert it:
+| Item | Where it is used | Source |
+|---|---|---|
+| Redbench | `Redbench/` (modified copy, Apache License 2.0; the changes are listed at the top of [Redbench/README.md](Redbench/README.md)) | [DataManagementLab/Redbench](https://github.com/DataManagementLab/Redbench), commit `a129890`; *Redbench: Workload Synthesis From Cloud Traces*, [arXiv:2511.13059](https://arxiv.org/abs/2511.13059) |
+| Redset | Query arrival times behind `01_queries/Redbench_synthetic/` (through Redbench; the dataset itself is not included) | [amazon-science/redset](https://github.com/amazon-science/redset); A. van Renen et al., *Why TPC Is Not Enough: An Analysis of the Amazon Redshift Fleet*, PVLDB 17(11), 2024 |
+| Join Order Benchmark (JOB) | Queries in `01_queries/` | V. Leis et al., *How Good Are Query Optimizers, Really?*, PVLDB 9(3), 2015 |
+| Cardinality Estimation Benchmark (CEB) | Queries in `01_queries/` | [learnedsystems/CEB](https://github.com/learnedsystems/CEB); P. Negi et al., *Flow-Loss: Learning Cardinality Estimates That Matter*, PVLDB 14(11), 2021 |
+| IMDB data (JOB version) | Loaded into the PostgreSQL container by the `Dockerfile` (downloaded during the build; not included) | https://event.cwi.nl/da/job/imdb.tgz |
 
-```bash
-python scripts/redbench_synthesizer/generate_queryset_from_workload_csv.py \
-  --csv-path <workload.csv> --queries-json-path <queries.json> \
-  --output-query-dir 01_queries/<query_set> \
-  --start <start time, e.g. 2024-05-25T00:00:00> \
-  --end <end time, e.g. 2024-05-26T23:59:59> \
-  --step-hours <hours per time step, e.g. 2> \
-  --freq-suffix <suffix, e.g. _2h> \
-  --sanitize-ceb
-```
-
-The resulting `01_queries/<query_set>/` can then be processed from Phase 1.
+See the respective sources for their licenses and terms of use.
