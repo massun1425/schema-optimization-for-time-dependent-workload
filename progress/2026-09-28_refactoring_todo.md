@@ -245,5 +245,9 @@
 - [x] `paper/` を `paper_scripts/` に改名した（`git mv`）。README・CI・`paper_figures/`・`paper_results/`・スクリプトの使い方コメントの参照を直した（`progress/` の記述は当時のまま）。`DRY_RUN=1 bash paper_scripts/run_all.sh` のコマンド列は改名前と同じ
 - [x] ルートの README を書き直した: clone から実験までの手順（環境構築 → DB 不要の確認 → Gurobi → コンテナ → 前処理 → 短い実験 → 全実験 → 図表）と、フォルダ構成（リポジトリにあるもの／実験で生成されるもの）
 - [x] `paper_figures/output/` を `.gitignore` に追加した
-- [ ] （時間があれば）ダッシュボードが `time_dependent_output/rq*/` を閲覧できない（`result_*` のサブフォルダしか辿らない）
+- [x] ダッシュボードで `time_dependent_output/rq*/` などを閲覧できるようにした（2026-09-30）
+  - 「結果の場所」（`time_dependent_output/` / `paper_results/`）を切り替えられ、その中のどのフォルダにも何階層でも移動できる（`result_` の制限を廃止。`jobs/`・`log/`・`_stash/`・`rewritten_static*/`・`.` で始まるフォルダは一覧に出さない）
+  - クエリのデータ（クエリツリー、MV のサイズ・コスト・利得）に使うクエリセットは `04_migration/` のフォルダから選ぶ。パスにクエリセット名が含まれていれば自動で選ぶ
+  - 結果を読む API は `root`・`path`・`file` で指定する形にした（結果の場所の外を指すパスは拒否）。頻度変化のページは変更していない
+  - 確認: 従来のフォルダ（`job-ceb-2/`、`Redbench_synthetic/`、`job/result_500M_edbt/`）で、変更前後の API が同じ結果を返す。`paper_results/` の結果 158 ファイルをすべて読める。uvicorn で起動し HTTP でも確認。画面の操作はブラウザでの確認が必要
 

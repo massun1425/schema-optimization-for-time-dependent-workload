@@ -35,6 +35,23 @@ app = FastAPI(title="MV最適化ダッシュボード API")
 
 # ディレクトリパス
 OUTPUT_DIR = EXP_DIR / "time_dependent_output"
+# 結果を閲覧できる場所（画面の「結果の場所」で切り替える）
+RESULT_ROOTS = {
+    "time_dependent_output": OUTPUT_DIR,
+    "paper_results": EXP_DIR / "paper_results",
+}
+# フォルダ一覧に出さないフォルダ（結果の JSON を含まない）
+EXCLUDED_DIRS = {"jobs", "log", "_stash"}
+EXCLUDED_DIR_PREFIXES = (".", "rewritten_static")
+# 結果ファイルの名前のパターン（最適化結果とベンチマーク結果）
+RESULT_FILE_PATTERNS = (
+    "td_mv_optimization_result_*.json",
+    "adaptive_mv_optimization_result_*.json",
+    "peloton_mv_optimization_result_*.json",
+    "static_mv_optimization_result_*.json",
+    "static_bigsubs_optimization_result_*.json",
+    "benchmark_results_*.json",
+)
 JSON_DIR = EXP_DIR / "02_json"
 PARSED_DIR = EXP_DIR / "03_parsed"
 MIGRATION_DIR = EXP_DIR / "04_migration"
@@ -66,109 +83,93 @@ async def root():
     return HTMLResponse("<h1>dashboard.html not found</h1>")
 
 
-@app.get("/api/query-sets")
-async def get_query_sets() -> List[str]:
-    """利用可能なクエリセットを取得"""
-    if not OUTPUT_DIR.exists():
+def _resolve_result_dir(root: str, path: str = "") -> Path:
+    """結果の場所 root の中のフォルダ path を返す（root の外は拒否）"""
+    if root not in RESULT_ROOTS:
+        raise HTTPException(status_code=404, detail=f"Unknown result root: {root}")
+    base = RESULT_ROOTS[root].resolve()
+    target = (base / path).resolve() if path else base
+    if target != base and base not in target.parents:
+        raise HTTPException(status_code=400, detail="Path outside the result root")
+    if not target.is_dir():
+        raise HTTPException(status_code=404, detail="Path not found")
+    return target
+
+
+def _result_file_path(root: str, path: str, filename: str) -> Path:
+    """結果ファイルのパス（ファイル名にディレクトリは含められない）"""
+    if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+    return _resolve_result_dir(root, path) / filename
+
+
+def _is_listed_dir(d: Path) -> bool:
+    return d.is_dir() and d.name not in EXCLUDED_DIRS and not d.name.startswith(EXCLUDED_DIR_PREFIXES)
+
+
+def _has_results(d: Path) -> bool:
+    return any(any(d.glob(pattern)) for pattern in RESULT_FILE_PATTERNS)
+
+
+@app.get("/api/roots")
+async def get_roots() -> List[str]:
+    """閲覧できる結果の場所（存在するもの）"""
+    return [name for name, d in RESULT_ROOTS.items() if d.is_dir()]
+
+
+@app.get("/api/data-query-sets")
+async def get_data_query_sets() -> List[str]:
+    """クエリのデータ（クエリツリー、MV のサイズ・コストなど）に使えるクエリセット（04_migration/ のフォルダ）"""
+    if not MIGRATION_DIR.exists():
         return []
-    query_sets = [d.name for d in OUTPUT_DIR.iterdir() 
-                  if d.is_dir() and not d.name.startswith('.') 
-                  and d.name not in ['log', 'store_result', 'migration_plan']]
-    return sorted(query_sets, key=natural_sort_key)
+    names = [d.name for d in MIGRATION_DIR.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    return sorted(names, key=natural_sort_key)
 
 
-@app.get("/api/subfolders/{query_set}")
-async def get_subfolders(query_set: str, path: str = "") -> Dict[str, Any]:
-    """クエリセット内のサブフォルダ一覧を取得（パスベースのナビゲーション）
-    
+@app.get("/api/folders")
+async def get_folders(root: str, path: str = "") -> Dict[str, Any]:
+    """フォルダの中身（結果があるか、サブフォルダの一覧）を取得
+
     Args:
-        path: 現在のパス（例: "" or "result_sample1"）
-    
+        root: 結果の場所（RESULT_ROOTS のキー）
+        path: root からの相対パス（"" = root 自身）
+
     Returns:
         {
             "current_path": 現在のパス,
-            "parent_path": 親パス（戻るボタン用）,
+            "parent_path": 親のパス（root では None）,
             "has_results": このフォルダに結果があるか,
-            "folders": [{"name": "...", "path": "...", "has_results": bool, "has_children": bool}, ...]
+            "folders": [{"name", "path", "has_results", "has_children"}, ...]
         }
     """
-    output_path = OUTPUT_DIR / query_set
-    if not output_path.exists():
-        raise HTTPException(status_code=404, detail="Query set not found")
-    
-    excluded = {'jobs', 'log', 'sin', 'garbage', 'rewritten_static', 'rewritten_static_bigsubs'}
-    
-    # 現在のパスを解決
-    if path and path != "(root)":
-        current_dir = output_path / path
-        parent_path = "/".join(path.split("/")[:-1]) if "/" in path else "(root)"
-    else:
-        current_dir = output_path
-        parent_path = ""
-        path = "(root)"
-    
-    if not current_dir.exists():
-        raise HTTPException(status_code=404, detail="Path not found")
-    
-    # 現在のフォルダに結果があるか
-    has_results = (
-        any(current_dir.glob("td_mv_optimization_result_*.json")) or
-        any(current_dir.glob("benchmark_results_*.json")) or
-        any(current_dir.glob("static_mv_optimization_result_*.json"))
-    )
-    
-    # サブフォルダを収集
+    current_dir = _resolve_result_dir(root, path)
+    path = path.strip("/")
+    parent_path = None if not path else ("/".join(path.split("/")[:-1]))
+
     folders = []
     for d in current_dir.iterdir():
-        if not d.is_dir() or d.name.startswith('.') or d.name in excluded:
+        if not _is_listed_dir(d):
             continue
-        if not d.name.startswith('result_'):
-            continue
-        
-        # このフォルダに結果があるか
-        folder_has_results = (
-            any(d.glob("td_mv_optimization_result_*.json")) or
-            any(d.glob("benchmark_results_*.json")) or
-            any(d.glob("static_mv_optimization_result_*.json"))
-        )
-        
-        # サブフォルダがあるか
-        has_children = any(
-            child.is_dir() and child.name.startswith('result_') 
-            for child in d.iterdir() 
-            if not child.name.startswith('.')
-        )
-        
-        folder_path = f"{path}/{d.name}" if path != "(root)" else d.name
-        
         folders.append({
             "name": d.name,
-            "path": folder_path,
-            "has_results": folder_has_results,
-            "has_children": has_children
+            "path": f"{path}/{d.name}" if path else d.name,
+            "has_results": _has_results(d),
+            "has_children": any(_is_listed_dir(c) for c in d.iterdir()),
         })
-    
-    # ソート
     folders.sort(key=lambda x: natural_sort_key(x['name']))
-    
+
     return {
         "current_path": path,
         "parent_path": parent_path,
-        "has_results": has_results,
+        "has_results": _has_results(current_dir),
         "folders": folders
     }
 
 
-@app.get("/api/result-files/{query_set}")
-async def get_result_files(query_set: str, subfolder: str = "") -> Dict[str, List[str]]:
+@app.get("/api/result-files")
+async def get_result_files(root: str, path: str = "") -> Dict[str, List[str]]:
     """結果ファイル一覧を取得"""
-    if subfolder and subfolder != "(root)":
-        output_path = OUTPUT_DIR / query_set / subfolder
-    else:
-        output_path = OUTPUT_DIR / query_set
-    
-    if not output_path.exists():
-        raise HTTPException(status_code=404, detail="Path not found")
+    output_path = _resolve_result_dir(root, path)
     
     # Dynamic最適化ファイル (td_mv_optimization_result)
     opt_files = [f.name for f in sorted(output_path.glob("td_mv_optimization_result_*.json"), 
@@ -225,14 +226,11 @@ async def get_result_files(query_set: str, subfolder: str = "") -> Dict[str, Lis
     }
 
 
-@app.get("/api/optimization-result/{query_set}/{filename}")
-async def get_optimization_result(query_set: str, filename: str, subfolder: str = "") -> Dict:
+@app.get("/api/optimization-result")
+async def get_optimization_result(root: str, file: str, path: str = "") -> Dict:
     """最適化結果を取得"""
-    if subfolder and subfolder != "(root)":
-        filepath = OUTPUT_DIR / query_set / subfolder / filename
-    else:
-        filepath = OUTPUT_DIR / query_set / filename
-    
+    filename = file
+    filepath = _result_file_path(root, path, filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found")
     with open(filepath, 'r', encoding='utf-8') as f:
@@ -309,14 +307,11 @@ async def get_optimization_result(query_set: str, filename: str, subfolder: str 
     }
 
 
-@app.get("/api/static-result/{query_set}/{filename}")
-async def get_static_result(query_set: str, filename: str, subfolder: str = "") -> Dict:
-    """静的最適化結果を取得"""
-    if subfolder and subfolder != "(root)":
-        filepath = OUTPUT_DIR / query_set / subfolder / filename
-    else:
-        filepath = OUTPUT_DIR / query_set / filename
-    
+@app.get("/api/static-result")
+async def get_static_result(root: str, file: str, path: str = "", query_set: str = "") -> Dict:
+    """静的最適化結果を取得（MV のサイズ・コストは query_set の 04_migration/ から読む）"""
+    filename = file
+    filepath = _result_file_path(root, path, filename)
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -324,9 +319,9 @@ async def get_static_result(query_set: str, filename: str, subfolder: str = "") 
         data = json.load(f)
     
     # migrationコスト情報を取得
-    migration_costs_path = SCRIPT_DIR.parent / "04_migration" / query_set / "simple_migration_costs.json"
+    migration_costs_path = MIGRATION_DIR / query_set / "simple_migration_costs.json"
     migration_data = {}
-    if migration_costs_path.exists():
+    if query_set and "/" not in query_set and migration_costs_path.exists():
         with open(migration_costs_path, 'r', encoding='utf-8') as f:
             migration_data = json.load(f)
             
@@ -380,12 +375,13 @@ async def get_static_result(query_set: str, filename: str, subfolder: str = "") 
     }
 
 
-@app.get("/api/benchmark-result/{query_set}/{optimization_filename}")
-async def get_benchmark_result(query_set: str, optimization_filename: str, subfolder: str = "") -> Dict:
+@app.get("/api/benchmark-result")
+async def get_benchmark_result(root: str, file: str, path: str = "") -> Dict:
     """最適化結果に対応するベンチマーク結果を取得。最適化ファイルの情報（選択MVなど）もマージする。"""
     
     # ファイル名からベンチマークファイルと最適化ファイルを特定するロジック
     # 入力は benchmark_results_*.json または *_mv_optimization_result_*.json のどちらも許容
+    optimization_filename = file
     bench_filename = optimization_filename
     opt_filename = optimization_filename
     mode = "unknown"
@@ -434,12 +430,8 @@ async def get_benchmark_result(query_set: str, optimization_filename: str, subfo
             mode = "dynamic"
 
     # ファイルパス構築
-    if subfolder and subfolder != "(root)":
-        bench_filepath = OUTPUT_DIR / query_set / subfolder / bench_filename
-        opt_filepath = OUTPUT_DIR / query_set / subfolder / opt_filename
-    else:
-        bench_filepath = OUTPUT_DIR / query_set / bench_filename
-        opt_filepath = OUTPUT_DIR / query_set / opt_filename
+    bench_filepath = _result_file_path(root, path, bench_filename)
+    opt_filepath = _result_file_path(root, path, opt_filename)
     
     if not bench_filepath.exists():
         return {

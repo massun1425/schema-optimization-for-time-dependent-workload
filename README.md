@@ -21,6 +21,31 @@ its figures and tables:**
 
 They can be regenerated without running any experiment (step 2 below).
 
+## Names in the paper and in this repository
+
+Several workloads, methods and parameters have different names in the paper and in the
+code, the file names and the options.
+
+| Paper | Repository |
+|---|---|
+| JOB + CEB queries (2,515 queries) | query set `01_queries/job-ceb-2/` |
+| Cycles | `job-ceb-2` with the frequency file suffix `_24_2_10` |
+| Evolution and Stagnation | `job-ceb-2` with the suffix `_24_mono`; with *T* time steps (Fig. 8): `_{T}_mono` |
+| Growth and Spikes | `job-ceb-2` with the suffix `_24_peak` |
+| Group A / Group B (Fig. 5) | the two query groups of the frequency files (described in their `note` field) |
+| Redbench synthetic (2,284 queries) | query set `01_queries/Redbench_synthetic/` with the suffix `_2h_x2_50x` |
+| Workloads with *N* queries (Fig. 9) | query sets `job-ceb-2-q{N}` (e.g. `job-ceb-2-q20000`) with the suffix `_24_mono` |
+| Proposed (with candidate pruning) | `--optimization-mode dynamic --use-pruning`; files `td_mv_optimization_result*` and `benchmark_results_dynamic*`; tag `_wp` where both variants are stored together (Figs. 8–9) |
+| Proposed without pruning | `--optimization-mode dynamic` without `--use-pruning`; tag `_wo` |
+| Static | `--optimization-mode static --static-timestep average --static-algorithm utility`; files `static_mv_optimization_result*` and `benchmark_results_static*` |
+| Adapt (*k* = 3, i.e. the last *k* + 1 = 4 time steps) | `--optimization-mode adaptive --window-size 4 --freq-weight linear`; files `adaptive_mv_optimization_result_w4*` and `benchmark_results_adaptive_w4*` |
+| Storage constraint *B*<sub>max</sub> | `--b-max <MB>`; folders `b500` … `b2000` in `rq4/` |
+| Prediction recall *r* % (Fig. 10) | noise ratio 100 − *r* %: `--noise-ratio`, files `*_noise{100−r}` (e.g. recall 90% = `_noise10`) |
+
+The file names of the results consist of the method, the frequency file suffix and the tag,
+e.g. `benchmark_results_dynamic_24_mono_wo.json` = Proposed without pruning on Evolution and
+Stagnation.
+
 ## Getting started
 
 All commands are run from the repository root.

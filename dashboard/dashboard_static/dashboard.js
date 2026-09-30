@@ -1,5 +1,6 @@
 // グローバル状態
-let currentQuerySet = null;
+let currentRoot = null;      // 結果の場所（time_dependent_output / paper_results）
+let currentQuerySet = null;  // クエリのデータに使うクエリセット（04_migration/ のフォルダ）
 let currentResultFile = null;
 let optimizationData = null;
 let staticOptimizationData = null; // 静的最適化データ保持用
@@ -68,6 +69,11 @@ function formatBytes(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// クエリ文字列を作る（値は URL エンコード）
+function qs(params) {
+    return new URLSearchParams(params).toString();
+}
+
 // API呼び出しヘルパー
 async function fetchAPI(endpoint) {
     const response = await fetch(endpoint);
@@ -77,23 +83,34 @@ async function fetchAPI(endpoint) {
 
 // 初期化
 async function init() {
-    // クエリセット読み込み
-    const querySets = await fetchAPI('/api/query-sets');
-    const querySetSelect = document.getElementById('query-set-select');
-    querySets.forEach(qs => {
+    // 結果の場所
+    const roots = await fetchAPI('/api/roots');
+    const rootSelect = document.getElementById('root-select');
+    roots.forEach(r => {
         const opt = document.createElement('option');
-        opt.value = qs;
-        opt.textContent = qs;
-        querySetSelect.appendChild(opt);
+        opt.value = r;
+        opt.textContent = `${r}/`;
+        rootSelect.appendChild(opt);
     });
 
-    // デフォルト選択
-    if (querySets.includes('job')) {
-        querySetSelect.value = 'job';
+    // クエリセット（クエリのデータ用）
+    const querySets = await fetchAPI('/api/data-query-sets');
+    const querySetSelect = document.getElementById('query-set-select');
+    querySets.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        querySetSelect.appendChild(opt);
+    });
+    if (querySets.includes('job-ceb-2')) {
+        querySetSelect.value = 'job-ceb-2';
     }
+    currentQuerySet = querySetSelect.value || null;
+    await loadQuerySetData();
 
     querySetSelect.addEventListener('change', onQuerySetChange);
-    await onQuerySetChange();
+    rootSelect.addEventListener('change', onRootChange);
+    await onRootChange();
 
     // タブ切り替え
     document.querySelectorAll('.tab').forEach(tab => {
@@ -144,102 +161,114 @@ function setupSlider(sliderId, valueId, suffix, onChange) {
     });
 }
 
-// クエリセット変更
-async function onQuerySetChange() {
-    currentQuerySet = document.getElementById('query-set-select').value;
-
-    // サブフォルダ読み込み（動的ナビゲーション）
+// 結果の場所の変更
+async function onRootChange() {
+    currentRoot = document.getElementById('root-select').value;
     await loadSubfolders('');
 }
 
-// 現在のフォルダパス
-let currentFolderPath = '(root)';
+// クエリセットの変更（クエリのデータを読み直し、表示中の結果を描き直す）
+async function onQuerySetChange() {
+    currentQuerySet = document.getElementById('query-set-select').value;
+    await loadQuerySetData();
+    if (currentResultFile) {
+        await onResultFileChange();
+    }
+}
 
-// サブフォルダ読み込み
+// フォルダのパスにクエリセット名が含まれていれば、そのクエリセットを選ぶ
+async function selectQuerySetFromPath(path) {
+    const select = document.getElementById('query-set-select');
+    const names = Array.from(select.options).map(o => o.value);
+    const match = path.split('/').reverse().find(part => names.includes(part));
+    if (match && match !== currentQuerySet) {
+        select.value = match;
+        currentQuerySet = match;
+        await loadQuerySetData();
+    }
+}
+
+// 現在のフォルダパス（結果の場所からの相対パス。'' = 結果の場所の直下）
+let currentFolderPath = '';
+
+// フォルダ読み込み
 async function loadSubfolders(path) {
-    const subfolderData = await fetchAPI(`/api/subfolders/${currentQuerySet}?path=${encodeURIComponent(path)}`);
+    const subfolderData = await fetchAPI(`/api/folders?${qs({ root: currentRoot, path: path })}`);
     const subfolderSelect = document.getElementById('subfolder-select');
     subfolderSelect.innerHTML = '';
 
     currentFolderPath = subfolderData.current_path;
+    const currentLabel = currentFolderPath === '' ? `${currentRoot}/` : `${currentFolderPath}/`;
 
-    // 戻るボタン（ルート以外の場合）
-    if (subfolderData.parent_path !== '') {
+    // 戻るボタン（結果の場所の直下以外の場合）
+    if (subfolderData.parent_path !== null) {
         const backOpt = document.createElement('option');
         backOpt.value = `__BACK__:${subfolderData.parent_path}`;
         backOpt.textContent = '⬆️ 上のフォルダへ戻る';
         subfolderSelect.appendChild(backOpt);
     }
 
-    // 現在のフォルダに結果がある場合、そのオプションを追加
-    if (subfolderData.has_results) {
-        const currentOpt = document.createElement('option');
-        currentOpt.value = subfolderData.current_path;
-        currentOpt.textContent = `📁 [現在] ${subfolderData.current_path}`;
-        currentOpt.selected = true;
-        subfolderSelect.appendChild(currentOpt);
-    }
+    // 現在のフォルダ
+    const currentOpt = document.createElement('option');
+    currentOpt.value = `__CURRENT__`;
+    currentOpt.textContent = subfolderData.has_results ? `📁 [現在] ${currentLabel}` : `📂 [現在] ${currentLabel}（結果なし）`;
+    currentOpt.selected = true;
+    subfolderSelect.appendChild(currentOpt);
 
-    // サブフォルダ一覧
+    // サブフォルダ一覧（どのフォルダにも移動できる）
     subfolderData.folders.forEach(folder => {
+        if (!folder.has_results && !folder.has_children) return;  // 空のフォルダは出さない
         const opt = document.createElement('option');
-        if (folder.has_children) {
-            // サブフォルダを持つ → ナビゲーション用
-            opt.value = `__NAV__:${folder.path}`;
-            opt.textContent = `📂 ${folder.name} ▶`;
-        } else if (folder.has_results) {
-            // 結果のみ → 選択可能
-            opt.value = folder.path;
-            opt.textContent = `📁 ${folder.name}`;
-        } else {
-            // 結果もサブフォルダもなし → スキップ
-            return;
-        }
+        opt.value = `__NAV__:${folder.path}`;
+        opt.textContent = folder.has_results
+            ? `📁 ${folder.name}${folder.has_children ? ' ▶' : ''}`
+            : `📂 ${folder.name} ▶`;
         subfolderSelect.appendChild(opt);
     });
-
-    // フォルダがない場合
-    if (!subfolderData.has_results && subfolderData.folders.length === 0 && subfolderData.parent_path === '') {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = '(なし)';
-        subfolderSelect.appendChild(opt);
-    }
 
     // イベントリスナー設定（重複防止のためonを使用）
     subfolderSelect.onchange = async function () {
         const val = subfolderSelect.value;
         if (val.startsWith('__BACK__:')) {
-            // 戻る
-            const parentPath = val.replace('__BACK__:', '');
-            await loadSubfolders(parentPath === '(root)' ? '' : parentPath);
+            await loadSubfolders(val.replace('__BACK__:', ''));
         } else if (val.startsWith('__NAV__:')) {
-            // サブフォルダへナビゲート
-            const navPath = val.replace('__NAV__:', '');
-            await loadSubfolders(navPath);
-        } else {
-            // 結果フォルダを選択
-            currentFolderPath = val;
-            await onSubfolderChange();
+            await loadSubfolders(val.replace('__NAV__:', ''));
         }
     };
 
-    // 結果がある場合は読み込み
-    if (subfolderData.has_results) {
-        await onSubfolderChange();
+    // クエリセットをパスから選ぶ（一致するものがなければ今の選択のまま）
+    await selectQuerySetFromPath(currentFolderPath);
+
+    // 結果ファイル一覧の読み込み（結果がなければ空）
+    await onSubfolderChange();
+}
+
+// クエリセットのデータ読み込み（クエリ一覧、ルートノード、MV のサイズ・コスト・利得）
+async function loadQuerySetData() {
+    rootNodesMap = null;
+    mvSizesMap = null;
+    subqueryCostsMap = null;
+    mvUtilitiesMap = null;
+    const querySelect = document.getElementById('query-select');
+    querySelect.innerHTML = '';
+    if (!currentQuerySet) {
+        initQueryGallery([]);
+        updateRootMVStats();
+        return;
     }
 
     // クエリ一覧読み込み
-    const queries = await fetchAPI(`/api/queries/${currentQuerySet}`);
-    const querySelect = document.getElementById('query-select');
-    querySelect.innerHTML = '';
+    let queries = [];
+    try {
+        queries = await fetchAPI(`/api/queries/${currentQuerySet}`);
+    } catch (e) { console.warn("Query list fetch failed", e); }
     queries.forEach(q => {
         const opt = document.createElement('option');
         opt.value = q;
         opt.textContent = q;
         querySelect.appendChild(opt);
     });
-    querySelect.addEventListener('change', (e) => scrollToQuery(e.target.value));
+    querySelect.onchange = (e) => scrollToQuery(e.target.value);
     initQueryGallery(queries);
 
     // Root Nodes取得
@@ -271,13 +300,11 @@ async function loadSubfolders(path) {
 
 // サブフォルダ変更
 async function onSubfolderChange() {
-    // currentFolderPath を使用（loadSubfoldersで設定済み）
-    const subfolder = currentFolderPath === '(root)' ? '' : currentFolderPath;
-
-    // 結果ファイル読み込み
-    const files = await fetchAPI(`/api/result-files/${currentQuerySet}?subfolder=${encodeURIComponent(subfolder)}`);
+    // 結果ファイル読み込み（currentFolderPath は loadSubfolders で設定済み）
+    const files = await fetchAPI(`/api/result-files?${qs({ root: currentRoot, path: currentFolderPath })}`);
     const resultSelect = document.getElementById('result-file-select');
     resultSelect.innerHTML = '';
+    currentResultFile = null;
 
     // 動的最適化ファイル
     files.optimization.forEach(f => {
@@ -330,7 +357,7 @@ async function onSubfolderChange() {
         });
     }
 
-    resultSelect.addEventListener('change', onResultFileChange);
+    resultSelect.onchange = onResultFileChange;
 
     await onResultFileChange();
 }
@@ -341,7 +368,7 @@ async function onResultFileChange() {
     currentResultFile = resultSelect.value;
     if (!currentResultFile) return;
 
-    const subfolder = currentFolderPath === '(root)' ? '' : currentFolderPath;
+    const resultParams = { root: currentRoot, path: currentFolderPath, file: currentResultFile };
     const selectedOption = resultSelect.options[resultSelect.selectedIndex];
     const fileType = selectedOption?.dataset?.type || 'dynamic';
 
@@ -353,7 +380,7 @@ async function onResultFileChange() {
 
     if (fileType === 'static') {
         // 静的最適化結果を取得
-        const staticData = await fetchAPI(`/api/static-result/${currentQuerySet}/${currentResultFile}?subfolder=${encodeURIComponent(subfolder)}`);
+        const staticData = await fetchAPI(`/api/static-result?${qs({ ...resultParams, query_set: currentQuerySet || '' })}`);
 
         // タイムステップスライダーを非表示
         sliderContainer.style.display = 'none';
@@ -400,7 +427,7 @@ async function onResultFileChange() {
     } else {
         // 動的最適化結果を取得（従来の処理）
         // 動的最適化結果を取得（従来の処理）
-        optimizationData = await fetchAPI(`/api/optimization-result/${currentQuerySet}/${currentResultFile}?subfolder=${encodeURIComponent(subfolder)}`);
+        optimizationData = await fetchAPI(`/api/optimization-result?${qs(resultParams)}`);
         staticOptimizationData = null;
 
         // タイムステップスライダーを表示
@@ -441,7 +468,7 @@ async function onResultFileChange() {
 
     // ベンチマーク結果取得 & 更新
     try {
-        benchmarkData = await fetchAPI(`/api/benchmark-result/${currentQuerySet}/${currentResultFile}?subfolder=${encodeURIComponent(subfolder)}`);
+        benchmarkData = await fetchAPI(`/api/benchmark-result?${qs(resultParams)}`);
         updateBenchmarkChart();
     } catch (e) {
         console.warn("Benchmark data fetch failed:", e);
@@ -946,14 +973,15 @@ async function setupComparisonTab() {
         if (!file) return;
 
         // 重複チェック
-        const exists = comparisonSelectedFiles.some(f => f.folder === folder && f.file === file);
+        const exists = comparisonSelectedFiles.some(f => f.root === currentRoot && f.folder === folder && f.file === file);
         if (exists) {
             alert('このファイルはすでに追加されています');
             return;
         }
 
-        const folderDisplay = folder === '(root)' ? '(root)' : folder.split('/').pop();
+        const folderDisplay = folder === '' ? currentRoot : folder;
         comparisonSelectedFiles.push({
+            root: currentRoot,
             folder: folder,
             file: file,
             label: `${folderDisplay}/${file.replace('.json', '')}`
@@ -973,7 +1001,7 @@ async function loadComparisonFolders() {
 
     // APIから再帰的にフォルダを取得する関数
     async function collectFolders(path, depth = 0) {
-        const data = await fetchAPI(`/api/subfolders/${currentQuerySet}?path=${encodeURIComponent(path)}`);
+        const data = await fetchAPI(`/api/folders?${qs({ root: currentRoot, path: path })}`);
         const folders = [];
 
         // 結果があるフォルダを追加
@@ -981,7 +1009,7 @@ async function loadComparisonFolders() {
             const indent = '　'.repeat(depth);
             folders.push({
                 value: data.current_path,
-                label: indent + data.current_path
+                label: indent + (data.current_path || `${currentRoot}/`)
             });
         }
 
@@ -996,7 +1024,8 @@ async function loadComparisonFolders() {
         return folders;
     }
 
-    const allFolders = await collectFolders('');
+    // 今いるフォルダ以下を対象にする（結果の場所全体を辿ると重いため）
+    const allFolders = await collectFolders(currentFolderPath);
 
     allFolders.forEach(f => {
         const opt = document.createElement('option');
@@ -1012,11 +1041,10 @@ async function loadComparisonFiles() {
     const fileSelect = document.getElementById('comparison-add-file-select');
     fileSelect.innerHTML = '';
 
-    const folder = folderSelect.value || '(root)';
-    const subfolder = folder === '(root)' ? '' : folder;
+    const folder = folderSelect.value || '';
 
     try {
-        const files = await fetchAPI(`/api/result-files/${currentQuerySet}?subfolder=${encodeURIComponent(subfolder)}`);
+        const files = await fetchAPI(`/api/result-files?${qs({ root: currentRoot, path: folder })}`);
 
         // 動的ベンチマークファイル
         if (files.benchmark) {
@@ -1127,8 +1155,7 @@ async function updateComparisonCharts() {
     // データ並列取得（各ファイルのフォルダを使用）
     const results = await Promise.all(comparisonSelectedFiles.map(async item => {
         try {
-            const subfolder = item.folder === '(root)' ? '' : item.folder;
-            const data = await fetchAPI(`/api/benchmark-result/${currentQuerySet}/${item.file}?subfolder=${encodeURIComponent(subfolder)}`);
+            const data = await fetchAPI(`/api/benchmark-result?${qs({ root: item.root, path: item.folder, file: item.file })}`);
             return { file: item.file, label: item.label, folder: item.folder, data };
         } catch (e) {
             console.error(`Failed to fetch ${item.file}:`, e);
