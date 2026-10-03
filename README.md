@@ -1,7 +1,7 @@
 # Schema Optimization for Time-Dependent Workloads — Experiments
 
 This repository contains the implementation and the experiment scripts of the paper
-**"Schema Optimization for Time-Dependent Workloads"** (EDBT 2027).
+**"Schema Optimization for Time-Dependent Workloads"** (submitted to EDBT 2027).
 The method selects a time series of materialized views (MVs) with an integer linear program
 that maximizes the total utility of the MVs minus the migration cost between time steps, and
 prunes MV candidates with a *workload summary tree*.
