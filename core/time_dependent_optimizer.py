@@ -274,7 +274,7 @@ class TimeDependentOptimizer:
         )
 
         # Migration cost: sum of fixed costs when creating MVs
-        # Apply weight to reduce the impact of migration cost (default 0.1 = 1/10)
+        # Weighted by migration_cost_weight (default 1.0, used in all experiments)
         migration_cost = gp.quicksum(
             float(self.migration_cost.get(j, 0.0)) * self.migration_cost_weight * self.c[j, t]
             for t in range(self.T)

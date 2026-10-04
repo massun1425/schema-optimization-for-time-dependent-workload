@@ -1,7 +1,7 @@
 # Experiment scripts for the paper
 
 Shell scripts that produce the results reported in the paper
-("Schema Optimization for Time-Dependent Workloads", EDBT 2027).
+("Schema Optimization for Time-Dependent Workloads").
 The experiment driver itself is `scripts/run_experiment_normal.py`.
 All results are collected under `time_dependent_output/rq*/`; existing results
 (e.g. the `*_ok` directories) are never modified.

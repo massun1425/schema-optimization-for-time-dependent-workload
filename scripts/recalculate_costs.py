@@ -5,7 +5,7 @@ This script uses the node structure from the parsed query plan (pickle file)
 combined with sampled row counts from simple_migration_costs.json to calculate
 accurate costs that account for JOIN complexity (especially Nested Loop Joins).
 
-Usage (from project root: /home/masuda/projects/mv-query-optimization):
+Usage (from the repository root):
     # Basic usage (outputs to simple_migration_costs_recalc.json)
     python3 scripts/recalculate_costs.py --query-set job
     

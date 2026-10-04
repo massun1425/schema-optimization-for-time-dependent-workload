@@ -28,9 +28,9 @@ benchmark:
   queries_dir: dataset/RED_JSON
   sql_dir: dataset/RED_SQL
   
-  # クエリ選択モード
-  # 'redbench': RedBenchワークロードCSVに基づいてクエリを選択 (83クエリ)
-  # 'all_job': dataset/RED_JSON/job/ の全JOBクエリを使用 (113クエリ)
+  # Query selection mode (not used by the experiments of the paper)
+  # 'redbench': select the queries listed in a Redbench workload CSV (83 queries)
+  # 'all_job': use all JOB queries in dataset/RED_JSON/job/ (113 queries)
   query_selection_mode: all_job  # 'redbench' or 'all_job'
 
 # Query Configuration
@@ -48,19 +48,20 @@ paths:
   mv_list_dir: Output
 
 # Execution Phases Configuration
-# フェーズごとに実行するかどうかを制御
+# Whether to run each phase (not used by scripts/run_experiment_normal.py, which selects the
+# phases with --phase)
 execution:
   phases:
-    query_parsing: true       # [1/6] クエリパース
-    optimization: true         # [2/6] MV選択（ILP最適化）
-    sql_generation: true      # [3/6] MV作成SQL生成
-    mv_creation: true         # [4/6] MV作成（データベース）
-    query_rewriting: true      # [5/6] クエリ書き換え
-    benchmark: true            # [6/6] ベンチマーク実行
+    query_parsing: true       # [1/6] query parsing
+    optimization: true         # [2/6] MV selection (ILP optimization)
+    sql_generation: true      # [3/6] MV creation SQL
+    mv_creation: true         # [4/6] MV creation (database)
+    query_rewriting: true      # [5/6] query rewriting
+    benchmark: true            # [6/6] benchmark
   
-  # または start_from / end_at で範囲指定も可能
-  # start_from: query_parsing     # このフェーズから開始
-  # end_at: query_rewriting       # このフェーズで終了
+  # Alternatively, a range can be given with start_from / end_at
+  # start_from: query_parsing     # first phase to run
+  # end_at: query_rewriting       # last phase to run
 
 # Logging Configuration
 logging:

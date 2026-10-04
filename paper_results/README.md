@@ -1,7 +1,7 @@
 # Results reported in the paper
 
 This directory contains the result files behind every figure and table of the paper
-("Schema Optimization for Time-Dependent Workloads", EDBT). It has the same layout as the
+("Schema Optimization for Time-Dependent Workloads"). It has the same layout as the
 output of the experiment scripts in `paper_scripts/` (`time_dependent_output/rq*/`), so the figures
 and tables can be regenerated without re-running the experiments:
 

@@ -227,6 +227,7 @@ write_note() {
 #   dynamic_nopr  : Proposed (without pruning)                   ... RQ3 / RQ1 Exp1-2 / RQ1 Exp1-3
 #   static        : Static (UtilityOptimizerV2, average over all time steps)
 #   adaptive      : Adapt (window size 4, linear recency weights)
+#   adaptive_w<N> : Adapt with window size N (e.g. adaptive_w8)
 # ----------------------------------------------------------------------
 method_args() {
     case $1 in
@@ -236,6 +237,7 @@ method_args() {
         dynamic_nopr)  echo "--optimization-mode dynamic" ;;
         static)        echo "--optimization-mode static --static-timestep average --static-algorithm utility" ;;
         adaptive)      echo "--optimization-mode adaptive --window-size 4 --freq-weight linear" ;;
+        adaptive_w[0-9]*) echo "--optimization-mode adaptive --window-size ${1#adaptive_w} --freq-weight linear" ;;
         *) die "Unknown method: $1" ;;
     esac
 }
@@ -246,6 +248,7 @@ result_files() {
         dynamic*) echo "td_mv_optimization_result$2.json benchmark_results_dynamic$2.json" ;;
         static)   echo "static_mv_optimization_result$2.json benchmark_results_static$2.json" ;;
         adaptive) echo "adaptive_mv_optimization_result_w4$2.json benchmark_results_adaptive_w4$2.json" ;;
+        adaptive_w[0-9]*) echo "adaptive_mv_optimization_result_w${1#adaptive_w}$2.json benchmark_results_adaptive_w${1#adaptive_w}$2.json" ;;
         *) die "Unknown method: $1" ;;
     esac
 }

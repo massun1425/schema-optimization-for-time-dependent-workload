@@ -43,7 +43,7 @@ def main():
             bar_handles = hs
 
         ax.set_title(title, fontsize=24)
-        ax.set_xlabel("Capacity (MB)", fontsize=22)
+        ax.set_xlabel("Storage Budget (MB)", fontsize=22)
         ax.set_xticks(x)
         ax.set_xticklabels([str(c) for c in CAPS], fontsize=19)
         dmin, dmax = values.min(), values.max()

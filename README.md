@@ -1,7 +1,7 @@
 # Schema Optimization for Time-Dependent Workloads — Experiments
 
 This repository contains the implementation and the experiment scripts of the paper
-**"Schema Optimization for Time-Dependent Workloads"** (EDBT 2027).
+**"Schema Optimization for Time-Dependent Workloads"** (submitted to EDBT 2027).
 The method selects a time series of materialized views (MVs) with an integer linear program
 that maximizes the total utility of the MVs minus the migration cost between time steps, and
 prunes MV candidates with a *workload summary tree*.
@@ -21,6 +21,31 @@ its figures and tables:**
 
 They can be regenerated without running any experiment (step 2 below).
 
+## Names in the paper and in this repository
+
+Several workloads, methods and parameters have different names in the paper and in the
+code, the file names and the options.
+
+| Paper | Repository |
+|---|---|
+| JOB + CEB queries (2,515 queries) | query set `01_queries/job-ceb-2/` |
+| Cycles | `job-ceb-2` with the frequency file suffix `_24_2_10` |
+| Evolution and Stagnation | `job-ceb-2` with the suffix `_24_mono`; with *T* time steps (Fig. 8): `_{T}_mono` |
+| Growth and Spikes | `job-ceb-2` with the suffix `_24_peak` |
+| Group A / Group B (Fig. 5) | the two query groups of the frequency files (described in their `note` field) |
+| Redbench synthetic (2,284 queries) | query set `01_queries/Redbench_synthetic/` with the suffix `_2h_x2_50x` |
+| Workloads with *N* queries (Fig. 9) | query sets `job-ceb-2-q{N}` (e.g. `job-ceb-2-q20000`) with the suffix `_24_mono` |
+| Proposed (with candidate pruning) | `--optimization-mode dynamic --use-pruning`; files `td_mv_optimization_result*` and `benchmark_results_dynamic*`; tag `_wp` where both variants are stored together (Figs. 8–9) |
+| Proposed without pruning | `--optimization-mode dynamic` without `--use-pruning`; tag `_wo` |
+| Static | `--optimization-mode static --static-timestep average --static-algorithm utility`; files `static_mv_optimization_result*` and `benchmark_results_static*` |
+| Adapt (*k* = 3, i.e. the last *k* + 1 = 4 time steps) | `--optimization-mode adaptive --window-size 4 --freq-weight linear`; files `adaptive_mv_optimization_result_w4*` and `benchmark_results_adaptive_w4*` |
+| Storage constraint *B*<sub>max</sub> | `--b-max <MB>`; folders `b500` … `b2000` in `rq4/` |
+| Prediction recall *r* % (Fig. 10) | noise ratio 100 − *r* %: `--noise-ratio`, files `*_noise{100−r}` (e.g. recall 90% = `_noise10`) |
+
+The file names of the results consist of the method, the frequency file suffix and the tag,
+e.g. `benchmark_results_dynamic_24_mono_wo.json` = Proposed without pruning on Evolution and
+Stagnation.
+
 ## Getting started
 
 All commands are run from the repository root.
@@ -39,16 +64,15 @@ All commands are run from the repository root.
 ### 1. Clone and install the Python environment
 
 ```bash
-git clone <repository URL> mv-query-optimization
-cd mv-query-optimization
+git clone https://github.com/massun1425/schema-optimization-for-time-dependent-workload.git
+cd schema-optimization-for-time-dependent-workload
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
 `requirements.txt` pins the package versions used for the experiments of the paper
-(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, Matplotlib for the figures, and
-FastAPI/Uvicorn for the dashboard). With [uv](https://docs.astral.sh/uv/), `uv sync`
+(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, and Matplotlib for the figures). With [uv](https://docs.astral.sh/uv/), `uv sync`
 installs the same versions from `uv.lock` (`uv sync --extra dev` adds pytest and the linters).
 
 ### 2. Check the installation (no database or Gurobi license needed)
@@ -182,7 +206,6 @@ by the optimizer (promising candidates, objective value and schedule) are determ
 | `paper_scripts/` | Shell scripts that run every experiment of the paper ([README](paper_scripts/README.md)) |
 | `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([README](paper_figures/README.md)) |
 | `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([README](paper_results/README.md)) |
-| `dashboard/` | Browser dashboard for inspecting the results ([README](dashboard/README.md)) |
 | `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([README](docker/README.md)) |
 | `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
 | `tests/`, `.github/workflows/` | Unit and regression tests; CI (tests, import check, regeneration of the figures) |
