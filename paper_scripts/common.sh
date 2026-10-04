@@ -227,7 +227,7 @@ write_note() {
 #   dynamic_nopr  : Proposed (without pruning)                   ... RQ3 / RQ1 Exp1-2 / RQ1 Exp1-3
 #   static        : Static (UtilityOptimizerV2, average over all time steps)
 #   adaptive      : Adapt (window size 4, linear recency weights)
-#   adaptive_w<N> : Adapt with window size N (e.g. adaptive_w8; used by extra_adapt_window_size.sh)
+#   adaptive_w<N> : Adapt with window size N (e.g. adaptive_w8)
 # ----------------------------------------------------------------------
 method_args() {
     case $1 in

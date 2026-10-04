@@ -64,8 +64,8 @@ All commands are run from the repository root.
 ### 1. Clone and install the Python environment
 
 ```bash
-git clone <repository URL> mv-query-optimization
-cd mv-query-optimization
+git clone https://github.com/massun1425/schema-optimization-for-time-dependent-workload.git
+cd schema-optimization-for-time-dependent-workload
 python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt

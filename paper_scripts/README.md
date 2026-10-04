@@ -18,7 +18,6 @@ All results are collected under `time_dependent_output/rq*/`; existing results
 | `rq3_pruning.sh` | Table 2 | With vs. without candidate pruning | `time_dependent_output/rq3/` |
 | `rq4_capacity.sh` | Fig. 11 | Storage constraint 500–2000 MB | `time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500..2000}/` |
 | `run_all.sh` | — | Runs all of the above in dependency order | |
-| `extra_adapt_window_size.sh` | — | Additional: window size of Adapt (2, 4, 8) on the 113 JOB queries (`job`), 3 patterns; preprocesses `job` first (not run by `run_all.sh`) | `time_dependent_output/extra/adapt_window/job/` |
 | `../paper_results/collect_paper_results.sh` | — | Copies the original results reported in the paper into `paper_results/` (same layout as `rq*/`; copies only, never overwrites). Located in `paper_results/` | `paper_results/` |
 | `common.sh` | — | Shared settings and helpers (sourced only) | |
 
