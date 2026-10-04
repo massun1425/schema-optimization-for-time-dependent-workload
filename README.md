@@ -72,8 +72,7 @@ pip install -r requirements.txt
 ```
 
 `requirements.txt` pins the package versions used for the experiments of the paper
-(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, Matplotlib for the figures, and
-FastAPI/Uvicorn for the dashboard). With [uv](https://docs.astral.sh/uv/), `uv sync`
+(Gurobi 12.0.1, NumPy, psycopg2, PyYAML, sqlparse, and Matplotlib for the figures). With [uv](https://docs.astral.sh/uv/), `uv sync`
 installs the same versions from `uv.lock` (`uv sync --extra dev` adds pytest and the linters).
 
 ### 2. Check the installation (no database or Gurobi license needed)
@@ -207,7 +206,6 @@ by the optimizer (promising candidates, objective value and schedule) are determ
 | `paper_scripts/` | Shell scripts that run every experiment of the paper ([README](paper_scripts/README.md)) |
 | `paper_figures/` | Scripts that turn the results into the figures and tables of the paper ([README](paper_figures/README.md)) |
 | `paper_results/` | **The results reported in the paper (`rq*/`) and its figures and tables (`figures/`)** ([README](paper_results/README.md)) |
-| `dashboard/` | Browser dashboard for inspecting the results ([README](dashboard/README.md)) |
 | `docker/`, `Dockerfile` | PostgreSQL 18.4 + IMDB container used in the experiments ([README](docker/README.md)) |
 | `Redbench/` | Modified copy of the Redbench workload generator (Apache License 2.0; see [Third-party code and data](#third-party-code-and-data)) |
 | `tests/`, `.github/workflows/` | Unit and regression tests; CI (tests, import check, regeneration of the figures) |

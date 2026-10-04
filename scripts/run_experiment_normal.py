@@ -127,7 +127,7 @@ class NormalModeExperiment:
     # Run configuration recorded in the result files
     #
     # The result JSON files get one additional top-level key "run_config"; existing keys are
-    # unchanged, so the readers (Phases 7-9, paper_figures/, dashboard/) are not affected.
+    # unchanged, so the readers (Phases 7-9, paper_figures/) are not affected.
     # The preprocessing settings are written to a separate file next to the cost file
     # (04_migration/<set>/simple_migration_costs.meta.json), because the cost file itself is
     # read as a mapping from MV names to costs.
