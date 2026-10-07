@@ -93,7 +93,7 @@ restart_container() {
 #    <set>/_stash/in_use/; they are put back once the results have been
 #    collected into rq*/. On errors or interruption the EXIT trap puts them
 #    back as well (only if the original location is free).
-#    -> Existing results (e.g. the Fig. 9 source data in job-ceb-2-q{N}/)
+#    -> Existing results (e.g. the Exp3-3 source data in job-ceb-2-q{N}/)
 #       stay where they are.
 # 2) Intermediates (timestep_*.sql, static_*initial_mvs.sql, jobs/): Phases 7/8
 #    delete and regenerate them, so the post-opt scripts move them once to
@@ -221,10 +221,10 @@ write_note() {
 
 # ----------------------------------------------------------------------
 # Method definitions (arguments checked against the result JSONs of the paper)
-#   dynamic_seq   : Proposed (sequential pruning)                ... RQ1 Exp1-1 / RQ3 / RQ4 b500
-#   dynamic_par   : Proposed (parallel pruning)                  ... RQ1 Exp1-2 / RQ4 b1000-2000
-#   dynamic_par16 : Proposed (parallel pruning, 16 workers)      ... RQ1 Exp1-3
-#   dynamic_nopr  : Proposed (without pruning)                   ... RQ3 / RQ1 Exp1-2 / RQ1 Exp1-3
+#   dynamic_seq   : Proposed (sequential pruning)                ... RQ1 Exp1-1 / RQ4 b500
+#   dynamic_par   : Proposed (parallel pruning)                  ... RQ3 Exp3-1 / RQ3 Exp3-2 / RQ4 b1000-2000
+#   dynamic_par16 : Proposed (parallel pruning, 16 workers)      ... RQ3 Exp3-3
+#   dynamic_nopr  : Proposed (without pruning)                   ... RQ3 Exp3-1 / RQ3 Exp3-2 / RQ3 Exp3-3
 #   static        : Static (UtilityOptimizerV2, average over all time steps)
 #   adaptive      : Adapt (window size 4, linear recency weights)
 #   adaptive_w<N> : Adapt with window size N (e.g. adaptive_w8)

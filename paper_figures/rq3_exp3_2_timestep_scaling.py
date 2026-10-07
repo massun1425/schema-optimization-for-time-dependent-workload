@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Fig. 8 (RQ1 Exp1-2): optimization time vs. number of time steps (with/without pruning).
+"""RQ3 Exp3-2: optimization time vs. number of time steps (with/without pruning).
 
-Input:  time_dependent_output/rq1/exp1_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
+Input:  time_dependent_output/rq3/exp3_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
 y-axis: phase_time_sec (wall time of the whole Phase 6; wp = pruning + ILP solve, wo = ILP solve)
-Output: rq1_exp1_2_timestep_scaling.pdf
+Output: rq3_exp3_2_timestep_scaling.pdf
 """
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -18,7 +18,7 @@ SERIES = [("Proposed (w/ pruning)", "wp"), ("Proposed (w/o pruning)", "wo")]
 
 def main():
     args = parse_args(__doc__)
-    src = args.td_dir / "rq1" / "exp1_2"
+    src = args.td_dir / "rq3" / "exp3_2"
     paths = {(ts, tag): src / f"td_mv_optimization_result_{ts}_mono_{tag}.json"
              for ts in TIMESTEPS for _, tag in SERIES}
     require(paths.values())
@@ -48,7 +48,7 @@ def main():
     ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.4)
 
     plt.tight_layout()
-    save_pdf(fig, args.out_dir / "rq1_exp1_2_timestep_scaling.pdf")
+    save_pdf(fig, args.out_dir / "rq3_exp3_2_timestep_scaling.pdf")
     plt.close(fig)
 
 

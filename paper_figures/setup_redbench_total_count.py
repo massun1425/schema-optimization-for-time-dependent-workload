@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fig. 6: total execution count per time step of Redbench synthetic.
+"""Workload setup: total execution count per time step of Redbench synthetic.
 
 Input:  01_queries/Redbench_synthetic/frequency_time_dependent_2h_x2_50x.json
 Output: setup_redbench_total_count.pdf

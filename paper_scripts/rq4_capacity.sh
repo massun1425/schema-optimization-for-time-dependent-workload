@@ -1,6 +1,6 @@
 #!/bin/bash
 # ======================================================================
-# RQ4 / Experiment 4 (Fig. 11): storage constraint vs. total execution time
+# RQ4 / Experiment 4: storage constraint vs. total execution time
 #
 #   job-ceb-2, Cycles / Evolution and Stagnation / Growth and Spikes
 #   B_max = 500, 1000, 1500, 2000 MB, methods = Proposed / Static / Adapt
