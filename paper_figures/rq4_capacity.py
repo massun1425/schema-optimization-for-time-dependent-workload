@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import numpy as np
 
-from common import COLORS, PATTERNS, parse_args, require, save_pdf, total_benchmark_time
+from common import COLORS, LABELS, PATTERNS, parse_args, require, save_pdf, total_benchmark_time
 
 CAPS = [500, 1000, 1500, 2000]
 METHODS = ["Adapt", "Static", "Proposed"]
@@ -37,7 +37,7 @@ def main():
         width = 0.24
         offsets = np.linspace(-(n - 1) / 2, (n - 1) / 2, n) * width
 
-        hs = [ax.bar(x + offsets[i], values[:, i], width, label=m, color=COLORS[m])
+        hs = [ax.bar(x + offsets[i], values[:, i], width, label=LABELS.get(m, m), color=COLORS[m])
               for i, m in enumerate(METHODS)]
         if bar_handles is None:
             bar_handles = hs
@@ -59,7 +59,7 @@ def main():
         ax.spines["right"].set_visible(False)
 
     axes[0].set_ylabel("Total Execution Time (s)", fontsize=22)
-    fig.legend([h[0] for h in bar_handles], METHODS, loc="upper center", ncol=3,
+    fig.legend([h[0] for h in bar_handles], [LABELS.get(m, m) for m in METHODS], loc="upper center", ncol=3,
                fontsize=22, frameon=True, bbox_to_anchor=(0.5, 1.06))
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     save_pdf(fig, args.out_dir / "rq4_capacity.pdf", bbox_inches="tight")

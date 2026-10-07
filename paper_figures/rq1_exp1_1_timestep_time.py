@@ -10,8 +10,8 @@ Output: rq1_exp1_1_timestep_time_{cycles,evolution_and_stagnation,growth_and_spi
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from common import (COLORS, MARKERS, PATTERNS, REDBENCH_SUFFIX, load_json, parse_args,
-                    require, save_pdf)
+from common import (COLORS, LABELS, MARKERS, PATTERNS, REDBENCH_SUFFIX, load_json,
+                    parse_args, require, save_pdf)
 
 # (legend label, method token in the file name, add the initial MV build to t=1?)
 METHODS = [
@@ -36,7 +36,7 @@ def plot_panel(title, paths, out_path):
     for label, _tok, add_init in METHODS:
         xs, ys = per_timestep_total(paths[label], add_init)
         ax.plot(xs, ys, marker=MARKERS[label], markersize=6, linewidth=2,
-                color=COLORS[label], label=label)
+                color=COLORS[label], label=LABELS.get(label, label))
 
     ax.set_xlabel("Timestep", fontsize=18)
     ax.set_ylabel("Execution Time (s)", fontsize=18)
