@@ -28,6 +28,10 @@ MARKERS = {
     "Static": "s",
     "Proposed": "^",
 }
+# Legend labels (window size k of Adapt)
+LABELS = {
+    "Adapt": "Adapt ($k$ = 4)",
+}
 
 # Frequency patterns of job-ceb-2: (frequency suffix, name in the paper)
 PATTERNS = [

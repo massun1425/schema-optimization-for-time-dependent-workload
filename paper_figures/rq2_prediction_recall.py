@@ -10,7 +10,7 @@ Output: rq2_prediction_recall.pdf
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
-from common import COLORS, MARKERS, REDBENCH_SUFFIX, parse_args, require, save_pdf, total_benchmark_time
+from common import COLORS, LABELS, MARKERS, REDBENCH_SUFFIX, parse_args, require, save_pdf, total_benchmark_time
 
 # recall increases from left to right (noise 0 = file without a noise suffix)
 NOISES = [50, 45, 40, 35, 30, 25, 20, 15, 10, 5, 0]
@@ -38,7 +38,7 @@ def main():
     x = list(range(len(NOISES)))
     fig, ax = plt.subplots(figsize=(8, 5))
     for m in METHODS:
-        ax.plot(x, data[m], marker=MARKERS[m], label=m, color=COLORS[m],
+        ax.plot(x, data[m], marker=MARKERS[m], label=LABELS.get(m, m), color=COLORS[m],
                 linewidth=2, markersize=7)
 
     ax.set_xlabel("Workload Prediction Recall", fontsize=18)
