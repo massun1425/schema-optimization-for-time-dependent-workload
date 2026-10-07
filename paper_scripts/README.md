@@ -8,15 +8,15 @@ All results are collected under `time_dependent_output/rq*/`; existing results
 
 ## Scripts
 
-| Script | Paper | Content | Output |
+| Script | Experiment | Content | Output |
 |---|---|---|---|
 | `00_prepare.sh` | — | Phases 1–5 + cost recalculation (job-ceb-2, Redbench_synthetic) | `02_json/`, `03_parsed/`, `04_migration/` (skipped if present) |
-| `rq1_exp1_1_timestep_time.sh` | Fig. 7 | Execution time per time step (3 patterns + Redbench, 3 methods) | `time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/` |
-| `rq1_exp1_2_timestep_scaling.sh` | Fig. 8 | Optimization time vs. number of time steps (T = 12–42, with/without pruning) | `time_dependent_output/rq1/exp1_2/` |
-| `rq1_exp1_3_query_scaling.sh` | Fig. 9 | Optimization time vs. number of queries (20k–100k; Static / with / without pruning) | `time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/` |
-| `rq2_prediction_recall.sh` | Fig. 10 | Robustness against prediction recall (= 100 − noise) | `time_dependent_output/rq2/` |
-| `rq3_pruning.sh` | Table 2 | With vs. without candidate pruning | `time_dependent_output/rq3/` |
-| `rq4_capacity.sh` | Fig. 11 | Storage constraint 500–2000 MB | `time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500..2000}/` |
+| `rq1_exp1_1_timestep_time.sh` | RQ1 Exp1-1 | Execution time per time step (3 patterns + Redbench, 3 methods) | `time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/` |
+| `rq2_prediction_recall.sh` | RQ2 | Robustness against prediction recall (= 100 − noise) | `time_dependent_output/rq2/` |
+| `rq3_exp3_1_pruning.sh` | RQ3 Exp3-1 | With vs. without candidate pruning | `time_dependent_output/rq3/exp3_1/` |
+| `rq3_exp3_2_timestep_scaling.sh` | RQ3 Exp3-2 | Optimization time vs. number of time steps (T = 12–42, with/without pruning) | `time_dependent_output/rq3/exp3_2/` |
+| `rq3_exp3_3_query_scaling.sh` | RQ3 Exp3-3 | Optimization time vs. number of queries (20k–100k; Static / with / without pruning) | `time_dependent_output/rq3/exp3_3/job-ceb-2-q{N}/` |
+| `rq4_capacity.sh` | RQ4 | Storage constraint 500–2000 MB | `time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500..2000}/` |
 | `run_all.sh` | — | Runs all of the above in dependency order | |
 | `../paper_results/collect_paper_results.sh` | — | Copies the original results reported in the paper into `paper_results/` (same layout as `rq*/`; copies only, never overwrites). Located in `paper_results/` | `paper_results/` |
 | `common.sh` | — | Shared settings and helpers (sourced only) | |
@@ -30,11 +30,11 @@ Each output directory contains the result JSONs and `log/` (execution logs).
 - Frequency files: `_24_2_10` / `_24_mono` / `_24_peak` for job-ceb-2 (**not** the `_rand` variants),
   `_2h_x2_50x` for Redbench.
 - Proposed: `--optimization-mode dynamic --use-pruning`
-  - Sequential pruning for RQ1 Exp1-1, RQ3 and RQ4 b500.
-  - `--pruning-parallel` for RQ1 Exp1-2 and RQ4 b1000 and above;
-    `--pruning-parallel --pruning-workers 16` for RQ1 Exp1-3.
-  - (As in the original runs. The promising MV set is identical for sequential and
-    parallel pruning, but the pruning time differs.)
+  - Sequential pruning for RQ1 Exp1-1 and RQ4 b500.
+  - `--pruning-parallel` for RQ3 Exp3-1 (optimization), RQ3 Exp3-2 and RQ4 b1000 and above;
+    `--pruning-parallel --pruning-workers 16` for RQ3 Exp3-3.
+  - (The promising MV set and the selected MVs are identical for sequential and parallel
+    pruning; only the pruning time differs.)
 - Static: `--optimization-mode static --static-timestep average --static-algorithm utility`
 - Adapt: `--optimization-mode adaptive --window-size 4 --freq-weight linear`
 - Without pruning: each run is stopped after 24 h. A run that exceeds it is marked as
@@ -42,21 +42,13 @@ Each output directory contains the result JSONs and `log/` (execution logs).
 
 ## Reuse of results (same as in the paper data)
 
-Runs with identical settings are executed only once and copied (`REUSE=1` by default):
-
-- RQ2 recall 100% ← Redbench results of RQ1 Exp1-1
-- RQ3 with pruning ← Proposed of RQ1 Exp1-1
-- RQ4 b500 ← all three methods of RQ1 Exp1-1
-
-This is why `run_all.sh` runs Exp1-1 first.
-The noise experiments of RQ2 do not repeat the optimization: Phases 7/8 are regenerated
-from the recall-100% optimization result and only Phase 9 is run.
+Runs with identical settings are executed only once and copied to the other experiments
 
 ## Staging and existing files
 
 `run_experiment_normal.py` writes its results with fixed names directly under
 `time_dependent_output/<query_set>/` (staging). Staging also contains existing results
-(e.g. the Fig. 9 source data in `job-ceb-2-q{N}/`), so the scripts work as follows:
+(e.g. the Exp3-3 source data in `job-ceb-2-q{N}/`), so the scripts work as follows:
 
 1. **Result JSONs**: right before a run, only the existing files whose names collide
    with the files about to be written are moved to `<set>/_stash/in_use/`. They are put
@@ -101,14 +93,14 @@ DRY_RUN=1 bash paper_scripts/run_all.sh
 nohup bash paper_scripts/run_all.sh > paper_run_all.log 2>&1 &
 
 # Individual experiments
-bash paper_scripts/rq3_pruning.sh
+bash paper_scripts/rq3_exp3_1_pruning.sh
 SUFFIXES="_24_peak" CAPS="1000" bash paper_scripts/rq4_capacity.sh
 ```
 
 ## Prerequisites and notes
 
 - The PostgreSQL container (`mv_postgres`) must be running. Experiments that only run
-  Phase 6 (Exp1-2, Exp1-3) do not need the DB.
+  Phase 6 (Exp3-2, Exp3-3) do not need the DB.
 - To create the container use `bash docker/create_container.sh`; to check it use
   `bash docker/verify_env.sh` (see `docker/README.md`).
 - A Gurobi license is required (see the root `README.md`).

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ======================================================================
-# RQ1 / Experiment 1-2 (Fig. 8): optimization time vs. number of time steps
+# RQ3 / Experiment 3-2: optimization time vs. number of time steps
 #
 #   job-ceb-2 (2,515 queries, 26,312 candidates), Evolution and Stagnation (_{T}_mono)
 #   T = 12, 18, 24, 30, 36, 42, B_max = 500MB
@@ -12,18 +12,18 @@
 # If a run without pruning times out, larger T are skipped
 # (DNF_{T}_mono_wo.txt is written).
 #
-# Output: time_dependent_output/rq1/exp1_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
+# Output: time_dependent_output/rq3/exp3_2/td_mv_optimization_result_{T}_mono_{wp,wo}.json
 # Original paper data: time_dependent_output/job-ceb-2/result_scaling_time_ok/
 #
-# Usage: bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
-#        TIMESTEPS="12 18" bash paper_scripts/rq1_exp1_2_timestep_scaling.sh
+# Usage: bash paper_scripts/rq3_exp3_2_timestep_scaling.sh
+#        TIMESTEPS="12 18" bash paper_scripts/rq3_exp3_2_timestep_scaling.sh
 # ======================================================================
 source "$(dirname "$0")/common.sh"
 
 read -r -a TIMESTEPS <<< "${TIMESTEPS:-12 18 24 30 36 42}"
-DEST="${TD}/rq1/exp1_2"
+DEST="${TD}/rq3/exp3_2"
 
-log "==== RQ1 Exp1-2: number of time steps ${TIMESTEPS[*]} ===="
+log "==== RQ3 Exp3-2: number of time steps ${TIMESTEPS[*]} ===="
 
 # Pass 1: with pruning (all T)
 for T in "${TIMESTEPS[@]}"; do
@@ -44,4 +44,4 @@ for T in "${TIMESTEPS[@]}"; do
     fi
 done
 
-log "==== RQ1 Exp1-2 done: ${DEST}/ ===="
+log "==== RQ3 Exp3-2 done: ${DEST}/ ===="

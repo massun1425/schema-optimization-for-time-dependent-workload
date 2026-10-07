@@ -1,6 +1,6 @@
 #!/bin/bash
 # ======================================================================
-# RQ2 / Experiment 2 (Fig. 10): robustness against workload prediction recall
+# RQ2 / Experiment 2: robustness against workload prediction recall
 #
 #   Redbench_synthetic (_2h_x2_50x), B_max = 500MB
 #   recall = 100 - noise (%), noise = 5, 10, ..., 50%

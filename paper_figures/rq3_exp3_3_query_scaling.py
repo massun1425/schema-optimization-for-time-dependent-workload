@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Fig. 9 (RQ1 Exp1-3): optimization time vs. number of queries (Static / with / without pruning).
+"""RQ3 Exp3-3: optimization time vs. number of queries (Static / with / without pruning).
 
-Input:  time_dependent_output/rq1/exp1_3/job-ceb-2-q{N}/
+Input:  time_dependent_output/rq3/exp3_3/job-ceb-2-q{N}/
         static_mv_optimization_result_24_mono.json     （Static: execution_time）
         td_mv_optimization_result_24_mono_wp.json      （w/ pruning: phase_time_sec）
         td_mv_optimization_result_24_mono_wo.json      （w/o pruning: phase_time_sec）
         DNF_24_mono_wo.txt                              (marker: w/o pruning did not finish within 24h)
       A size without a w/o-pruning result but with a DNF marker is drawn as a hatched bar up to 24h labeled "DNF".
 y-axis: time (hours, 0-24)
-Output: rq1_exp1_3_query_scaling.pdf
+Output: rq3_exp3_3_query_scaling.pdf
 """
 import sys
 
@@ -27,7 +27,7 @@ SERIES = ["Static", "Proposed (w/ pruning)", "Proposed (w/o pruning)"]
 
 def main():
     args = parse_args(__doc__)
-    base = args.td_dir / "rq1" / "exp1_3"
+    base = args.td_dir / "rq3" / "exp3_3"
 
     static_paths = [base / f"job-ceb-2-q{n}" / f"static_mv_optimization_result{SFX}.json" for n in NS]
     wp_paths = [base / f"job-ceb-2-q{n}" / f"td_mv_optimization_result{SFX}_wp.json" for n in NS]
@@ -82,7 +82,7 @@ def main():
               fontsize=12, loc="upper left")
 
     fig.tight_layout()
-    save_pdf(fig, args.out_dir / "rq1_exp1_3_query_scaling.pdf")
+    save_pdf(fig, args.out_dir / "rq3_exp3_3_query_scaling.pdf")
     plt.close(fig)
 
 

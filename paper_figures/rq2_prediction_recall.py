@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fig. 10 (RQ2): workload prediction recall vs. total execution time (Redbench synthetic).
+"""RQ2: workload prediction recall vs. total execution time (Redbench synthetic).
 
 Input:  time_dependent_output/rq2/
         benchmark_results_{dynamic,static}_2h_x2_50x{,_noise5,...,_noise50}.json

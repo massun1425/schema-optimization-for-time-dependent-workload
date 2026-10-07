@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fig. 5: frequency patterns (Cycles / Evolution and Stagnation / Growth and Spikes).
+"""Workload setup: frequency patterns (Cycles / Evolution and Stagnation / Growth and Spikes).
 
 Input:  01_queries/job-ceb-2/frequency_time_dependent_{24_2_10,24_mono,24_peak}.json
         Group A = first odd-numbered query (e.g. 1a.sql), Group B = first even-numbered query (e.g. 2a.sql)

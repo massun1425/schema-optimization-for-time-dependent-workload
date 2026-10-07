@@ -1,6 +1,6 @@
 #!/bin/bash
 # ======================================================================
-# RQ1 / Experiment 1-1 (Fig. 7): execution time per time step (Proposed / Adapt / Static)
+# RQ1 / Experiment 1-1: execution time per time step (Proposed / Adapt / Static)
 #
 #   job-ceb-2         : Cycles (_24_2_10) / Evolution and Stagnation (_24_mono) / Growth and Spikes (_24_peak)
 #   Redbench_synthetic: _2h_x2_50x
@@ -13,7 +13,7 @@
 #     benchmark_results_{dynamic,static,adaptive_w4}*.json
 #     log/
 #
-# These results are reused by RQ2 (recall 100%), RQ3 (with pruning) and RQ4 (b500).
+# These results are reused by RQ2 (recall 100%), RQ3 Exp3-1 (with pruning) and RQ4 (b500).
 # Original paper data: time_dependent_output/job-ceb-2/result_500M_ok/, ex2_500M_ok/
 #
 # Usage: bash paper_scripts/rq1_exp1_1_timestep_time.sh

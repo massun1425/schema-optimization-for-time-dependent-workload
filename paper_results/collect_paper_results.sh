@@ -61,7 +61,7 @@ write_note() {
 }
 
 # ---------------------------------------------------------------------
-# RQ1 Exp1-1 (Fig. 7): job-ceb-2, 3 patterns x 3 methods
+# RQ1 Exp1-1: job-ceb-2, 3 patterns x 3 methods
 # ---------------------------------------------------------------------
 for FQ in 24_2_10 24_mono 24_peak; do
     S="${SRC}/job-ceb-2/result_500M_ok"
@@ -73,7 +73,7 @@ for FQ in 24_2_10 24_mono 24_peak; do
     done
 done
 
-# RQ1 Exp1-1 (Fig. 7): Redbench synthetic (no noise)
+# RQ1 Exp1-1: Redbench synthetic (no noise)
 S="${SRC}/ex2_500M_ok"
 D="${DST}/rq1/exp1_1/Redbench_synthetic"
 for F in benchmark_results_dynamic_2h_x2_50x.json benchmark_results_static_2h_x2_50x.json \
@@ -83,52 +83,70 @@ for F in benchmark_results_dynamic_2h_x2_50x.json benchmark_results_static_2h_x2
 done
 
 # ---------------------------------------------------------------------
-# RQ1 Exp1-2 (Fig. 8): number of time steps, with (_wp) / without (_wo) pruning
+# RQ3 Exp3-2: number of time steps, with (_wp) / without (_wo) pruning
 # ---------------------------------------------------------------------
 for T in 12 18 24 30 36 42; do
     for TAG in wp wo; do
         F="td_mv_optimization_result_${T}_mono_${TAG}.json"
-        copy_file "${SRC}/job-ceb-2/result_scaling_time_ok/${F}" "${DST}/rq1/exp1_2/${F}"
+        copy_file "${SRC}/job-ceb-2/result_scaling_time_ok/${F}" "${DST}/rq3/exp3_2/${F}"
     done
 done
 
 # ---------------------------------------------------------------------
-# RQ1 Exp1-3 (Fig. 9): number of queries
+# RQ3 Exp3-3: number of queries
 #   The original run stored the result without pruning as td_mv_optimization_result_24_mono.json;
-#   it is renamed to *_wo.json as written by paper_scripts/rq1_exp1_3_query_scaling.sh.
+#   it is renamed to *_wo.json as written by paper_scripts/rq3_exp3_3_query_scaling.sh.
 # ---------------------------------------------------------------------
 for N in 20000 40000 60000 80000 100000; do
     S="${SRC}/job-ceb-2-q${N}"
-    D="${DST}/rq1/exp1_3/job-ceb-2-q${N}"
+    D="${DST}/rq3/exp3_3/job-ceb-2-q${N}"
     copy_file "${S}/static_mv_optimization_result_24_mono.json" "${D}/static_mv_optimization_result_24_mono.json"
     copy_file "${S}/td_mv_optimization_result_24_mono_wp.json" "${D}/td_mv_optimization_result_24_mono_wp.json"
     if [ -f "${S}/td_mv_optimization_result_24_mono.json" ]; then
         copy_file "${S}/td_mv_optimization_result_24_mono.json" "${D}/td_mv_optimization_result_24_mono_wo.json"
     fi
 done
-write_note "${DST}/rq1/exp1_3/job-ceb-2-q60000/DNF_24_mono_wo.txt" \
+write_note "${DST}/rq3/exp3_3/job-ceb-2-q60000/DNF_24_mono_wo.txt" \
     "DNF: timeout 24h (original run: Gurobi was still solving after 82,276 s)"
-write_note "${DST}/rq1/exp1_3/job-ceb-2-q80000/DNF_24_mono_wo.txt" \
+write_note "${DST}/rq3/exp3_3/job-ceb-2-q80000/DNF_24_mono_wo.txt" \
     "DNF: skipped because a smaller N timed out"
-write_note "${DST}/rq1/exp1_3/job-ceb-2-q100000/DNF_24_mono_wo.txt" \
+write_note "${DST}/rq3/exp3_3/job-ceb-2-q100000/DNF_24_mono_wo.txt" \
     "DNF: skipped because a smaller N timed out"
 
 # ---------------------------------------------------------------------
-# RQ2 (Fig. 10): prediction recall (all result files of ex2_500M_ok)
+# RQ2: prediction recall (all result files of ex2_500M_ok)
 # ---------------------------------------------------------------------
 for F in "${SRC}"/ex2_500M_ok/*.json; do
     copy_file "${F}" "${DST}/rq2/$(basename "${F}")"
 done
 
 # ---------------------------------------------------------------------
-# RQ3 (Table 2): with / without pruning
+# RQ3 Exp3-1: with / without pruning
+#   Benchmark results and the optimization results without pruning come from the original
+#   runs (ex3_500M_ok/, sequential pruning). The optimization results with pruning are the
+#   runs with parallel pruning (the method of Exp3-2), whose results are identical to the
+#   original ones except for the timing fields; for Evolution and Stagnation both the
+#   with- and the without-pruning optimization results are the runs of Exp3-2, so that
+#   Exp3-1 and Exp3-2 report the same runs.
 # ---------------------------------------------------------------------
 for F in "${SRC}"/ex3_500M_ok/*.json; do
-    copy_file "${F}" "${DST}/rq3/$(basename "${F}")"
+    case "$(basename "${F}")" in
+        td_mv_optimization_result_24_2_10.json|td_mv_optimization_result_24_peak.json|\
+        td_mv_optimization_result_24_mono.json|td_mv_optimization_result_24_mono_wo.json) continue ;;
+    esac
+    copy_file "${F}" "${DST}/rq3/exp3_1/$(basename "${F}")"
 done
+for SFX in _24_2_10 _24_peak; do
+    copy_file "${SRC}/extra/rq3_parallel/td_mv_optimization_result${SFX}_par.json" \
+        "${DST}/rq3/exp3_1/td_mv_optimization_result${SFX}.json"
+done
+copy_file "${SRC}/job-ceb-2/result_scaling_time_ok/td_mv_optimization_result_24_mono_wp.json" \
+    "${DST}/rq3/exp3_1/td_mv_optimization_result_24_mono.json"
+copy_file "${SRC}/job-ceb-2/result_scaling_time_ok/td_mv_optimization_result_24_mono_wo.json" \
+    "${DST}/rq3/exp3_1/td_mv_optimization_result_24_mono_wo.json"
 
 # ---------------------------------------------------------------------
-# RQ4 (Fig. 11): storage constraint
+# RQ4: storage constraint
 # ---------------------------------------------------------------------
 for P in cycle:24_2_10 mono:24_mono peak:24_peak; do
     for B in 500 1000 1500 2000; do

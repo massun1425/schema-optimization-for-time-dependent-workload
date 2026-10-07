@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fig. 11 (RQ4): storage constraint vs. total execution time (one figure with the 3 patterns side by side).
+"""RQ4: storage constraint vs. total execution time (one figure with the 3 patterns side by side).
 
 Input:  time_dependent_output/rq4/{24_2_10,24_mono,24_peak}/b{500,1000,1500,2000}/
         benchmark_results_{adaptive_w4,static,dynamic}_{suffix}.json

@@ -43,7 +43,7 @@ def parse_args(description):
     ap.add_argument("--td-dir", type=Path, default=REPO_ROOT / "time_dependent_output",
                     help="output directory of paper_scripts/*.sh (contains rq1/ rq2/ ...)")
     ap.add_argument("--queries-dir", type=Path, default=REPO_ROOT / "01_queries",
-                    help="directory with the frequency files (used only for Fig. 5 / Fig. 6)")
+                    help="directory with the frequency files (used only by setup_*.py)")
     ap.add_argument("--out-dir", type=Path, default=REPO_ROOT / "paper_figures" / "output",
                     help="output directory for the figures and tables")
     args = ap.parse_args()

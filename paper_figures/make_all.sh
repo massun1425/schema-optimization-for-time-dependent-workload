@@ -13,14 +13,14 @@ cd "${HERE}/.." || exit 1
 PY="${PY:-.venv/bin/python}"
 
 SCRIPTS=(
-    setup_frequency_patterns.py        # Fig.5
-    setup_redbench_total_count.py      # Fig.6
-    rq1_exp1_1_timestep_time.py        # Fig.7
-    rq1_exp1_2_timestep_scaling.py     # Fig.8
-    rq1_exp1_3_query_scaling.py        # Fig.9
-    rq2_prediction_recall.py           # Fig.10
-    rq3_pruning.py                     # Table 2
-    rq4_capacity.py                    # Fig.11
+    setup_frequency_patterns.py        # workload setup
+    setup_redbench_total_count.py      # workload setup
+    rq1_exp1_1_timestep_time.py        # RQ1 Exp1-1
+    rq3_exp3_2_timestep_scaling.py     # RQ3 Exp3-2
+    rq3_exp3_3_query_scaling.py        # RQ3 Exp3-3
+    rq2_prediction_recall.py           # RQ2
+    rq3_exp3_1_pruning.py              # RQ3 Exp3-1
+    rq4_capacity.py                    # RQ4
 )
 
 FAILED=()

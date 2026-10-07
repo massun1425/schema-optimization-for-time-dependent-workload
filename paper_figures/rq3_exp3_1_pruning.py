@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Table 2 (RQ3): with vs. without candidate pruning (LaTeX and Markdown).
+"""RQ3 Exp3-1: with vs. without candidate pruning (LaTeX and Markdown).
 
-Input:  time_dependent_output/rq3/
+Input:  time_dependent_output/rq3/exp3_1/
         td_mv_optimization_result_{fq}{,_wo}.json, benchmark_results_dynamic_{fq}{,_wo}.json
         ('' = with pruning, '_wo' = without pruning)
 Columns:
   #candidates          : without = pruning_info.total_candidates (taken from the with-pruning file) / with = promising_candidates
-  optimization time (s): pruning_time_sec + solve_time_sec (without pruning: solve_time_sec only)
+  optimization time (s): phase_time_sec (wall time of the whole Phase 6, as in Exp3-2 and Exp3-3;
+                         with pruning = parallel pruning + ILP solve, without = ILP solve)
   total exec. time (s) : summary.total_benchmark_time (the smaller one per pattern in bold)
   objective value      : -objective / 1000
-Output: rq3_pruning.tex, rq3_pruning.md
+Output: rq3_exp3_1_pruning.tex, rq3_exp3_1_pruning.md
 """
 from common import PATTERNS, load_json, parse_args, require, total_benchmark_time
 
@@ -19,7 +20,7 @@ VARIANTS = [("Without pruning", "_wo"), ("With pruning", "")]
 
 def main():
     args = parse_args(__doc__)
-    src = args.td_dir / "rq3"
+    src = args.td_dir / "rq3" / "exp3_1"
 
     def td_path(sfx, tag):
         return src / f"td_mv_optimization_result{sfx}{tag}.json"
@@ -36,7 +37,7 @@ def main():
             td = load_json(td_path(sfx, tag))
             rows[(pname, vlabel)] = {
                 "n_cand": td["pruning_info"]["promising_candidates"] if tag == "" else total,
-                "opt_time": td.get("pruning_time_sec", 0.0) + td["solve_time_sec"],
+                "opt_time": td["phase_time_sec"],
                 "total_exec": total_benchmark_time(bm_path(sfx, tag)),
                 "obj_k": -td["objective"] / 1000.0,
             }
@@ -78,7 +79,7 @@ def main():
         if pi < len(PATTERNS) - 1:
             lines.append(r"\midrule")
     lines += [r"\bottomrule", r"\end{tabular}", r"\end{table*}"]
-    tex_path = args.out_dir / "rq3_pruning.tex"
+    tex_path = args.out_dir / "rq3_exp3_1_pruning.tex"
     tex_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"saved: {tex_path}")
 
@@ -97,7 +98,7 @@ def main():
             pcell = pname if vlabel == "Without pruning" else ""
             md.append(f"| {pcell} | {vlabel} | {r['n_cand']:,.0f} | {r['opt_time']:.1f} | "
                       f"{exec_s} | {r['obj_k']:,.0f} |")
-    md_path = args.out_dir / "rq3_pruning.md"
+    md_path = args.out_dir / "rq3_exp3_1_pruning.md"
     md_path.write_text("\n".join(md) + "\n", encoding="utf-8")
     print(f"saved: {md_path}")
 

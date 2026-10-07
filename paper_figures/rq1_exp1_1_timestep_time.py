@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fig. 7 (RQ1 Exp1-1): execution time per time step (Proposed / Adapt / Static).
+"""RQ1 Exp1-1: execution time per time step (Proposed / Adapt / Static).
 
 Input:  time_dependent_output/rq1/exp1_1/{job-ceb-2,Redbench_synthetic}/
         benchmark_results_{dynamic,adaptive_w4,static}{suffix}.json
